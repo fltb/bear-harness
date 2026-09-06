@@ -120,18 +120,20 @@ describe("settings workflows", () => {
 
 	it("builds proxy patches, trims manual URLs, and remains retryable after failure", async () => {
 		const [settings, setSettings] = createSignal<SettingsData>({
-			networkProxy: { mode: "system" },
+			networkProxy: { mode: "auto" },
 		} as SettingsData);
 		const set = vi
 			.fn()
 			.mockRejectedValueOnce(new Error("cannot save"))
-			.mockResolvedValueOnce(undefined);
+			.mockImplementation(async (patch: Partial<SettingsData>) => {
+				setSettings({ ...settings(), ...patch });
+			});
 		const store = { settings: { data: settings, set } } as unknown as CompanionStore;
 
 		await new Promise<void>((resolve, reject) => {
 			createRoot((dispose) => {
 				const workflow = createNetworkMemoryWorkflow(store, t);
-				expect(workflow.proxyMode()).toBe("system");
+				expect(workflow.proxyMode()).toBe("auto");
 				expect(workflow.proxyUrl()).toBe("");
 				workflow.setProxyMode("manual");
 				workflow.setProxyUrl("  http://127.0.0.1:7890  ");
@@ -142,12 +144,19 @@ describe("settings workflows", () => {
 						networkProxy: { mode: "manual", url: "http://127.0.0.1:7890" },
 					});
 					expect(workflow.error()).toBe("cannot save");
+					expect(settings().networkProxy).toEqual({ mode: "auto" });
+					expect(workflow.proxyUrl()).toBe("  http://127.0.0.1:7890  ");
 					await workflow.save();
 					expect(workflow.feedback()).toBe("settings.saved");
+					expect(workflow.error()).toBeNull();
+					expect(workflow.proxyMode()).toBe("manual");
+					expect(workflow.proxyUrl()).toBe("http://127.0.0.1:7890");
 					workflow.setProxyUrl("   ");
 					await workflow.save();
 					expect(set).toHaveBeenLastCalledWith({ networkProxy: { mode: "manual" } });
-					setSettings({ ...settings(), networkProxy: { mode: "off" } });
+					setSettings({ ...settings(), networkProxy: { mode: "direct" } });
+					expect(workflow.proxyMode()).toBe("direct");
+					expect(workflow.proxyUrl()).toBe("");
 					dispose();
 					resolve();
 				})().catch(reject);

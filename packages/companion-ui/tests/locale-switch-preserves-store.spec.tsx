@@ -9,7 +9,7 @@ import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
-	stateData: { answers: {}, decisions: {} },
+	stateData: { answers: {} },
 };
 
 /**
@@ -23,6 +23,7 @@ function loadedClient() {
 		conversationId: "conversation-1",
 		name: "Locale switch",
 		branch: {
+			latestLeafIds: ["assistant-1"],
 			entries: [
 				{
 					type: "message" as const,
@@ -78,9 +79,10 @@ function loadedClient() {
 			},
 		}),
 	);
-	fixture.client.conversation.open = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: activeProjection }),
+	fixture.client.conversation.activeGet = vi.fn(() =>
+		Promise.resolve({ ok: true as const, data: { activeConversation: activeProjection } }),
 	);
+	fixture.client.conversation.select = vi.fn(() => fixture.client.conversation.activeGet({}));
 	return fixture.client;
 }
 

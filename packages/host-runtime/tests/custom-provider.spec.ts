@@ -275,7 +275,7 @@ describe("custom OpenAI-compatible provider configuration", () => {
 	it("passes advanced Pi model configuration through and rejects embedded credentials", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-model-import-"));
 		roots.push(root);
-		const catalog = new ProviderCatalog({} as CredentialStore, root);
+		const catalog = new ProviderCatalog(emptyCredentials(), root);
 		const config = {
 			providers: {
 				"advanced-relay": {

@@ -13,6 +13,7 @@ import {
 	HOST_SETTINGS_CAPABILITIES,
 	type HostRuntime,
 } from "../src/index.js";
+import type { LocalEmbeddingAcquisitionOptions } from "../src/memory/local-embedding-acquisition.js";
 import type { CompanionDatabase, SystemDatabase } from "../src/storage/database.js";
 
 const temporaryDirectories: string[] = [];
@@ -60,6 +61,13 @@ function roleRuntime(runtime: HostRuntime): {
 	return lifecycle.active().runtime as ReturnType<typeof roleRuntime>;
 }
 
+function acquisitionForTest(runtime: HostRuntime) {
+	return Reflect.get(runtime, "localEmbeddingAcquisition") as {
+		fetchModel: NonNullable<LocalEmbeddingAcquisitionOptions["fetch"]>;
+		validateModel: NonNullable<LocalEmbeddingAcquisitionOptions["validate"]>;
+	};
+}
+
 async function data(
 	runtime: ReturnType<typeof createHostRuntime>,
 	channel: string,
@@ -93,8 +101,10 @@ async function configureConversationModel(runtime: HostRuntime, providerId = "co
 		apiKey: "session-key",
 		sessionOnly: true,
 	});
-	await data(runtime, "model.defaults.setReply", {
+	await data(runtime, "model.enable", { providerId, modelId: "test-model" });
+	await data(runtime, "systemOnboarding.completeModel", {
 		reply: { providerId, modelId: "test-model" },
+		vision: { mode: "auto" },
 	});
 }
 
@@ -131,21 +141,16 @@ describe("role-defined onboarding", () => {
 		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
 			status: "active",
 			currentStepId: "welcome",
-			stateData: {
-				decisions: {
-					relationship_memory_enabled: true,
-				},
-			},
+			stateData: { answers: {} },
 		});
 		await expect(completeOnboarding(runtime)).resolves.toMatchObject({
 			status: "complete",
 			stateData: { answers: { nickname: "林" } },
 		});
-		await data(runtime, "settings.set", { settings: { relationshipMemoryEnabled: false } });
+		await data(runtime, "systemOnboarding.completeEmbedding", { choice: "none" });
 		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
 			stateData: {
 				answers: { nickname: "林" },
-				decisions: { relationship_memory_enabled: false },
 			},
 		});
 		await expect(data(runtime, "conversation.list", {})).resolves.toEqual({ conversations: [] });
@@ -195,17 +200,20 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
-		await expect(data(runtime, "settings.get", {})).resolves.toEqual({
+		await expect(data(runtime, "settings.get", {})).resolves.toMatchObject({
 			settings: {
-				firstRunStage: "model",
-				relationshipMemoryEnabled: true,
-				networkProxy: { mode: "auto" },
+				relationshipMemoryEnabled: false,
 				memoryVectorService: { enabled: false, provider: "none" },
-				modelDownloadSource: { type: "official" },
 			},
 		});
 		await expect(
 			runtime.dispatch("settings.set", { settings: { immersionLevel: "resources" } }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "invalid_request" },
+		});
+		await expect(
+			runtime.dispatch("settings.set", { settings: { relationshipMemoryEnabled: true } }),
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "invalid_request" },
@@ -230,38 +238,56 @@ describe("role-defined onboarding", () => {
 			),
 		});
 
-		const candidate = HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0];
-		expect(candidate).toBeDefined();
-		const configure = vi
-			.spyOn(runtime.memoryEmbedding, "validateLocal")
-			.mockResolvedValue(undefined);
+		await configureConversationModel(runtime);
+		const before = await data(runtime, "settings.get", {});
+		const candidate = HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0]!;
+		const target = { kind: "candidate", candidateId: candidate.id };
+		const acquisition = acquisitionForTest(runtime);
+		vi.spyOn(acquisition, "fetchModel").mockResolvedValue(new Response(new Uint8Array(100)));
+		vi.spyOn(acquisition, "validateModel").mockResolvedValue(undefined);
+		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockResolvedValue({ ready: true });
 		await expect(
-			data(runtime, "memory.configureLocalEmbedding", {
-				provider: "local",
-				candidateId: candidate?.id,
-			}),
-		).resolves.toEqual({ ready: true });
-		expect(configure).toHaveBeenCalledWith({
-			modelPath: candidate?.modelPath,
-			dimensions: 768,
-			hfEndpoint: "https://huggingface.co",
-			signal: expect.any(AbortSignal),
-			onProgress: expect.any(Function),
-			onPhase: expect.any(Function),
+			runtime.dispatch("memory.activateLocalEmbedding", { target }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { reason: "local_embedding_target_not_installed" },
 		});
-		await expect(data(runtime, "settings.get", {})).resolves.toMatchObject({
-			settings: {
-				memoryVectorService: {
-					enabled: true,
-					provider: "local",
-					localModel: candidate?.id,
+		await data(runtime, "memory.localEmbeddingAcquisitionStart", {
+			target,
+			source: { type: "official" },
+		});
+		await vi.waitFor(async () =>
+			expect(await data(runtime, "memory.localEmbeddingAcquisitionStatus", {})).toMatchObject({
+				phase: "completed",
+			}),
+		);
+		const inventory = await data(runtime, "memory.localEmbeddingInventory", {});
+		expect(inventory).toMatchObject({
+			candidates: expect.arrayContaining([expect.objectContaining({ target, installed: true })]),
+		});
+		expect(inventory).not.toHaveProperty("activeTarget");
+		expect(await data(runtime, "settings.get", {})).toEqual(before);
+		await expect(data(runtime, "memory.activateLocalEmbedding", { target })).resolves.toMatchObject(
+			{
+				settings: {
+					firstRunStage: "embedding",
+					relationshipMemoryEnabled: true,
+					memoryVectorService: { enabled: true, provider: "local", localModel: candidate.id },
 				},
 			},
+		);
+		await expect(data(runtime, "memory.localEmbeddingInventory", {})).resolves.toMatchObject({
+			activeTarget: target,
 		});
 		await expect(
-			runtime.dispatch("memory.configureLocalEmbedding", {
-				provider: "local",
-				candidateId: "not-in-the-host-catalog",
+			data(runtime, "systemOnboarding.completeEmbedding", { choice: "local", target }),
+		).resolves.toMatchObject({
+			settings: { firstRunStage: "role", relationshipMemoryEnabled: true },
+		});
+		await expect(
+			runtime.dispatch("memory.localEmbeddingAcquisitionStart", {
+				target: { kind: "candidate", candidateId: "not-in-the-host-catalog" },
+				source: { type: "official" },
 			}),
 		).resolves.toMatchObject({
 			ok: false,
@@ -427,19 +453,21 @@ describe("role-defined onboarding", () => {
 		});
 		expect(storedSystemConfig.memory_vector_service).not.toContain("apiKey");
 		expect(storedSystemConfig.memory_vector_service).not.toContain("test-key");
-		await data(runtime, "memory.configureLocalEmbedding", { provider: "none" });
-
-		await data(runtime, "settings.set", {
+		await expect(data(runtime, "settings.get", {})).resolves.toMatchObject({
 			settings: { relationshipMemoryEnabled: true },
 		});
-		const lazyMemory = runtime.memoryRuntime;
-		await lazyMemory.start();
-		expect(lazyMemory.isStarted()).toBe(true);
-		await data(runtime, "settings.set", {
-			settings: { relationshipMemoryEnabled: false },
+		await nextFirst.start();
+		expect(nextFirst.isStarted()).toBe(true);
+		await expect(
+			data(runtime, "systemOnboarding.completeEmbedding", { choice: "none" }),
+		).resolves.toMatchObject({
+			settings: {
+				relationshipMemoryEnabled: false,
+				memoryVectorService: { enabled: false, provider: "none" },
+			},
 		});
 		expect(Reflect.get(role, "memory")).toBeUndefined();
-		await expect(lazyMemory.start()).rejects.toThrow(/closed/);
+		await expect(nextFirst.start()).rejects.toThrow(/closed/);
 		await runtime.close();
 	});
 
@@ -529,42 +557,79 @@ describe("role-defined onboarding", () => {
 		const before = await data(runtime, "settings.get", {});
 		const received = vi.fn();
 		const stop = runtime.subscribeLivePush(received);
-		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
-			options.onProgress?.({ downloadedSize: 25, totalSize: 100 });
-			await new Promise<void>((_resolve, reject) =>
-				options.signal?.addEventListener("abort", () => reject(new Error("cancelled")), {
-					once: true,
+		const candidate = HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0]!;
+		const target = { kind: "candidate", candidateId: candidate.id };
+		vi.spyOn(acquisitionForTest(runtime), "fetchModel").mockImplementation(
+			async (_url, options) =>
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(new Uint8Array(25));
+							options.signal.addEventListener(
+								"abort",
+								() => controller.error(options.signal.reason),
+								{
+									once: true,
+								},
+							);
+						},
+					}),
+					{ headers: { "content-length": "100" } },
+				),
+		);
+		try {
+			const operation = (await data(runtime, "memory.localEmbeddingAcquisitionStart", {
+				target,
+				source: { type: "official" },
+			})) as { operationId: string };
+			await vi.waitFor(async () =>
+				expect(await data(runtime, "memory.localEmbeddingAcquisitionStatus", {})).toMatchObject({
+					operationId: operation.operationId,
+					phase: "downloading",
+					downloadedBytes: 25,
+					totalBytes: 100,
 				}),
 			);
-			return { ready: true };
-		});
-		const configure = runtime.dispatch("memory.configureLocalEmbedding", {
-			provider: "local",
-			customPath: "hf:test/model.gguf",
-		});
-		await vi.waitFor(async () =>
-			expect(await data(runtime, "memory.localEmbeddingDownloadStatus", {})).toEqual({
-				status: "downloading",
-				downloadedBytes: 25,
-				totalBytes: 100,
-			}),
-		);
-		expect(received).toHaveBeenCalledWith(expect.objectContaining({ type: "embeddingDownload" }));
-		await expect(
-			runtime.dispatch("memory.configureLocalEmbedding", { provider: "none" }),
-		).resolves.toMatchObject({ ok: false, error: { reason: "embedding_download_in_progress" } });
-		await data(runtime, "memory.cancelLocalEmbeddingDownload", {});
-		await expect(configure).resolves.toMatchObject({
-			ok: false,
-			error: { reason: "embedding_download_cancelled" },
-		});
-		expect(await data(runtime, "memory.localEmbeddingDownloadStatus", {})).toMatchObject({
-			status: "cancelled",
-		});
-		expect(await data(runtime, "settings.get", {})).toEqual(before);
-		expect(received).toHaveBeenCalledWith(expect.objectContaining({ type: "embeddingDownload" }));
-		stop();
-		await runtime.close();
+			expect(received).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: "embeddingAcquisition",
+					state: expect.objectContaining({ phase: "downloading", downloadedBytes: 25 }),
+				}),
+			);
+			await expect(
+				runtime.dispatch("memory.localEmbeddingAcquisitionStart", {
+					target,
+					source: { type: "official" },
+				}),
+			).resolves.toMatchObject({
+				ok: false,
+				error: { reason: "local_embedding_acquisition_in_progress" },
+			});
+			await expect(
+				runtime.dispatch("memory.localEmbeddingAcquisitionCancel", { operationId: "stale" }),
+			).resolves.toMatchObject({
+				ok: false,
+				error: { reason: "local_embedding_acquisition_stale_operation" },
+			});
+			await expect(
+				data(runtime, "memory.localEmbeddingAcquisitionCancel", {
+					operationId: operation.operationId,
+				}),
+			).resolves.toMatchObject({ operationId: operation.operationId, phase: "cancelled" });
+			expect(await data(runtime, "settings.get", {})).toEqual(before);
+			await expect(data(runtime, "memory.localEmbeddingInventory", {})).resolves.toMatchObject({
+				candidates: expect.arrayContaining([expect.objectContaining({ target, installed: false })]),
+			});
+			expect(received).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: "embeddingAcquisition",
+					state: expect.objectContaining({ phase: "cancelled" }),
+				}),
+			);
+		} finally {
+			stop();
+			await runtime.close();
+		}
 	});
 
 	it("reports an absent or cancelled OAuth session and emits cancellation invalidation", async () => {
@@ -654,37 +719,52 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		const dataDir = temporaryDirectories.at(-1)!;
 		await runtime.start();
-		let captured: Parameters<typeof runtime.memoryEmbedding.validateLocal>[0] | undefined;
-		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
-			captured = options;
-			await new Promise<void>((_resolve, reject) =>
-				options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-					once: true,
-				}),
-			);
-		});
-		const command = runtime.dispatch("memory.configureLocalEmbedding", {
-			provider: "local",
-			customPath: "hf:test/model.gguf",
-		});
-		await vi.waitFor(() => expect(captured).toBeDefined());
+		const before = await data(runtime, "settings.get", {});
+		let signal: AbortSignal | undefined;
+		let finishDownload: ((response: Response) => void) | undefined;
+		vi.spyOn(acquisitionForTest(runtime), "fetchModel").mockImplementation(
+			async (_url, options) => {
+				signal = options.signal;
+				return new Promise<Response>((resolve, reject) => {
+					finishDownload = resolve;
+					options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+						once: true,
+					});
+				});
+			},
+		);
+		const target = {
+			kind: "candidate",
+			candidateId: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0]!.id,
+		};
+		const operation = (await data(runtime, "memory.localEmbeddingAcquisitionStart", {
+			target,
+			source: { type: "official" },
+		})) as { operationId: string };
+		await vi.waitFor(() => expect(finishDownload).toBeDefined());
 		await runtime.close();
-		expect(captured!.signal!.aborted).toBe(true);
-		captured!.onProgress?.({ downloadedSize: 100, totalSize: 100 });
-		captured!.onPhase?.("activating");
-		await expect(command).resolves.toMatchObject({
-			ok: false,
-			error: { reason: "embedding_download_cancelled" },
-		});
+		expect(signal!.aborted).toBe(true);
+		finishDownload!(new Response(new Uint8Array(100)));
 		await expect(runtime.dispatch("settings.get", {})).resolves.toMatchObject({
 			ok: false,
 			error: { reason: "host_closed" },
 		});
 		const restarted = runtimeForTest(dataDir);
-		await expect(data(restarted, "memory.localEmbeddingDownloadStatus", {})).resolves.toMatchObject(
-			{ status: "idle" },
-		);
-		await restarted.close();
+		try {
+			await expect(
+				data(restarted, "memory.localEmbeddingAcquisitionStatus", {}),
+			).resolves.toMatchObject({
+				operationId: operation.operationId,
+				phase: "cancelled",
+				downloadedBytes: 0,
+			});
+			expect(await data(restarted, "settings.get", {})).toEqual(before);
+			await expect(data(restarted, "memory.localEmbeddingInventory", {})).resolves.toMatchObject({
+				candidates: expect.arrayContaining([expect.objectContaining({ target, installed: false })]),
+			});
+		} finally {
+			await restarted.close();
+		}
 	});
 
 	it("resets invalid persisted onboarding state", async () => {
@@ -694,16 +774,19 @@ describe("role-defined onboarding", () => {
 			.prepare(
 				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",
 			)
-			.run(productConfig.defaultCharacterId, "welcome", JSON.stringify({ decisions: {} }));
+			.run(productConfig.defaultCharacterId, "welcome", JSON.stringify({ answers: "invalid" }));
 
 		await expect(runtime.dispatch("onboarding.get", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				stateData: {
 					answers: {},
-					decisions: { relationship_memory_enabled: true },
 				},
 			},
+		});
+		await expect(completeOnboarding(runtime)).resolves.toMatchObject({
+			status: "complete",
+			stateData: { answers: { nickname: "林" } },
 		});
 		await runtime.close();
 	});

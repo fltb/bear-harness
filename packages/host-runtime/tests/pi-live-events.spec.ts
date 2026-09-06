@@ -1,3 +1,4 @@
+import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
 	projectPiConversationDetail,
@@ -5,17 +6,17 @@ import {
 	projectPiTransientEvent,
 } from "../src/companion/pi-live-events.js";
 
-function session(
-	entries = Array.from({ length: 60 }, (_, index) => ({
-		type: "message" as const,
-		id: `entry-${index}`,
-		parentId: index ? `entry-${index - 1}` : null,
-		timestamp: new Date(index).toISOString(),
-		message: { role: "user" as const, content: `message ${index}`, timestamp: index },
-	})),
-) {
+function session() {
+	const sessionManager = SessionManager.inMemory();
+	for (let index = 0; index < 60; index += 1) {
+		sessionManager.appendMessage({
+			role: "user",
+			content: `message ${index}`,
+			timestamp: index,
+		});
+	}
 	return {
-		sessionId: "session-1",
+		sessionId: sessionManager.getSessionId(),
 		sessionName: "Native Pi session",
 		isStreaming: true,
 		state: {
@@ -25,19 +26,21 @@ function session(
 		},
 		getSteeringMessages: () => ["steer"],
 		getFollowUpMessages: () => ["follow"],
-		sessionManager: {
-			getBranch: () => entries,
-			getLeafId: () => entries.at(-1)?.id,
-		},
-	} as never;
+		sessionManager,
+	} as unknown as AgentSession;
 }
 
 describe("native Pi conversation projection", () => {
 	it("returns a bounded tail without remodeling SessionEntry", () => {
-		const detail = projectPiConversationDetail(session());
-		expect(detail.conversationId).toBe("session-1");
+		const current = session();
+		const entries = current.sessionManager.getBranch();
+		const detail = projectPiConversationDetail(current);
+		expect(detail.conversationId).toBe(current.sessionId);
 		expect(detail.branch.entries).toHaveLength(50);
-		expect(detail.branch.entries[0]?.id).toBe("entry-10");
+		expect(detail.branch.entries[0]).toBe(entries[10]);
+		expect(detail.branch.entries[49]).toBe(entries[59]);
+		expect(detail.branch.activeLeafId).toBe(entries[59]?.id);
+		expect(detail.branch.latestLeafIds).toEqual([entries[59]?.id]);
 		expect(detail.branch.hasMoreBefore).toBe(true);
 		expect(detail.live).toEqual({
 			isStreaming: true,
@@ -48,15 +51,12 @@ describe("native Pi conversation projection", () => {
 	});
 
 	it("pages earlier native entries by Pi entry id", () => {
-		const history = projectPiConversationHistory(session(), "entry-10", 5);
-		expect(history.entries.map((entry) => entry.id)).toEqual([
-			"entry-5",
-			"entry-6",
-			"entry-7",
-			"entry-8",
-			"entry-9",
-		]);
-		expect(history.nextCursor).toBe("entry-5");
+		const current = session();
+		const entries = current.sessionManager.getBranch();
+		const history = projectPiConversationHistory(current, entries[10]?.id, 5);
+		expect(history.entries).toEqual(entries.slice(5, 10));
+		expect(history.entries[0]).toBe(entries[5]);
+		expect(history.nextCursor).toBe(entries[5]?.id);
 	});
 
 	it("does not transport the duplicate transcript carried by agent_end", () => {

@@ -1,9 +1,44 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
-import userEvent from "@testing-library/user-event";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
+import type { SettingsData } from "../src/stores/companion.js";
 import { createTestClient, OFFICIAL_PRODUCT, pushHostEvent } from "./fixtures.js";
+
+const target = { kind: "candidate" as const, candidateId: "test-embedding" };
+const candidate = {
+	id: target.candidateId,
+	name: "Test embedding",
+	dimensions: 768,
+	isDefault: true,
+	target,
+	installed: false,
+};
+const disabledSettings: SettingsData = {
+	firstRunStage: "role",
+	relationshipMemoryEnabled: false,
+	networkProxy: { mode: "direct" },
+	memoryVectorService: { enabled: false, provider: "none" },
+	modelDownloadSource: { type: "official" },
+};
+const localSettings: SettingsData = {
+	...disabledSettings,
+	relationshipMemoryEnabled: true,
+	memoryVectorService: { enabled: true, provider: "local", localModel: target.candidateId },
+};
+const remoteSettings: SettingsData = {
+	...disabledSettings,
+	relationshipMemoryEnabled: true,
+	memoryVectorService: {
+		enabled: true,
+		provider: "remote",
+		baseUrl: "https://embedding.example/v1",
+		model: "current-model",
+		dimensions: 64,
+		hasCredential: true,
+	},
+};
 
 function selectTrigger(container: HTMLElement, label: string): HTMLElement {
 	const trigger = within(container)
@@ -26,16 +61,17 @@ async function openSettings(page: "network" | "memory" = "memory") {
 }
 
 function waitForSettings(container: HTMLElement): Promise<void> {
-	// Wait for the selected split settings page to finish loading.
 	return waitFor(() => {
-		const triggers = within(container).getAllByRole("button");
-		const proxyReady = triggers.some((b) => b.getAttribute("aria-label") === "代理模式");
-		const memoryReady = within(container).queryByRole("region", {
-			name: zhCN.settings.memoryVectorSection,
+		const proxyReady = within(container)
+			.getAllByRole("button")
+			.some((button) => button.getAttribute("aria-label") === zhCN.settings.proxyMode);
+		const memoryReady = within(container).queryByRole("radiogroup", {
+			name: zhCN.settings.vectorProvider,
 		});
 		expect(proxyReady || memoryReady !== null).toBe(true);
 	});
 }
+
 function networkSaveButton(backstage: HTMLElement): HTMLElement {
 	const network = within(backstage).getByRole("region", { name: zhCN.settings.networkSection });
 	return within(network).getByRole("button", { name: zhCN.settings.saveNetwork });
@@ -45,266 +81,201 @@ function embeddingSettings(backstage: HTMLElement): HTMLElement {
 	return within(backstage).getByRole("region", { name: zhCN.settings.memoryVectorSection });
 }
 
+async function reopenMemory(backstage: HTMLElement, user: UserEvent) {
+	await user.click(within(backstage).getByRole("button", { name: zhCN.settings.networkSection }));
+	await user.click(
+		within(backstage).getByRole("button", { name: zhCN.settings.memoryVectorSection }),
+	);
+	await waitForSettings(backstage);
+}
+
 describe("NetworkAndMemorySettings", () => {
-	it("renders proxy mode and embedding controls", async () => {
+	it("renders proxy mode and integrated embedding acquisition controls", async () => {
 		const { client } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider: "local" as const,
-							localModel: "test-embedding",
-						},
-						modelDownloadSource: { type: "official" },
-					},
-				},
-			}),
-		);
+		client.settings.get = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { settings: disabledSettings } });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
-
 		expect(
 			within(backstage).getByRole("heading", { name: zhCN.settings.networkSection }),
-		).toBeTruthy();
+		).toBeVisible();
 		await user.click(
 			within(backstage).getByRole("button", { name: zhCN.settings.memoryVectorSection }),
 		);
 		const embedding = embeddingSettings(backstage);
-		expect(
-			within(embedding).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
-		).toBeTruthy();
+		await user.click(
+			within(embedding).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		);
+		expect(selectTrigger(embedding, zhCN.settings.localModel)).toHaveTextContent(candidate.name);
 		expect(selectTrigger(embedding, zhCN.settings.downloadMirrorLabel)).toHaveTextContent(
 			zhCN.settings.downloadSources.official,
 		);
 		expect(
-			within(embedding).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
-		).toHaveAttribute("data-variant", "primary");
-		expect(
-			within(embedding)
-				.getByRole("radio", { name: zhCN.settings.vectorProviders.local })
-				.parentElement?.querySelector(".settings-choice-control"),
-		).toBeInTheDocument();
+			within(embedding).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
+		).toBeEnabled();
+		expect(within(embedding).queryByRole("checkbox")).not.toBeInTheDocument();
 	});
 
-	it("shows a stable enabled state instead of offering to download the ready local model again", async () => {
+	it("shows an enabled local model from the active inventory without downloading again", async () => {
 		const { client } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider: "local" as const,
-							localModel: "test-embedding",
-						},
-						modelDownloadSource: { type: "official" as const },
-					},
-				},
-			}),
-		);
-		client.memory.localEmbeddingDownloadStatus = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { status: "completed" as const, downloadedBytes: 313_400_000 },
-			}),
-		);
-
+		client.settings.get = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { settings: localSettings } });
+		client.memory.localEmbeddingInventory = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { candidates: [{ ...candidate, installed: true }], activeTarget: target },
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage } = await openSettings();
-		expect(within(embeddingSettings(backstage)).getByRole("status")).toHaveTextContent(
-			zhCN.settings.localModelReady,
-		);
+		const embedding = embeddingSettings(backstage);
 		expect(
-			within(embeddingSettings(backstage)).queryByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
+			await within(embedding).findByRole("button", { name: zhCN.settings.localModelEnabled }),
+		).toBeDisabled();
+		expect(
+			within(embedding).queryByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
 		).not.toBeInTheDocument();
+		expect(client.memory.localEmbeddingAcquisitionStart).not.toHaveBeenCalled();
 	});
 
-	it("offers an activation action when the model is downloaded but the provider is disabled", async () => {
+	it("activates an installed model without downloading or a separate memory consent toggle", async () => {
 		const { client } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: { enabled: false, provider: "none" as const },
-						modelDownloadSource: { type: "official" as const },
-					},
-				},
-			}),
-		);
-		client.memory.localEmbeddingDownloadStatus = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { status: "completed" as const, downloadedBytes: 313_400_000 },
-			}),
-		);
-
+		client.memory.localEmbeddingInventory = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { candidates: [{ ...candidate, installed: true }] },
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		const embedding = embeddingSettings(backstage);
 		await user.click(
-			within(embedding).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
 		);
 		await user.click(
-			within(embedding).getByRole("button", { name: zhCN.settings.enableLocalModel }),
+			within(backstage).getByRole("button", { name: zhCN.settings.enableLocalModel }),
 		);
-
 		await waitFor(() =>
-			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
-				provider: "local",
-				candidateId: "test-embedding",
-			}),
+			expect(client.memory.activateLocalEmbedding).toHaveBeenCalledWith({ target }),
 		);
+		expect(client.memory.localEmbeddingAcquisitionStart).not.toHaveBeenCalled();
+		expect(
+			within(backstage).queryByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
+		).not.toBeInTheDocument();
+		await reopenMemory(backstage, user);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		).toBeChecked();
 	});
 
-	it("renders and applies only the capabilities returned by Host", async () => {
+	it("renders Host provider capabilities and applies a remote preset only on explicit save", async () => {
 		const { client, settingsSet } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider: "remote" as const,
-							baseUrl: "https://embedding.example/v1",
-							model: "unlisted-model",
-							dimensions: 1,
-							hasCredential: true,
-						},
-						modelDownloadSource: { type: "official" },
-					},
-				},
-			}),
-		);
-		client.settings.capabilitiesGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					networkProxyModes: [{ id: "manual" as const }],
-					memoryVectorProviders: [{ id: "remote" as const, onboarding: false }],
-					memoryVectorPresets: [
-						{
-							id: "bge-m3",
-							model: "host-only-embedding-model",
-							dimensions: 777,
-						},
-					],
-					localEmbeddingCandidates: [
-						{
-							id: "host-only-local",
-							name: "Host-only local model",
-							dimensions: 768,
-							isDefault: true,
-						},
-					],
-				},
-			}),
-		);
-
+		client.settings.get = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { settings: remoteSettings } });
+		client.settings.capabilitiesGet = vi.fn().mockResolvedValue({
+			ok: true,
+			data: {
+				networkProxyModes: [{ id: "manual" }],
+				memoryVectorProviders: [{ id: "remote", onboarding: false }],
+				memoryVectorPresets: [
+					{ id: "bge-m3", model: "host-only-embedding-model", dimensions: 777 },
+				],
+				localEmbeddingCandidates: [],
+			},
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings("network");
-
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
-		await waitFor(() => {
-			const listbox = screen.getByRole("listbox", { name: zhCN.settings.proxyMode });
-			expect(
-				within(listbox)
-					.getAllByRole("option")
-					.map((option) => option.textContent?.trim()),
-			).toEqual([
-				zhCN.settings.proxyModes.direct,
-				zhCN.settings.proxyModes.auto,
-				zhCN.settings.proxyModes.manual,
-			]);
-		});
+		const listbox = await screen.findByRole("listbox", { name: zhCN.settings.proxyMode });
+		expect(
+			within(listbox)
+				.getAllByRole("option")
+				.map((option) => option.textContent?.trim()),
+		).toEqual([
+			zhCN.settings.proxyModes.direct,
+			zhCN.settings.proxyModes.auto,
+			zhCN.settings.proxyModes.manual,
+		]);
 		await user.click(screen.getByRole("option", { name: zhCN.settings.proxyModes.manual }));
 		await user.click(
 			within(backstage).getByRole("button", { name: zhCN.settings.memoryVectorSection }),
 		);
-
 		expect(
 			within(backstage)
 				.getAllByRole("radio")
 				.map((radio) => radio.getAttribute("value")),
 		).toEqual(["remote"]);
-		const apiKeyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
-		expect(apiKeyInput).toHaveValue("");
-		expect(apiKeyInput).toHaveAttribute("placeholder", zhCN.settings.apiKeyStoredPlaceholder);
-
+		const apiKey = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
+		expect(apiKey).toHaveValue("");
+		expect(apiKey).toHaveAttribute("placeholder", zhCN.settings.apiKeyStoredPlaceholder);
 		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
-		const preset = await screen.findByRole("option", {
-			name: zhCN.settings.vectorPresetLabels["bge-m3"],
-		});
-		fireEvent.click(preset);
+		await user.click(
+			await screen.findByRole("option", { name: zhCN.settings.vectorPresetLabels["bge-m3"] }),
+		);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorModel)).toHaveValue(
+			"host-only-embedding-model",
+		);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorDimensions)).toHaveValue(777);
+		expect(settingsSet).not.toHaveBeenCalled();
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveEmbedding }));
 		await waitFor(() =>
 			expect(settingsSet).toHaveBeenCalledWith({
-				settings: expect.objectContaining({
-					memoryVectorService: expect.objectContaining({
+				settings: {
+					memoryVectorService: {
+						enabled: true,
+						provider: "remote",
+						baseUrl: "https://embedding.example/v1",
 						model: "host-only-embedding-model",
 						dimensions: 777,
-					}),
-				}),
-			}),
-		);
-		const embeddingPatch = settingsSet.mock.calls.at(-1)?.[0].settings.memoryVectorService;
-		expect(embeddingPatch).not.toHaveProperty("apiKey");
-		expect(embeddingPatch).not.toHaveProperty("hasCredential");
-	});
-
-	it("loads proxy settings from the store on mount", async () => {
-		const { client } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						networkProxy: { mode: "manual", url: "http://127.0.0.1:7890" },
 					},
 				},
 			}),
 		);
+		const patch = settingsSet.mock.calls.at(-1)?.[0].settings.memoryVectorService;
+		expect(patch).not.toHaveProperty("apiKey");
+		expect(patch).not.toHaveProperty("hasCredential");
+	});
+
+	it("loads proxy settings from the store on mount", async () => {
+		const { client } = createTestClient();
+		client.settings.get = vi.fn().mockResolvedValue({
+			ok: true,
+			data: {
+				settings: {
+					...disabledSettings,
+					networkProxy: { mode: "manual", url: "http://127.0.0.1:7890" },
+				},
+			},
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage } = await openSettings("network");
 		await waitForSettings(backstage);
-
-		expect(selectTrigger(backstage, "代理模式").textContent).toContain("手动");
-		expect(within(backstage).getByPlaceholderText("http://127.0.0.1:7890")).toBeTruthy();
+		expect(selectTrigger(backstage, zhCN.settings.proxyMode)).toHaveTextContent(
+			zhCN.settings.proxyModes.manual,
+		);
+		expect(within(backstage).getByPlaceholderText("http://127.0.0.1:7890")).toHaveValue(
+			"http://127.0.0.1:7890",
+		);
 	});
 
-	it("toggles vector memory enabled and shows provider options", async () => {
-		const { client } = createTestClient();
+	it("keeps provider choices as drafts until memory configuration is explicitly saved", async () => {
+		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-
-		const checkbox = within(backstage).getByRole("checkbox", {
-			name: zhCN.settings.memoryVectorEnabled,
-		});
-		expect(checkbox).not.toBeChecked();
-
-		await user.click(checkbox);
-		await waitFor(() => expect(checkbox).toBeChecked());
-
 		expect(
-			within(backstage).getByRole("radiogroup", { name: zhCN.settings.vectorProvider }),
-		).toBeTruthy();
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+		).toBeChecked();
+		await user.click(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		).toBeChecked();
+		expect(settingsSet).not.toHaveBeenCalled();
+		expect(client.memory.activateLocalEmbedding).not.toHaveBeenCalled();
+		await reopenMemory(backstage, user);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+		).toBeChecked();
 	});
 
 	it("saves proxy changes via settings.set", async () => {
@@ -312,69 +283,51 @@ describe("NetworkAndMemorySettings", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
-
-		const proxySelect = selectTrigger(backstage, "代理模式");
-		await user.click(proxySelect);
-		const manualOption = await waitFor(
-			() =>
-				[...screen.getAllByRole("option")].find(
-					(el) => el.textContent?.trim() === zhCN.settings.proxyModes.manual,
-				),
-			{ timeout: 3000 },
-		);
-		expect(manualOption).toBeTruthy();
-		await user.click(manualOption!);
-
-		const proxyUrlField = within(backstage).getByPlaceholderText("http://127.0.0.1:7890");
-		await user.clear(proxyUrlField);
-		await user.type(proxyUrlField, "http://proxy.example.com:8080");
-
+		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
+		await user.click(await screen.findByRole("option", { name: zhCN.settings.proxyModes.manual }));
+		const proxyUrl = within(backstage).getByPlaceholderText("http://127.0.0.1:7890");
+		await user.clear(proxyUrl);
+		await user.type(proxyUrl, "http://proxy.example.com:8080");
 		await user.click(networkSaveButton(backstage));
-
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith(
-				expect.objectContaining({
-					settings: expect.objectContaining({
-						networkProxy: { mode: "manual", url: "http://proxy.example.com:8080" },
-					}),
-				}),
-			),
+			expect(settingsSet).toHaveBeenCalledWith({
+				settings: { networkProxy: { mode: "manual", url: "http://proxy.example.com:8080" } },
+			}),
 		);
 	});
 
-	it("updates embedding controls independently of the proxy save", async () => {
+	it("acquires embedding files independently of configuration and proxy saves", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
-
-		await user.click(
-			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
-		);
-
 		await user.click(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
 		);
 		await user.click(
-			within(backstage).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
+			within(backstage).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
 		);
-
 		await waitFor(() =>
-			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
-				provider: "local",
-				candidateId: "test-embedding",
+			expect(client.memory.localEmbeddingAcquisitionStart).toHaveBeenCalledWith({
+				target,
+				source: { type: "official" },
 			}),
 		);
+		pushHostEvent(client, "memory.embedding_acquisition_changed", {
+			revision: 2,
+			phase: "completed",
+			operationId: "download-1",
+			target,
+			downloadedBytes: 4096,
+		});
 		expect(
-			settingsSet.mock.calls.some(
-				([request]) =>
-					Object.hasOwn(request.settings, "networkProxy") ||
-					(request.settings.memoryVectorService as { provider?: string } | undefined)?.provider ===
-						"local",
-			),
-		).toBe(false);
+			await within(backstage).findByRole("button", { name: zhCN.settings.enableLocalModel }),
+		).toBeEnabled();
+		expect(settingsSet).not.toHaveBeenCalled();
+		expect(client.memory.activateLocalEmbedding).not.toHaveBeenCalled();
+		await reopenMemory(backstage, user);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+		).toBeChecked();
 	});
 
 	it("shows feedback on successful proxy save", async () => {
@@ -382,172 +335,133 @@ describe("NetworkAndMemorySettings", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
-
 		await user.click(networkSaveButton(backstage));
-
-		await waitFor(() => {
-			expect(within(backstage).getByRole("status")).toHaveTextContent(zhCN.settings.saved);
-		});
+		await waitFor(() =>
+			expect(within(backstage).getByRole("status")).toHaveTextContent(zhCN.settings.saved),
+		);
 	});
 
 	it("shows error on failed proxy save", async () => {
 		const { client } = createTestClient();
-		client.settings.set = vi.fn(() =>
-			Promise.resolve({
-				ok: false as const,
-				error: { kind: "internal" as const, reason: "settings_write_failed" },
-			}),
-		);
+		client.settings.set = vi.fn().mockResolvedValue({
+			ok: false,
+			error: { kind: "internal", reason: "settings_write_failed" },
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
-
 		await user.click(networkSaveButton(backstage));
-
-		await waitFor(() => {
-			expect(within(backstage).getAllByRole("alert").length).toBeGreaterThan(0);
-		});
+		expect(await within(backstage).findByRole("alert")).toBeVisible();
+		expect(within(backstage).queryByRole("status")).not.toBeInTheDocument();
+		expect(networkSaveButton(backstage)).toBeEnabled();
 	});
 
-	it("keeps the download mirror inside the embedding controls", async () => {
+	it("uses the inline mirror draft for acquisition without persisting memory configuration", async () => {
 		const { client, settingsSet } = createTestClient();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider: "local" as const,
-							localModel: "test-embedding",
-						},
-						modelDownloadSource: { type: "official" },
-					},
-				},
-			}),
-		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
-
 		const embedding = embeddingSettings(backstage);
+		await user.click(
+			within(embedding).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		);
 		await user.click(selectTrigger(embedding, zhCN.settings.downloadMirrorLabel));
 		await user.click(
 			await screen.findByRole("option", { name: zhCN.settings.downloadSources.custom }),
 		);
-		const mirrorField = within(embedding).getByRole("textbox", {
+		const mirror = within(embedding).getByRole("textbox", {
 			name: zhCN.settings.downloadMirrorLabel,
 		});
-		await user.clear(mirrorField);
-		await user.type(mirrorField, "https://mirror.example.com/hf");
+		await user.type(mirror, "  https://mirror.example.com/hf  ");
 		await user.click(
-			within(embedding).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
+			within(embedding).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
 		);
-
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith({
-				settings: {
-					modelDownloadSource: { type: "custom", endpoint: "https://mirror.example.com/hf" },
-				},
+			expect(client.memory.localEmbeddingAcquisitionStart).toHaveBeenCalledWith({
+				target,
+				source: { type: "custom", endpoint: "https://mirror.example.com/hf" },
 			}),
 		);
+		expect(settingsSet).not.toHaveBeenCalled();
+		expect(client.memory.activateLocalEmbedding).not.toHaveBeenCalled();
 	});
 
-	it("keeps the Host provider selected until local configuration succeeds", async () => {
+	it("keeps the persisted Host provider until local activation succeeds", async () => {
 		const { client } = createTestClient();
-		let provider: "remote" | "local" = "remote";
 		const completion = Promise.withResolvers<void>();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider,
-							...(provider === "local"
-								? { localModel: "test-embedding" }
-								: { model: "remote-model", dimensions: 1024 }),
-						},
-						modelDownloadSource: { type: "official" },
-					},
-				},
-			}),
-		);
-		client.memory.configureLocalEmbedding = vi.fn(async () => {
-			await completion.promise;
-			provider = "local";
-			return { ok: true as const, data: { ready: true } };
+		client.settings.get = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { settings: remoteSettings } });
+		client.memory.localEmbeddingInventory = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { candidates: [{ ...candidate, installed: true }] },
 		});
-
+		client.memory.activateLocalEmbedding = vi.fn(async () => {
+			await completion.promise;
+			client.memory.localEmbeddingInventory = vi.fn().mockResolvedValue({
+				ok: true,
+				data: { candidates: [{ ...candidate, installed: true }], activeTarget: target },
+			});
+			return { ok: true as const, data: { settings: localSettings } };
+		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
-		const remoteRadio = within(backstage).getByRole("radio", {
-			name: zhCN.settings.vectorProviders.remote,
-		});
-		const localRadio = within(backstage).getByRole("radio", {
-			name: zhCN.settings.vectorProviders.local,
-		});
-		expect(remoteRadio).toBeChecked();
-
-		await user.click(localRadio);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.remote }),
+		).toBeChecked();
 		await user.click(
-			within(backstage).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
 		);
-		await waitFor(() => expect(client.memory.configureLocalEmbedding).toHaveBeenCalled());
-		expect(localRadio).toBeChecked();
-		expect(localRadio).toBeDisabled();
-		expect(within(backstage).getByRole("progressbar")).not.toHaveAttribute("value");
-
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.enableLocalModel }),
+		);
+		await waitFor(() =>
+			expect(client.memory.activateLocalEmbedding).toHaveBeenCalledWith({ target }),
+		);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		).toBeDisabled();
+		expect(within(backstage).queryByRole("progressbar")).not.toBeInTheDocument();
+		await reopenMemory(backstage, user);
+		expect(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.remote }),
+		).toBeChecked();
 		completion.resolve();
-		await waitFor(() => expect(localRadio).toBeChecked());
+		await waitFor(() =>
+			expect(
+				within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+			).toBeChecked(),
+		);
+		expect(
+			await within(backstage).findByRole("button", { name: zhCN.settings.localModelEnabled }),
+		).toBeDisabled();
 	});
 
-	it("shows actual download progress, cancels, and allows retry inside embedding settings", async () => {
+	it("shows actual acquisition progress, cancels the operation, and retries", async () => {
 		const { client } = createTestClient();
-		let finish!: () => void;
-		client.memory.configureLocalEmbedding = vi.fn(
-			() =>
-				new Promise((resolve) => {
-					finish = () =>
-						resolve({
-							ok: false,
-							error: { kind: "conflict", reason: "embedding_download_cancelled" },
-						});
-				}),
-		);
-		client.memory.localEmbeddingDownloadStatus = vi.fn().mockResolvedValue({
-			ok: true,
-			data: { status: "downloading", downloadedBytes: 1024 * 1024, totalBytes: 4 * 1024 * 1024 },
-		});
-		client.memory.cancelLocalEmbeddingDownload = vi.fn().mockImplementation(async () => {
-			vi.mocked(client.memory.localEmbeddingDownloadStatus).mockResolvedValue({
+		const progress = {
+			revision: 1,
+			phase: "downloading" as const,
+			operationId: "download-1",
+			target,
+			downloadedBytes: 1024 * 1024,
+			totalBytes: 4 * 1024 * 1024,
+		};
+		client.memory.localEmbeddingAcquisitionStart = vi
+			.fn()
+			.mockResolvedValueOnce({
 				ok: true,
-				data: { status: "cancelled", downloadedBytes: 1024 * 1024, totalBytes: 4 * 1024 * 1024 },
+				data: { ...progress, phase: "preparing", downloadedBytes: 0 },
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				data: { ...progress, revision: 4, operationId: "download-2" },
 			});
-			pushHostEvent(client, "memory.embedding_download_changed", {
-				status: "cancelled",
-				downloadedBytes: 1024 * 1024,
-				totalBytes: 4 * 1024 * 1024,
-			});
-			finish();
-			return { ok: true, data: {} };
+		client.memory.localEmbeddingAcquisitionCancel = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { ...progress, revision: 3, phase: "cancelled" },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
-		await user.click(
-			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
-		);
 		await user.click(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
 		);
@@ -555,95 +469,156 @@ describe("NetworkAndMemorySettings", () => {
 		await user.click(
 			within(section).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
 		);
-		pushHostEvent(client, "memory.embedding_download_changed", {
-			status: "downloading",
-			downloadedBytes: 1024 * 1024,
-			totalBytes: 4 * 1024 * 1024,
-		});
+		await waitFor(() =>
+			expect(client.memory.localEmbeddingAcquisitionStart).toHaveBeenCalledOnce(),
+		);
+		pushHostEvent(client, "memory.embedding_acquisition_changed", { ...progress, revision: 2 });
 		await waitFor(() =>
 			expect(within(section).getByRole("progressbar")).toHaveAttribute("value", "25"),
 		);
 		expect(within(section).getByText("1.0 MB / 4.0 MB (25%)")).toBeVisible();
 		await user.click(within(section).getByRole("button", { name: zhCN.settings.downloadCancel }));
-		expect(client.memory.cancelLocalEmbeddingDownload).toHaveBeenCalledOnce();
+		expect(client.memory.localEmbeddingAcquisitionCancel).toHaveBeenCalledWith({
+			operationId: "download-1",
+		});
 		await waitFor(() => expect(within(section).queryByRole("progressbar")).not.toBeInTheDocument());
 		expect(within(section).getByText(zhCN.settings.downloadCancelled)).toBeVisible();
-		expect(
+		await user.click(
 			within(section).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
-		).toBeEnabled();
+		);
+		await waitFor(() =>
+			expect(client.memory.localEmbeddingAcquisitionStart).toHaveBeenCalledTimes(2),
+		);
+		expect(client.memory.localEmbeddingAcquisitionStart).toHaveBeenLastCalledWith({
+			target,
+			source: { type: "official" },
+		});
+		expect(await within(section).findByRole("progressbar")).toHaveAttribute("value", "25");
+		expect(client.memory.activateLocalEmbedding).not.toHaveBeenCalled();
 	});
 
-	it("keeps the Host preset selected until settings persistence succeeds", async () => {
+	it("keeps remote preset drafts separate from the Host projection until save resolves", async () => {
 		const { client } = createTestClient();
-		let model = "current-model";
-		let dimensions = 64;
 		const completion = Promise.withResolvers<void>();
-		client.settings.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					settings: {
-						relationshipMemoryEnabled: false,
-						networkProxy: { mode: "direct" as const },
-						memoryVectorService: {
-							enabled: true,
-							provider: "remote" as const,
-							model,
-							dimensions,
-						},
-						modelDownloadSource: { type: "official" },
-					},
-				},
-			}),
-		);
-		client.settings.capabilitiesGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					networkProxyModes: [{ id: "direct" as const }],
-					memoryVectorProviders: [{ id: "remote" as const, onboarding: false }],
-					memoryVectorPresets: [{ id: "bge-m3", model: "host-preset-model", dimensions: 777 }],
-					localEmbeddingCandidates: [],
-				},
-			}),
-		);
+		client.settings.get = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { settings: remoteSettings } });
+		client.settings.capabilitiesGet = vi.fn().mockResolvedValue({
+			ok: true,
+			data: {
+				networkProxyModes: [{ id: "direct" }],
+				memoryVectorProviders: [{ id: "remote", onboarding: false }],
+				memoryVectorPresets: [{ id: "bge-m3", model: "host-preset-model", dimensions: 777 }],
+				localEmbeddingCandidates: [],
+			},
+		});
 		client.settings.set = vi.fn(async () => {
 			await completion.promise;
-			model = "host-preset-model";
-			dimensions = 777;
 			return {
 				ok: true as const,
 				data: {
 					settings: {
-						networkProxy: { mode: "direct" as const },
+						...remoteSettings,
 						memoryVectorService: {
-							enabled: true,
-							provider: "remote" as const,
-							model,
-							dimensions,
+							...remoteSettings.memoryVectorService,
+							model: "host-canonical-model",
+							dimensions: 778,
 						},
 					},
 				},
 			};
 		});
-
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
-		const trigger = selectTrigger(backstage, zhCN.settings.vectorPreset);
-		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
-
-		await user.click(trigger);
+		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
 		await user.click(
 			await screen.findByRole("option", { name: zhCN.settings.vectorPresetLabels["bge-m3"] }),
 		);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorModel)).toHaveValue(
+			"host-preset-model",
+		);
+		expect(client.settings.set).not.toHaveBeenCalled();
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveEmbedding }));
 		await waitFor(() => expect(client.settings.set).toHaveBeenCalled());
-		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
-		expect(trigger).toBeDisabled();
-
+		expect(selectTrigger(backstage, zhCN.settings.vectorPreset)).toBeDisabled();
+		await reopenMemory(backstage, user);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorModel)).toHaveValue(
+			"current-model",
+		);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorDimensions)).toHaveValue(64);
 		completion.resolve();
 		await waitFor(() =>
-			expect(trigger).toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]),
+			expect(within(backstage).getByLabelText(zhCN.settings.vectorModel)).toHaveValue(
+				"host-canonical-model",
+			),
 		);
+		expect(within(backstage).getByLabelText(zhCN.settings.vectorDimensions)).toHaveValue(778);
+	});
+
+	it("persists the selected inventory candidate only after Host activation", async () => {
+		const { client } = createTestClient();
+		const alternateTarget = { kind: "candidate" as const, candidateId: "alternate-model" };
+		const alternate = {
+			...candidate,
+			id: alternateTarget.candidateId,
+			name: "Alternate model",
+			isDefault: false,
+			target: alternateTarget,
+			installed: true,
+		};
+		const candidates = [{ ...candidate, installed: true }, alternate];
+		const completion = Promise.withResolvers<void>();
+		let savedSettings = localSettings;
+		client.settings.get = vi.fn(async () => ({
+			ok: true as const,
+			data: { settings: savedSettings },
+		}));
+		client.memory.localEmbeddingInventory = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { candidates, activeTarget: target } });
+		client.memory.activateLocalEmbedding = vi.fn(async () => {
+			await completion.promise;
+			savedSettings = {
+				...localSettings,
+				memoryVectorService: {
+					enabled: true,
+					provider: "local",
+					localModel: alternateTarget.candidateId,
+				},
+			};
+			client.memory.localEmbeddingInventory = vi
+				.fn()
+				.mockResolvedValue({ ok: true, data: { candidates, activeTarget: alternateTarget } });
+			return {
+				ok: true as const,
+				data: { settings: savedSettings },
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		await user.click(selectTrigger(backstage, zhCN.settings.localModel));
+		await user.click(await screen.findByRole("option", { name: alternate.name }));
+		expect(selectTrigger(backstage, zhCN.settings.localModel)).toHaveTextContent(alternate.name);
+		expect(client.memory.activateLocalEmbedding).not.toHaveBeenCalled();
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.enableLocalModel }),
+		);
+		await waitFor(() =>
+			expect(client.memory.activateLocalEmbedding).toHaveBeenCalledWith({
+				target: alternateTarget,
+			}),
+		);
+		await reopenMemory(backstage, user);
+		expect(selectTrigger(backstage, zhCN.settings.localModel)).toHaveTextContent(candidate.name);
+		completion.resolve();
+		await waitFor(() =>
+			expect(selectTrigger(backstage, zhCN.settings.localModel)).toHaveTextContent(alternate.name),
+		);
+		expect(
+			await within(backstage).findByRole("button", { name: zhCN.settings.localModelEnabled }),
+		).toBeDisabled();
+		await reopenMemory(backstage, user);
+		expect(selectTrigger(backstage, zhCN.settings.localModel)).toHaveTextContent(alternate.name);
+		expect(client.memory.localEmbeddingAcquisitionStart).not.toHaveBeenCalled();
 	});
 });

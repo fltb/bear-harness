@@ -12,35 +12,29 @@ import {
 	characterStatePrompt,
 	compileCharacterStateSchema,
 } from "../src/companion/state-schema.js";
-import {
-	COMPANION_SCHEMA_SQL,
-	CompanionDatabase,
-	SYSTEM_SCHEMA_SQL,
-	SystemDatabase,
-} from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
+const databases: CompanionDatabase[] = [];
+const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
+const character = loader.load("jizhou");
+if (!character) throw new Error("missing default character");
 afterEach(() => {
+	for (const database of databases.splice(0)) database.close();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 function fixture() {
 	const root = mkdtempSync(join(tmpdir(), "bear-state-"));
 	roots.push(root);
-	const system = new SystemDatabase(join(root, "system", "settings.db"));
 	const database = new CompanionDatabase(
 		join(root, "companions", "jizhou", "runtime.db"),
 		"jizhou",
 	);
-	system.initialize(SYSTEM_SCHEMA_SQL);
+	databases.push(database);
 	database.initialize(COMPANION_SCHEMA_SQL);
 	database.ensureRuntimeIdentity();
-	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
-	const character = loader.load("jizhou");
-	if (!character) throw new Error("missing default character");
-	loader.seed(system.orm, character);
-	system.close();
 	database.orm
 		.insert(conversations)
 		.values({ id: "conversation", companionId: character.id })
@@ -132,7 +126,7 @@ describe("companion state", () => {
 	});
 
 	it("updates simple Character values and Display in one optional batch", async () => {
-		const { database, character, store } = fixture();
+		const { character, store } = fixture();
 		const tools = registerHostTools({
 			sessionId: () => "conversation",
 			character: () => character,
@@ -153,7 +147,6 @@ describe("companion state", () => {
 			story: { active: true, summary: "用户发现了一份未送达记录。" },
 		});
 		expect(store.snapshot(character, "conversation").display.expressionId).toBe("reflective");
-		database.close();
 	});
 
 	it("keeps global values across conversations and conversation values isolated", () => {
@@ -166,19 +159,27 @@ describe("companion state", () => {
 			changes: [
 				{ path: "/character/relationship/affinity", value: 7 },
 				{ path: "/character/story/summary", value: "只属于第一条会话。" },
+				{ path: "/display/expressionId", value: "reflective" },
 			],
 			character,
 		});
+		expect(store.project(character.id, "conversation", character.state).document).toMatchObject({
+			relationship: { affinity: 7 },
+			story: { summary: "只属于第一条会话。" },
+		});
+		expect(store.snapshot(character, "conversation").display.expressionId).toBe("reflective");
 		const second = store.project(character.id, "second", character.state).document;
 		expect(second).toMatchObject({
 			relationship: { affinity: 7 },
 			story: { summary: "尚未开始。" },
 		});
-		database.close();
+		expect(store.snapshot(character, "second").display.expressionId).toBe(
+			character.visual.default_expression,
+		);
 	});
 
 	it("uses one basic schema validation and declared Display ids", () => {
-		const { database, character, store } = fixture();
+		const { character, store } = fixture();
 		const base = {
 			companionId: character.id,
 			conversationId: "conversation",
@@ -201,11 +202,10 @@ describe("companion state", () => {
 				}),
 			),
 		).toMatchObject({ kind: "validation_failed", reason: "display_expression_not_declared" });
-		database.close();
 	});
 
 	it("keeps Skill loading separate from state field descriptions", async () => {
-		const { database, character, store } = fixture();
+		const { character, store } = fixture();
 		const tools = registerHostTools({
 			sessionId: () => "conversation",
 			character: () => character,
@@ -219,11 +219,10 @@ describe("companion state", () => {
 		expect(text).toContain("<role_skill");
 		expect(text).not.toContain("<character_state_contract>");
 		expect(text).not.toContain("x-write-authority");
-		database.close();
 	});
 
 	it("generates model semantics from descriptions without storage metadata", () => {
-		const { database, character } = fixture();
+		const { character } = fixture();
 		const prompt = characterStatePrompt(character.state);
 		expect(prompt).toContain("路径：/character/story/summary");
 		expect(prompt).toContain("已发生剧情摘要");
@@ -231,11 +230,10 @@ describe("companion state", () => {
 		expect(prompt).not.toContain("x-scope");
 		expect(prompt).not.toContain("revision");
 		expect(prompt).not.toContain("write-authority");
-		database.close();
 	});
 
 	it("accepts only top-level global or conversation scope", () => {
-		const { database, character } = fixture();
+		const { character } = fixture();
 		expect([...compileCharacterStateSchema(character.state).partitions]).toEqual([
 			["relationship", "global"],
 			["continuity", "global"],
@@ -248,6 +246,5 @@ describe("companion state", () => {
 		expect(() => compileCharacterStateSchema(invalid)).toThrow(
 			"may not override its partition x-scope",
 		);
-		database.close();
 	});
 });

@@ -57,13 +57,17 @@ describe("TencentDbRuntime standard TDAI path", () => {
 			await gate.promise;
 			await original();
 		};
-		const first = memory.start();
-		const second = memory.start();
-		await vi.waitFor(() => expect(calls).toBe(1));
-		gate.resolve();
-		await Promise.all([first, second]);
-		expect(calls).toBe(1);
-		await memory.close();
+		try {
+			const first = memory.start();
+			const second = memory.start();
+			await vi.waitFor(() => expect(calls).toBe(1));
+			gate.resolve();
+			await Promise.all([first, second]);
+			expect(calls).toBe(1);
+		} finally {
+			gate.resolve();
+			await memory.close();
+		}
 
 		const retry = runtime(root, "role-b");
 		const retryCore = Reflect.get(retry, "core") as { initialize(): Promise<void> };
@@ -74,18 +78,21 @@ describe("TencentDbRuntime standard TDAI path", () => {
 			if (attempts === 1) throw new Error("first initialization failed");
 			await retryOriginal();
 		};
-		await expect(retry.start()).rejects.toThrow("first initialization failed");
-		await expect(retry.start()).resolves.toBeUndefined();
-		expect(attempts).toBe(2);
-		await retry.close();
+		try {
+			await expect(retry.start()).rejects.toThrow("first initialization failed");
+			await expect(retry.start()).resolves.toBeUndefined();
+			expect(attempts).toBe(2);
+		} finally {
+			await retry.close();
+		}
 	});
 
 	it("captures Pi agent_end messages into L0 and keeps companions isolated", async () => {
 		const root = await mkdtemp(join(tmpdir(), "bear-tdai-runtime-"));
 		const first = runtime(root, "role-a");
 		const second = runtime(root, "role-b");
-		await Promise.all([first.start(), second.start()]);
 		try {
+			await Promise.all([first.start(), second.start()]);
 			const sessionKey = "conversation-a";
 			const timestamp = Date.now();
 			await first.captureTurn({
@@ -123,8 +130,8 @@ describe("TencentDbRuntime standard TDAI path", () => {
 	it("captures the first lazily-started Pi turn without requiring a Host turn timestamp", async () => {
 		const root = await mkdtemp(join(tmpdir(), "bear-tdai-runtime-"));
 		const memory = runtime(root, "role-a");
-		await memory.start();
 		try {
+			await memory.start();
 			const timestamp = Date.now() - 1_000;
 			await memory.captureTurn({
 				userText: "The blue marble is called Little Tide.",
@@ -158,8 +165,8 @@ describe("TencentDbRuntime standard TDAI path", () => {
 	it("captures two settled full-history snapshots without duplicating the first turn", async () => {
 		const root = await mkdtemp(join(tmpdir(), "bear-tdai-runtime-"));
 		const memory = runtime(root, "role-a");
-		await memory.start();
 		try {
+			await memory.start();
 			const timestamp = Date.now() - 2_000;
 			const first = [
 				{

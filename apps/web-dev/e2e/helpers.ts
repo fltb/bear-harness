@@ -115,8 +115,8 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		})
 	).json();
 	expect(enableModel).toMatchObject({ ok: true });
-	const setDefault = await (
-		await page.request.post("/rpc/model.systemDefaults.set", {
+	const completeSystemModel = await (
+		await page.request.post("/rpc/systemOnboarding.completeModel", {
 			headers,
 			data: {
 				reply: { providerId: "e2e-rule", modelId: "rule-model" },
@@ -124,28 +124,27 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			},
 		})
 	).json();
-	expect(setDefault).toMatchObject({ ok: true });
-	const systemDefaults = await (
-		await page.request.post("/rpc/model.systemDefaults.get", {
-			headers,
-			data: {},
-		})
-	).json();
-	expect(systemDefaults).toMatchObject({
-		ok: true,
-		data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
-	});
-	const initializedDefaults = await (
-		await page.request.post("/rpc/model.defaults.initialize", {
-			headers,
-			data: {},
-		})
-	).json();
-	expect(initializedDefaults).toMatchObject({
+	expect(completeSystemModel).toMatchObject({
 		ok: true,
 		data: {
-			reply: { providerId: "e2e-rule", modelId: "rule-model" },
-			onboardingComplete: expect.any(Boolean),
+			defaults: {
+				reply: { providerId: "e2e-rule", modelId: "rule-model" },
+			},
+		},
+	});
+	const completeSystemEmbedding = await (
+		await page.request.post("/rpc/systemOnboarding.completeEmbedding", {
+			headers,
+			data: { choice: "none" },
+		})
+	).json();
+	expect(completeSystemEmbedding).toMatchObject({
+		ok: true,
+		data: {
+			settings: {
+				firstRunStage: "role",
+				memoryVectorService: { enabled: false, provider: "none" },
+			},
 		},
 	});
 	const completeRoleModel = await (
@@ -157,16 +156,6 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	expect(completeRoleModel).toMatchObject({
 		ok: true,
 		data: { onboardingComplete: true },
-	});
-	const completeSystemSetup = await (
-		await page.request.post("/rpc/settings.set", {
-			headers,
-			data: { settings: { firstRunStage: "role" } },
-		})
-	).json();
-	expect(completeSystemSetup).toMatchObject({
-		ok: true,
-		data: { settings: { firstRunStage: "role" } },
 	});
 
 	let onboardingState = await (
@@ -265,6 +254,8 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	// console. Reload so the Renderer proves that both the Pi Session and its
 	// selected model are reconstructed from authoritative reads, not local state.
 	await page.reload();
+	if (mobileNavigation)
+		await page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }).click();
 	await expect
 		.poll(
 			() =>
@@ -274,6 +265,10 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			{ timeout: 15_000 },
 		)
 		.toBe(1);
+	if (mobileNavigation)
+		await page
+			.getByRole("button", { name: `${zhCN.backstage.close} ${zhCN.sidebar.conversations}` })
+			.click();
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled({
 		timeout: 15_000,
 	});

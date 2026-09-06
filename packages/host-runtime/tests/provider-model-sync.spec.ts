@@ -96,13 +96,18 @@ describe("provider catalog model synchronization", () => {
 				modelId: string;
 				label: string;
 				supportsImages: boolean;
+				enabled: boolean;
+				readiness: string;
 			}>;
 		};
-		expect(pool.models.filter((model) => model.providerId === "sync-relay")).toMatchObject([
-			{ modelId: "vision", label: "Vision", supportsImages: true },
-			{ modelId: "text", label: "Text", supportsImages: false },
-		]);
-		expect(pool.models.filter((model) => model.providerId === "sync-relay")).toHaveLength(2);
+		const relayModels = pool.models.filter((model) => model.providerId === "sync-relay");
+		expect(relayModels).toHaveLength(2);
+		expect(relayModels).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ modelId: "vision", label: "Vision", supportsImages: true }),
+				expect.objectContaining({ modelId: "text", label: "Text", supportsImages: false }),
+			]),
+		);
 
 		await data(runtime, "provider.setApiKey", {
 			providerId: "sync-relay",
@@ -126,7 +131,16 @@ describe("provider catalog model synchronization", () => {
 		});
 		await data(runtime, "provider.remove", { providerId: "sync-relay" });
 		const afterRemove = (await data(runtime, "model.pool.get", {})) as typeof pool;
-		expect(afterRemove.models.some((model) => model.providerId === "sync-relay")).toBe(false);
+		const removedProviderModels = afterRemove.models.filter(
+			(model) => model.providerId === "sync-relay",
+		);
+		expect(removedProviderModels).toHaveLength(2);
+		expect(removedProviderModels).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ modelId: "vision", enabled: false, readiness: "disabled" }),
+				expect.objectContaining({ modelId: "text", enabled: false, readiness: "disabled" }),
+			]),
+		);
 		const defaults = (await data(runtime, "model.defaults.get", {})) as {
 			reply?: { providerId: string; modelId: string };
 			vision: { mode: string };
@@ -188,7 +202,7 @@ describe("provider catalog model synchronization", () => {
 			existsSync(durableFileTransactionMarkerPath(dirname(marker.target), marker.target)),
 		).toBe(false);
 	});
-	it("imports all catalog models when a provider fragment has no explicit model routes", async () => {
+	it("imports every catalog model idempotently when a provider fragment has no explicit routes", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();
 		const listed = (await data(runtime, "provider.list", {})) as {
@@ -207,24 +221,41 @@ describe("provider catalog model synchronization", () => {
 		};
 		const importedIds = pool.models
 			.filter((model) => model.providerId === provider.id)
-			.map((model) => model.modelId);
-		expect(importedIds).toEqual(provider.availableModels.map((model) => model.id));
+			.map((model) => model.modelId)
+			.sort();
+		const catalogIds = provider.availableModels.map((model) => model.id).sort();
+		expect(importedIds).toEqual(catalogIds);
 	});
 
 	function oauthDispatcher(
 		state: { providerId: string; status: "completed" | "failed" },
 		answerState = state,
 	) {
-		const enable = vi.fn();
+		const syncedModels: Array<{
+			providerId: string;
+			providerName: string;
+			modelId: string;
+			label: string;
+			supportsImages: boolean;
+			enabled: boolean;
+			readiness: "ready";
+			createdAt: string;
+		}> = [];
 		const provider = {
 			id: "oauth-relay",
 			name: "OAuth Relay",
 			availableModels: [{ id: "oauth-model", name: "OAuth Model", supportsImages: true }],
 		};
+		const projectionFacts = {
+			providers: [{ providerId: provider.id, providerName: provider.name, authenticated: true }],
+			catalogModels: [{ providerId: provider.id, modelId: "oauth-model" }],
+			removingProviderIds: [],
+		};
 		const providers = {
 			getOAuthSession: vi.fn(async () => ({ ...state, events: [] })),
 			answerOAuth: vi.fn(() => ({ ...answerState, events: [] })),
 			listProviders: vi.fn(async () => [provider]),
+			modelProjectionFacts: () => projectionFacts,
 		};
 		const orm = {
 			select: () => ({
@@ -253,9 +284,32 @@ describe("provider catalog model synchronization", () => {
 			companionStore: { reconcileSchema: vi.fn() },
 			defaultCharacterId: "oauth-character",
 			providers,
-			models: { enable },
+			models: {
+				sync: (input: {
+					providerId: string;
+					modelId: string;
+					label: string;
+					supportsImages: boolean;
+				}) => {
+					const model = {
+						...input,
+						providerName: provider.name,
+						enabled: true,
+						readiness: "ready" as const,
+						createdAt: "2026-01-01T00:00:00.000Z",
+					};
+					const index = syncedModels.findIndex(
+						(candidate) =>
+							candidate.providerId === input.providerId && candidate.modelId === input.modelId,
+					);
+					if (index < 0) syncedModels.push(model);
+					else syncedModels[index] = model;
+					return model;
+				},
+				list: () => [...syncedModels],
+			},
 		} as unknown as HostCompositionContext);
-		return { dispatcher, providers, enable };
+		return { dispatcher, providers };
 	}
 
 	it("keeps OAuth status queries read-only even after completion", async () => {
@@ -263,8 +317,10 @@ describe("provider catalog model synchronization", () => {
 		await expect(
 			failed.dispatcher.dispatch("provider.loginStatus", { providerId: "oauth-relay" }),
 		).resolves.toMatchObject({ ok: true, data: { status: "failed" } });
-		expect(failed.providers.listProviders).not.toHaveBeenCalled();
-		expect(failed.enable).not.toHaveBeenCalled();
+		await expect(failed.dispatcher.dispatch("model.pool.get", {})).resolves.toMatchObject({
+			ok: true,
+			data: { models: [] },
+		});
 		const missing = oauthDispatcher({ providerId: "oauth-relay", status: "failed" });
 		missing.providers.getOAuthSession.mockRejectedValue({
 			kind: "not_found",
@@ -276,19 +332,23 @@ describe("provider catalog model synchronization", () => {
 			ok: false,
 			error: { kind: "not_found", reason: "oauth_session_not_found" },
 		});
-		expect(missing.providers.listProviders).not.toHaveBeenCalled();
-		expect(missing.enable).not.toHaveBeenCalled();
+		await expect(missing.dispatcher.dispatch("model.pool.get", {})).resolves.toMatchObject({
+			ok: true,
+			data: { models: [] },
+		});
 
 		const completed = oauthDispatcher({ providerId: "oauth-relay", status: "completed" });
 		await expect(
 			completed.dispatcher.dispatch("provider.loginStatus", { providerId: "oauth-relay" }),
 		).resolves.toMatchObject({ ok: true, data: { status: "completed" } });
-		expect(completed.enable).not.toHaveBeenCalled();
-		expect(completed.providers.listProviders).not.toHaveBeenCalled();
+		await expect(completed.dispatcher.dispatch("model.pool.get", {})).resolves.toMatchObject({
+			ok: true,
+			data: { models: [] },
+		});
 	});
 
 	it("synchronizes a model returned by the completed OAuth answer path", async () => {
-		const { dispatcher, enable, providers } = oauthDispatcher(
+		const { dispatcher } = oauthDispatcher(
 			{ providerId: "oauth-relay", status: "failed" },
 			{ providerId: "oauth-relay", status: "completed" },
 		);
@@ -298,7 +358,21 @@ describe("provider catalog model synchronization", () => {
 				answer: "finished",
 			}),
 		).resolves.toMatchObject({ ok: true, data: { status: "completed" } });
-		expect(providers.listProviders).toHaveBeenCalledTimes(1);
-		expect(enable).toHaveBeenCalledTimes(1);
+		await expect(dispatcher.dispatch("model.pool.get", {})).resolves.toMatchObject({
+			ok: true,
+			data: {
+				models: [
+					{
+						providerId: "oauth-relay",
+						providerName: "OAuth Relay",
+						modelId: "oauth-model",
+						label: "OAuth Model",
+						supportsImages: true,
+						enabled: true,
+						readiness: "ready",
+					},
+				],
+			},
+		});
 	});
 });

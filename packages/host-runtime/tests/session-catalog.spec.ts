@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
+import { CompanionStateStore } from "../src/companion/companion-store.js";
 import type { PiRuntime } from "../src/companion/pi-runtime.js";
 import { SessionCatalog } from "../src/companion/session-catalog.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import {
+	activeConversations,
 	artifactAdoptions,
 	artifacts,
 	canonSources,
@@ -64,7 +66,7 @@ function setup() {
 	} as unknown as PiRuntime;
 	const artifactStore = new ArtifactStore(database.orm, join(directory, "artifacts"));
 	const beforeDelete = vi.fn(async () => undefined);
-	const catalog = new SessionCatalog(database.orm, pi, {
+	const catalog = new SessionCatalog(database.orm, pi, new CompanionStateStore(database.orm), {
 		beforeDelete,
 		artifacts: artifactStore,
 	});
@@ -75,6 +77,10 @@ function setup() {
 			{ id: "beta", companionId: "bear" },
 		])
 		.run();
+	database.orm
+		.insert(activeConversations)
+		.values({ companionId: "bear", conversationId: "alpha" })
+		.run();
 	return { artifactStore, beforeDelete, catalog, database, pi, sessions };
 }
 
@@ -83,46 +89,56 @@ afterEach(() => {
 });
 
 describe("SessionCatalog", () => {
-	it("adds ownership before Pi opens a new session", async () => {
+	it("adds ownership and selects the conversation before Pi opens a new session", async () => {
 		const { catalog, database, pi } = setup();
 		try {
 			vi.mocked(pi.create).mockImplementation(async (_title, beforeOpen) => {
 				beforeOpen?.("new-session");
+				expect(
+					database.connection
+						.prepare("SELECT companion_id FROM conversations WHERE id = 'new-session'")
+						.get(),
+				).toEqual({ companion_id: "bear" });
+				expect(
+					database.connection
+						.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
+						.get(),
+				).toEqual({ conversation_id: "new-session" });
 				return { sessionId: "new-session" } as never;
 			});
-			await catalog.create("bear");
-			expect(
-				database.connection
-					.prepare("SELECT companion_id FROM conversations WHERE id = 'new-session'")
-					.get(),
-			).toEqual({ companion_id: "bear" });
+			await catalog.createAndSelect("bear");
 		} finally {
 			database.close();
 		}
 	});
 
-	it("removes the ownership row when Pi cannot open the new session", async () => {
+	it("restores the prior selection when Pi cannot open the new session", async () => {
 		const { catalog, database, pi } = setup();
 		try {
 			vi.mocked(pi.create).mockImplementation(async (_title, beforeOpen) => {
 				beforeOpen?.("failed-session");
 				throw new Error("model unavailable");
 			});
-			await expect(catalog.create("bear")).rejects.toThrow("model unavailable");
+			await expect(catalog.createAndSelect("bear")).rejects.toThrow("model unavailable");
 			expect(
 				database.connection
 					.prepare("SELECT id FROM conversations WHERE id = 'failed-session'")
 					.get(),
 			).toBeUndefined();
+			expect(
+				database.connection
+					.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
+					.get(),
+			).toEqual({ conversation_id: "alpha" });
 		} finally {
 			database.close();
 		}
 	});
 
-	it("rolls back fork ownership when Pi cannot finish opening the branch", async () => {
+	it("rolls back fork ownership and restores the prior selection when Pi cannot open it", async () => {
 		const { catalog, database, pi } = setup();
 		try {
-			vi.mocked(pi.fork).mockImplementation(async (_sourceId, _entryId, beforeOpen) => {
+			vi.mocked(pi.fork).mockImplementation(async (_sourceId, _entryId, _title, beforeOpen) => {
 				beforeOpen?.("failed-fork");
 				throw new Error("model unavailable");
 			});
@@ -131,6 +147,11 @@ describe("SessionCatalog", () => {
 			expect(
 				database.connection.prepare("SELECT id FROM conversations WHERE id = 'failed-fork'").get(),
 			).toBeUndefined();
+			expect(
+				database.connection
+					.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
+					.get(),
+			).toEqual({ conversation_id: "alpha" });
 		} finally {
 			database.close();
 		}
@@ -175,10 +196,11 @@ describe("SessionCatalog", () => {
 		try {
 			expect(await catalog.archive("bear", "alpha", true)).toBeUndefined();
 			expect(pi.close).toHaveBeenCalledOnce();
-			expect(pi.close).toHaveBeenCalledWith("alpha");
+			expect(pi.close).toHaveBeenCalledWith("alpha", "preserve");
 			expect(pi.delete).not.toHaveBeenCalled();
 			expect(pi.create).not.toHaveBeenCalled();
 			expect(pi.open).not.toHaveBeenCalled();
+			expect(database.orm.select().from(activeConversations).all()).toEqual([]);
 		} finally {
 			database.close();
 		}
@@ -188,7 +210,8 @@ describe("SessionCatalog", () => {
 		const { beforeDelete, catalog, database, pi, sessions } = setup();
 		try {
 			const alpha = sessions[0];
-			if (!alpha) throw new Error("missing alpha fixture");
+			const beta = sessions[1];
+			if (!alpha || !beta) throw new Error("missing session fixture");
 			expect(await catalog.delete("bear", "alpha")).toBeUndefined();
 			expect(pi.delete).toHaveBeenCalledOnce();
 			expect(pi.delete).toHaveBeenCalledWith("alpha", expect.any(Function));
@@ -199,6 +222,7 @@ describe("SessionCatalog", () => {
 			expect(pi.create).not.toHaveBeenCalled();
 			expect(pi.open).not.toHaveBeenCalled();
 			expect(existsSync(alpha.path)).toBe(false);
+			expect(existsSync(beta.path)).toBe(true);
 			expect(
 				database.connection.prepare("SELECT id FROM conversations WHERE id = 'alpha'").get(),
 			).toBeUndefined();

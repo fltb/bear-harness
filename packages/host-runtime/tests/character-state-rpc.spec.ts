@@ -58,8 +58,8 @@ describe("character state RPC projection", () => {
 			productConfig,
 			credentialVault: vault,
 		});
-		await runtime.start();
 		try {
+			await runtime.start();
 			await configureConversationModel(runtime);
 			const conversation = (await data(runtime, "conversation.create", {
 				title: "State projection",
@@ -89,12 +89,25 @@ describe("character state RPC projection", () => {
 				],
 			});
 			expect(response).toEqual({});
-			expect(receive).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: "companionState",
-					conversationId: conversation.conversationId,
+			expect(receive).toHaveBeenCalledWith({
+				type: "companionState",
+				conversationId: conversation.conversationId,
+				state: expect.objectContaining({
+					state: expect.objectContaining({
+						character: expect.objectContaining({
+							document: expect.objectContaining({
+								story: expect.objectContaining({
+									summary: "两份记录都不足以确认最终接收者。",
+								}),
+							}),
+							revisions: {
+								...projection.revisions,
+								conversation: projection.revisions.conversation + 1,
+							},
+						}),
+					}),
 				}),
-			);
+			});
 			stop();
 
 			const after = (await data(runtime, "companionState.get", {

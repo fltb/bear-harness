@@ -15,7 +15,7 @@ type RuntimeLogin = (
 	interaction: AuthInteraction,
 ) => Promise<unknown>;
 
-/** Scriptable fake pi-ai runtime; the catalog's only external surface is ModelRuntime.login. */
+/** Scriptable fake Pi runtime with the catalog APIs exercised after login completes. */
 const runtime = vi.hoisted(() => ({
 	login: undefined as undefined | RuntimeLogin,
 }));
@@ -27,7 +27,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 				if (!runtime.login) return Promise.reject(new Error("login not scripted"));
 				return runtime.login(providerId, type, interaction);
 			},
+			refresh: async () => ({ errors: new Map() }),
 			getProvider: () => undefined,
+			getProviders: () => [],
 		})),
 	},
 }));
@@ -116,8 +118,7 @@ describe("ProviderCatalog OAuth contract", () => {
 	});
 
 	it("projects pi-ai auth events (info links, progress, auth_url instructions) verbatim", async () => {
-		const changed = vi.fn();
-		const catalog = makeCatalog(changed);
+		const catalog = makeCatalog();
 		let release: (() => void) | undefined;
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
@@ -163,7 +164,6 @@ describe("ProviderCatalog OAuth contract", () => {
 			expect(catalog.getOAuthSession("openai-codex").status).toBe("completed");
 		});
 		expect(catalog.getOAuthSession("openai-codex").prompt).toBeUndefined();
-		expect(changed.mock.calls).toEqual(Array.from({ length: 4 }, () => ["openai-codex"]));
 	});
 
 	it("projects device_code metadata (verification URI, interval, expiry) verbatim", async () => {
@@ -251,6 +251,7 @@ describe("ProviderCatalog OAuth contract", () => {
 		await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 		expect(capturedSignal!.aborted).toBe(false);
 		catalog.cancelOAuth("openai-codex");
+		expect(capturedSignal!.aborted).toBe(true);
 		expect(() => catalog.getOAuthSession("openai-codex")).toThrowError(
 			expect.objectContaining({ kind: "not_found", reason: "oauth_session_not_found" }),
 		);

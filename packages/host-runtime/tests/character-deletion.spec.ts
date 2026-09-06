@@ -91,6 +91,7 @@ describe("physical character deletion", () => {
 		await runtime.start();
 		await importCharacter(runtime, "deletable-role");
 		const registry = storage(runtime);
+		const handle = registry.open("deletable-role");
 		const runtimePath = registry.layout.companion("deletable-role").root;
 		const packagePath = registry.layout.characterPackage("deletable-role");
 		expect(existsSync(runtimePath)).toBe(true);
@@ -116,7 +117,6 @@ describe("physical character deletion", () => {
 			reason: "character_runtime_exists",
 		});
 
-		const handle = registry.open("deletable-role");
 		const closeDatabase = vi.spyOn(handle.database, "close");
 		expect(
 			await runtime.dispatch("character.runtimeDelete", { characterId: "deletable-role" }),

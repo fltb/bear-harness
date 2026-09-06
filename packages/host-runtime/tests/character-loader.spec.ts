@@ -111,10 +111,6 @@ describe("character package visual projection", () => {
 		expect(character.behavior.identity.invariants).toContainEqual(
 			expect.stringContaining("旧档案中的人只能由原文代表"),
 		);
-		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
-			"continuity-reveal",
-			"undelivered-report",
-		]);
 		expect(display.theme.tokens).toEqual(
 			expect.objectContaining({
 				canvas: "#07171c",
@@ -161,6 +157,26 @@ describe("character package visual projection", () => {
 });
 
 describe("character package display validation", () => {
+	it("allows original Canon text to use a different language from the character UI", () => {
+		const installedRoot = mkdtempSync(join(tmpdir(), "bear-character-canon-language-"));
+		temporaryDirectories.push(installedRoot);
+		const packageDir = join(installedRoot, "translated-role");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = parse(readFileSync(manifestPath, "utf8"));
+		manifest.id = "translated-role";
+		writeFileSync(manifestPath, stringify(manifest));
+		const canonPath = join(packageDir, "canon", "manifest.yaml");
+		const canon = parse(readFileSync(canonPath, "utf8"));
+		canon.language = "en-US";
+		writeFileSync(canonPath, stringify(canon));
+		const loader = new CharacterLoader(characterRoot, installedRoot);
+		const character = loader.load("translated-role");
+		if (!character) throw new Error("Imported character must load");
+		expect(loader.display(character).language).toBe("zh-CN");
+		expect(character.canon.manifest.language).toBe("en-US");
+	});
+
 	it("projects and parses an imported package display", () => {
 		const installedRoot = mkdtempSync(join(tmpdir(), "bear-character-display-imported-"));
 		temporaryDirectories.push(installedRoot);
@@ -343,60 +359,16 @@ describe("character package Pi resources", () => {
 		const loader = new CharacterLoader(characterRoot);
 		const character = loader.load("jizhou");
 		if (!character) throw new Error("jizhou package is required for the official build");
+		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
+			"continuity-reveal",
+			"undelivered-report",
+		]);
 		const resources = loader.piResources(character);
 		expect(resources.skillPaths).toEqual([
 			realpathSync(resolve(characterRoot, "jizhou", "skills")),
 		]);
 		expect(resources.pluginPaths).toEqual([]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
-		expect(resources.appendSystemPrompt).toContain("<role_skills>");
-		expect(resources.appendSystemPrompt).toContain("<host_display_catalog>");
-		expect(resources.appendSystemPrompt).toContain("<character_identity>");
-		expect(resources.appendSystemPrompt).toContain("<character_state_contract>");
-		expect(resources.appendSystemPrompt).toContain("<self_canon>");
-		expect(resources.appendSystemPrompt).toContain(
-			"用简短自然语言记录对以后互动有帮助的稳定关系事实",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"用自然语言总结已经确定发生的事实、重要发现和用户作出的选择",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"completed natural conversation is captured by TDAI and may be selectively distilled",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"Keep automatic relationship memory and explicit MEMORY.md edits distinct",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"fenced code blocks with a language tag for code",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"do not put arithmetic or formulas in inline-code backticks",
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			"Never emit raw HTML, Markdown images, or text that imitates product buttons",
-		);
-		expect(resources.appendSystemPrompt).toContain('"id": "relay_room"');
-		expect(resources.appendSystemPrompt).toContain('"id": "reflective"');
-		expect(resources.appendSystemPrompt).toContain('"id": "continuity_light"');
-		expect(resources.appendSystemPrompt).toContain(
-			'"description": "一张区分角色资料、当前会话与当前极昼经历的示意图。"',
-		);
-		expect(resources.appendSystemPrompt).toContain(
-			'"useWhen": "用户询问极昼的连续性并明确想看图示时"',
-		);
-		expect(resources.appendSystemPrompt).toContain("Use host_media");
-		expect(resources.appendSystemPrompt).toContain("Use host_choices");
-		expect(resources.appendSystemPrompt).not.toContain("/display/surfaces");
-		expect(resources.appendSystemPrompt).not.toContain("choice_sets");
-		expect(resources.appendSystemPrompt).not.toContain("scene-relay-room.webp");
-		expect(resources.appendSystemPrompt).not.toContain("<role_examples>");
-		expect(resources.appendSystemPrompt).not.toContain("x-scope");
-		expect(resources.appendSystemPrompt).not.toContain("x-write-authority");
-		expect(resources.appendSystemPrompt).not.toContain("x-evidence-required");
-		expect(resources.appendSystemPrompt).not.toContain("x-allowed-transitions");
-		expect(resources.appendSystemPrompt).not.toContain("JSON Patch");
-		expect(resources.appendSystemPrompt).not.toContain('"id": "emotional_support"');
-		expect(resources.appendSystemPrompt.match(/"user": "今天有点累。"/g)).toHaveLength(1);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

@@ -55,6 +55,8 @@ const configuredModel = {
 	label: "Model",
 	supportsImages: false,
 	createdAt: timestamp,
+	enabled: true,
+	readiness: "ready",
 };
 const run = {
 	id: "run-1",
@@ -103,9 +105,12 @@ describe("host projection validation", () => {
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
 			"name",
+			"source",
+			"added",
 			"authMethods",
 			"credentialStatus",
 			"availableModels",
+			"unavailable",
 		]);
 		expect(isProviderInfo({ ...provider, availableModels: [{ id: "model-1" }] })).toBe(false);
 		expectRequiredFields(isConfiguredModel, configuredModel, [
@@ -114,8 +119,11 @@ describe("host projection validation", () => {
 			"label",
 			"supportsImages",
 			"createdAt",
+			"enabled",
+			"readiness",
 		]);
 		expect(isConfiguredModel({ ...configuredModel, supportsImages: "yes" })).toBe(false);
+		expect(isConfiguredModel({ ...configuredModel, readiness: "unknown" })).toBe(false);
 		expectRequiredFields(isRun, run, [
 			"id",
 			"conversationId",
@@ -136,7 +144,6 @@ describe("host projection validation", () => {
 			currentStepId: "hello",
 			stateData: {
 				answers: {},
-				decisions: { relationship_memory_enabled: true },
 			},
 		};
 		expect(isOnboardingData(onboarding)).toBe(true);
@@ -146,14 +153,27 @@ describe("host projection validation", () => {
 
 		const settings = {
 			firstRunStage: "model" as const,
-			relationshipMemoryEnabled: true,
+			relationshipMemoryEnabled: false,
 			networkProxy: { mode: "direct" as const },
 			memoryVectorService: { enabled: false, provider: "none" as const },
 			modelDownloadSource: { type: "official" },
 		};
 		expect(isSettingsData(settings)).toBe(true);
 		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: "yes" })).toBe(false);
-		expect(isSettingsData({ ...settings, textFallback: { providerId: "provider-1" } })).toBe(false);
+		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: true })).toBe(false);
+		expect(
+			isSettingsData({
+				...settings,
+				relationshipMemoryEnabled: true,
+				memoryVectorService: { enabled: true, provider: "local", localModel: "test-model" },
+			}),
+		).toBe(true);
+		expect(
+			isSettingsData({
+				...settings,
+				textFallback: { providerId: "provider-1", modelId: "model-1" },
+			}),
+		).toBe(false);
 	});
 
 	it("rejects malformed nested character-package presentation data", () => {
@@ -413,7 +433,7 @@ describe("host projection validation", () => {
 	it("rejects empty identifiers and unbounded records at the safe maximum", () => {
 		expect(isProviderInfo({ ...provider, id: "" })).toBe(false);
 		expect(isRun({ ...run, id: "" })).toBe(false);
-		expect(isConversationSummary({ ...conversation, id: "" })).toBe(false);
+		expect(isConversationSummary({ ...conversation, conversationId: "" })).toBe(false);
 		const manyExpressions = Object.fromEntries(
 			Array.from({ length: 99 }, (_, i) => [`expression-${i}`, "data:image/png;base64,aW1hZ2U="]),
 		);

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../src/features/ModelSelector.js";
 import { CompanionApp } from "../src/index.js";
+import type { ProviderInfo } from "../src/stores/ipc.js";
 import { createTestClient, OFFICIAL_PRODUCT, pushHostEvent } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
@@ -26,7 +27,10 @@ const PROVIDER = {
 	baseUrl: "https://saved.example/v1",
 	authMethods: [{ type: "api_key" as const, name: "Relay API key" }],
 	credentialStatus: "stored" as const,
-	availableModels: [{ id: "fast", name: "Fast", supportsImages: false, cost: FREE }],
+	availableModels: [
+		{ id: "fast", name: "Fast", supportsImages: false, cost: FREE },
+		{ id: "vision", name: "Vision", supportsImages: true, cost: FREE },
+	],
 	unavailable: [],
 };
 const OAUTH = {
@@ -45,7 +49,7 @@ const OAUTH = {
 
 function configuredClient() {
 	const fixture = createTestClient();
-	let providers = [CANDIDATE, PROVIDER, OAUTH];
+	let providers: ProviderInfo[] = [CANDIDATE, PROVIDER, OAUTH];
 	const providerList = vi.fn(() => Promise.resolve({ ok: true as const, data: { providers } }));
 	fixture.client.provider.list = providerList;
 	fixture.client.provider.setApiKey = vi.fn(
@@ -70,6 +74,30 @@ function configuredClient() {
 		providers = providers.filter((provider) => provider.id !== providerId);
 		return { ok: true as const, data: null };
 	});
+	fixture.client.provider.customUpsert = vi.fn(
+		async (request: Parameters<typeof fixture.client.provider.customUpsert>[0]) => {
+			providers = [
+				...providers.filter((provider) => provider.id !== request.providerId),
+				{
+					id: request.providerId,
+					name: request.name,
+					source: "custom",
+					added: true,
+					baseUrl: request.baseUrl,
+					authMethods: [{ type: "api_key", name: `${request.name} API key` }],
+					credentialStatus: request.apiKey ? "stored" : "missing",
+					availableModels: request.models.map((model) => ({
+						id: model.id,
+						name: model.name ?? model.id,
+						supportsImages: model.supportsImages ?? false,
+						cost: FREE,
+					})),
+					unavailable: [],
+				},
+			];
+			return { ok: true as const, data: null };
+		},
+	);
 	fixture.client.model.poolGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -82,6 +110,8 @@ function configuredClient() {
 						label: "Fast",
 						supportsImages: false,
 						createdAt: "2026-01-01",
+						enabled: true,
+						readiness: "ready" as const,
 					},
 					{
 						providerId: "relay",
@@ -90,6 +120,8 @@ function configuredClient() {
 						label: "Vision",
 						supportsImages: true,
 						createdAt: "2026-01-02",
+						enabled: true,
+						readiness: "ready" as const,
 					},
 				],
 			},
@@ -163,9 +195,9 @@ describe("breaking provider and model settings contract", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = await openAddProvider(user, backstage);
-		const candidateHeading = within(setup).getAllByRole("heading", {
+		const candidateHeading = within(setup).getByRole("heading", {
 			name: zhCN.settings.addProvider,
-		})[1];
+		});
 		const providerSelect = within(setup).getByLabelText(zhCN.settings.providerLabel);
 		const addedProviders = within(backstage).getByRole("region", {
 			name: zhCN.settings.addedProviders,
@@ -289,11 +321,7 @@ describe("breaking provider and model settings contract", () => {
 				data: { providerId: "oauth", status: "completed" as const, events: [] },
 			}),
 		);
-		// The status endpoint, not the command receipt, owns the visible session.
-		vi.mocked(client.provider.loginStatus).mockResolvedValueOnce(
-			await client.provider.login({ providerId: "oauth", authType: "oauth" }),
-		);
-		vi.mocked(client.provider.login).mockClear();
+		// Login responses and Host pushes own the visible session; no status polling is needed.
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
@@ -452,48 +480,54 @@ describe("breaking provider and model settings contract", () => {
 			}),
 		);
 		client.provider.loginStatus = vi.fn();
-		Object.defineProperty(window, "bearDesktop", {
-			configurable: true,
-			value: {},
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		client.provider.list.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		const authorize = await within(setup).findByRole("link", { name: zhCN.settings.oauthOpen });
+		expect(authorize).toHaveAttribute(
+			"href",
+			"https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
+		);
+		expect(authorize).toHaveAttribute("target", "_blank");
+		expect(authorize).toHaveAttribute("rel", "noreferrer");
+		await user.click(detailsSummary(setup, zhCN.settings.oauthManualFallback));
+		const callback = within(setup).getByLabelText(zhCN.settings.oauthCallbackLabel);
+		expect(callback).toBeVisible();
+		await user.type(callback, "https://auth.example/callback?code=manual-draft");
+		pushHostEvent(client, "provider.login_changed", {
+			providerId: "oauth",
+			status: "waiting_input",
+			events: [
+				{
+					type: "auth_url",
+					url: "https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
+				},
+				{ type: "progress", message: "Waiting for browser callback" },
+			],
+			prompt: { type: "manual_code", message: "Paste the callback URL" },
 		});
-		const authWindow = {
-			close: vi.fn(),
-			opener: window,
-			location: { href: "about:blank" },
-		} as unknown as Window;
-		const open = vi.spyOn(window, "open").mockReturnValue(authWindow);
-		try {
-			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-			const { user, backstage } = await openSettings();
-			const setup = providerSetup(backstage);
-			const card = within(setup).getByText(OAUTH.name).closest("article")!;
-			client.provider.list.mockClear();
-			await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-			const authorize = await within(setup).findByRole("link", { name: zhCN.settings.oauthOpen });
-			expect(authorize).toHaveAttribute(
-				"href",
-				"https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
-			);
-			expect(authorize).toHaveAttribute("target", "_blank");
-			expect(authorize).toHaveAttribute("rel", "noreferrer");
-			expect(open).toHaveBeenCalledWith("about:blank", "_blank");
-			expect(authWindow.location.href).toBe(
-				"https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
-			);
-			expect(authWindow.opener).toBeNull();
-			pushHostEvent(client, "provider.login_changed", {
-				providerId: "oauth",
-				status: "completed",
-				events: [],
-			});
-			await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), {
-				timeout: 3000,
-			});
-			expect(client.provider.loginStatus).not.toHaveBeenCalled();
-		} finally {
-			open.mockRestore();
-			Reflect.deleteProperty(window, "bearDesktop");
-		}
+		expect(await within(setup).findByText("Waiting for browser callback")).toBeVisible();
+		expect(callback).toHaveValue("https://auth.example/callback?code=manual-draft");
+		expect(client.provider.list).not.toHaveBeenCalled();
+		pushHostEvent(client, "provider.login_changed", {
+			providerId: "oauth",
+			status: "completed",
+			events: [],
+		});
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), {
+			timeout: 3000,
+		});
+		expect(within(setup).getByText(zhCN.settings.oauthConnected)).toBeVisible();
+		expect(
+			within(setup).queryByRole("link", { name: zhCN.settings.oauthOpen }),
+		).not.toBeInTheDocument();
+		expect(
+			within(setup).queryByLabelText(zhCN.settings.oauthCallbackLabel),
+		).not.toBeInTheDocument();
+		expect(client.provider.loginStatus).not.toHaveBeenCalled();
 	});
 
 	it("surfaces device code, verification URL, instructions, and info links from the OAuth session", async () => {
@@ -648,6 +682,8 @@ describe("breaking provider and model settings contract", () => {
 							label: "Local",
 							supportsImages: false,
 							createdAt: "2026-01-01",
+							enabled: true,
+							readiness: "ready" as const,
 						},
 					],
 				},
@@ -687,6 +723,7 @@ describe("breaking provider and model settings contract", () => {
 			models: [{ id: "custom-model" }],
 			apiKey: "custom-secret",
 		});
+		expect(await within(backstage).findByText("Custom Relay")).toBeVisible();
 	});
 });
 
@@ -705,6 +742,8 @@ describe("shared model selector contract", () => {
 				label: "Text Name",
 				supportsImages: false,
 				createdAt: "2026-01-01",
+				enabled: true,
+				readiness: "ready" as const,
 			},
 			{
 				providerId: "provider-two",
@@ -713,6 +752,8 @@ describe("shared model selector contract", () => {
 				label: "Vision Name",
 				supportsImages: true,
 				createdAt: "2026-01-01",
+				enabled: true,
+				readiness: "ready" as const,
 			},
 		];
 		const view = render(() => (

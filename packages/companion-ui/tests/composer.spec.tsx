@@ -11,7 +11,7 @@ import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
-	stateData: { answers: {}, decisions: {} },
+	stateData: { answers: {} },
 };
 
 const TEST_MODEL = {
@@ -20,6 +20,8 @@ const TEST_MODEL = {
 	modelId: "fast",
 	label: "Fast",
 	supportsImages: true,
+	enabled: true,
+	readiness: "ready" as const,
 	createdAt: "2026-01-01",
 };
 
@@ -29,16 +31,10 @@ const VISION_MODEL = {
 	modelId: "vision",
 	label: "Vision Model",
 	supportsImages: true,
+	enabled: true,
+	readiness: "ready" as const,
 	createdAt: "2026-01-02",
 };
-
-const acceptedUserEntry = (text: string) => ({
-	type: "message" as const,
-	id: crypto.randomUUID(),
-	parentId: null,
-	timestamp: new Date().toISOString(),
-	message: { role: "user" as const, content: text, timestamp: Date.now() },
-});
 
 function configureActiveConversation(client: CompanionClient): void {
 	client.conversation.list = vi.fn(() =>
@@ -59,17 +55,20 @@ function configureActiveConversation(client: CompanionClient): void {
 			},
 		}),
 	);
-	client.conversation.open = vi.fn(() =>
+	client.conversation.activeGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				conversationId: "conversation-1",
-				name: "Test conversation",
-				branch: { entries: [], hasMoreBefore: false },
-				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+				activeConversation: {
+					conversationId: "conversation-1",
+					name: "Test conversation",
+					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
+					live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+				},
 			},
 		}),
 	);
+	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
 }
 
 function renderComposerWithModels(
@@ -227,6 +226,8 @@ describe("composer", () => {
 							modelId: "fast",
 							label: "Fast",
 							supportsImages: false,
+							enabled: true,
+							readiness: "ready" as const,
 							createdAt: "2026-01-01",
 						},
 						{
@@ -235,6 +236,8 @@ describe("composer", () => {
 							modelId: "deep",
 							label: "Deep",
 							supportsImages: true,
+							enabled: true,
+							readiness: "ready" as const,
 							createdAt: "2026-01-02",
 						},
 					],
@@ -273,9 +276,7 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { entry: acceptedUserEntry("测试消息") } }),
-		);
+		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -314,9 +315,7 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { entry: acceptedUserEntry("unused") } }),
-		);
+		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -376,7 +375,7 @@ describe("composer", () => {
 			.mockRejectedValueOnce(new Error("send unavailable"))
 			.mockResolvedValueOnce({
 				ok: true as const,
-				data: { entry: acceptedUserEntry("稍后再试") },
+				data: {},
 			});
 		client.message.send = messageSend;
 		renderComposerWithModels(client, {

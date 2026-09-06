@@ -212,6 +212,9 @@ export function createCompanionStore(source: CompanionClient): CompanionStore {
 	if (existing) return existing;
 	const created = untrack(() => createStoreForClient(source));
 	stores.set(source, created);
+	onCleanup(() => {
+		if (stores.get(source) === created) stores.delete(source);
+	});
 	return created;
 }
 

@@ -262,7 +262,13 @@ export function EmbeddingSettings(props: {
 					optionValue="id"
 					optionTextValue={(option) => option.name}
 					onChange={(option) => {
-						if (!option) return;
+						// Select also reports its controlled value on mount; that is not an unsaved draft.
+						if (
+							!option ||
+							option.id ===
+								(localMode() === "custom" ? CUSTOM_LOCAL_MODEL_OPTION_ID : selectedCandidate()?.id)
+						)
+							return;
 						if (option.kind === "custom") {
 							setLocalModeDraft("custom");
 							return;

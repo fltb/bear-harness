@@ -35,7 +35,7 @@ function configure(
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				onboarding: { status: "complete" as const, stateData: { answers: {}, decisions: {} } },
+				onboarding: { status: "complete" as const, stateData: { answers: {} } },
 				character,
 			},
 		}),
@@ -58,17 +58,24 @@ function configure(
 			},
 		}),
 	);
-	client.conversation.open = vi.fn(() =>
+	client.conversation.activeGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				conversationId: "conversation-1",
-				name: "Native Pi tools",
-				branch: { entries, hasMoreBefore: false },
-				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+				activeConversation: {
+					conversationId: "conversation-1",
+					name: "Native Pi tools",
+					branch: {
+						entries,
+						latestLeafIds: entries.slice(-1).map((entry) => entry.id),
+						hasMoreBefore: false,
+					},
+					live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+				},
 			},
 		}),
 	);
+	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
 }
 
 describe("Pi native tool rendering", () => {
@@ -167,7 +174,7 @@ describe("Pi native tool rendering", () => {
 			}),
 		);
 		await user.click(screen.getByRole("button", { name: zhCN.messages.openMedia }));
-		expect(screen.getByRole("complementary", { name: "损坏的信号" })).toBeVisible();
+		expect(screen.getByRole("dialog", { name: "损坏的信号" })).toBeVisible();
 	});
 
 	it("maps memory authorities from the native Pi tool name", async () => {

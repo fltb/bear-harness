@@ -32,6 +32,8 @@ const PORTRAIT_MODEL = {
 	modelId: "test-model",
 	label: "Test Model",
 	supportsImages: true,
+	enabled: true,
+	readiness: "ready" as const,
 	createdAt: "2026-01-01 00:00:00",
 };
 function configurePortraitClient(options: { active?: boolean } = {}) {
@@ -48,6 +50,7 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 		isStreaming: false,
 	};
 	const branch = {
+		latestLeafIds: ["message-1"],
 		entries: [
 			{
 				type: "message" as const,
@@ -68,16 +71,16 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 			}
 		: undefined;
 	const snapshot = {
-		onboarding: { status: "complete" as const, stateData: { answers: {}, decisions: {} } },
+		onboarding: { status: "complete" as const, stateData: { answers: {} } },
 		character: THEMED_CHARACTER,
 	};
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
 	);
-	client.conversation.open = vi.fn(() => {
-		if (!activeProjection) throw new Error("inactive fixture cannot be opened");
-		return Promise.resolve({ ok: true as const, data: activeProjection });
-	});
+	client.conversation.activeGet = vi.fn(() =>
+		Promise.resolve({ ok: true as const, data: { activeConversation: activeProjection ?? null } }),
+	);
+	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -306,7 +309,7 @@ describe("portrait layout contracts", () => {
 				const projection = {
 					conversationId: "conversation-1",
 					name: "Conversation",
-					branch: { entries: [], hasMoreBefore: false },
+					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
 					live: {
 						isStreaming: true,
 						pendingToolCallIds: [],
@@ -314,8 +317,8 @@ describe("portrait layout contracts", () => {
 						followUp: [],
 					},
 				};
-				client.conversation.open = vi.fn(() =>
-					Promise.resolve({ ok: true as const, data: projection }),
+				client.conversation.activeGet = vi.fn(() =>
+					Promise.resolve({ ok: true as const, data: { activeConversation: projection } }),
 				);
 			}
 			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);

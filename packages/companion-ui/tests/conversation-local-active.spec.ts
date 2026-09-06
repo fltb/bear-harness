@@ -1,4 +1,6 @@
+import type { CompanionClient } from "@bear-harness/companion-client";
 import type {
+	ConversationActiveResponse,
 	ConversationDetail,
 	ConversationSummary,
 	LivePush,
@@ -8,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
 import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { createCompanionStore } from "../src/stores/companion.js";
+import { type CompanionStore, createCompanionStore } from "../src/stores/companion.js";
 import { createTestClient, pushPiEvent } from "./fixtures.js";
 
 const summary = (conversationId: string): ConversationSummary => ({
@@ -24,7 +26,12 @@ const summary = (conversationId: string): ConversationSummary => ({
 const detail = (conversationId: string, entries: PiSessionEntry[] = []): ConversationDetail => ({
 	conversationId,
 	name: `Conversation ${conversationId}`,
-	branch: { entries, hasMoreBefore: false, activeLeafId: entries.at(-1)?.id },
+	branch: {
+		entries,
+		hasMoreBefore: false,
+		activeLeafId: entries.at(-1)?.id,
+		latestLeafIds: entries.length ? [entries[entries.length - 1]!.id] : [],
+	},
 	live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 });
 
@@ -80,9 +87,28 @@ const streamingAssistant = (text: string) => ({
 	responseId: "stream-response",
 });
 
-function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
+function mockActiveConversation(
+	client: CompanionClient,
+	initial: ConversationDetail | null = detail("a"),
+) {
+	let activeConversation = initial;
+	const select = (next: ConversationDetail | null) => {
+		activeConversation = next;
+		return { ok: true as const, data: { activeConversation } };
+	};
+	client.conversation.activeGet = vi.fn(() => Promise.resolve(select(activeConversation)));
+	client.conversation.select = vi.fn(({ conversationId }) =>
+		Promise.resolve(select(detail(conversationId))),
+	);
+	client.conversation.open = vi.fn(({ conversationId }) =>
+		Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+	);
+	return select;
+}
+
+function createStoreWithCleanup(client: CompanionClient) {
 	let dispose = () => undefined;
-	let store: ReturnType<typeof createCompanionStore> | undefined;
+	let store: CompanionStore | undefined;
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
 	});
@@ -100,20 +126,29 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 	return { store, queryClient, dispose };
 }
 
-describe("renderer-local conversation selection", () => {
+describe("Host-authoritative conversation selection", () => {
 	it("keeps the catalog empty until the user explicitly creates a conversation", async () => {
 		const { client } = createTestClient();
+		const select = mockActiveConversation(client, null);
+		const conversations: ConversationSummary[] = [];
 		client.conversation.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { conversations: [] } }),
+			Promise.resolve({ ok: true as const, data: { conversations: [...conversations] } }),
 		);
-		client.conversation.create = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: detail("first") }),
-		);
+		client.conversation.create = vi.fn(() => {
+			const created = detail("first");
+			conversations.push(summary("first"));
+			select(created);
+			return Promise.resolve({ ok: true as const, data: created });
+		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(client.conversation.list).toHaveBeenCalled());
 			expect(store.activeConversationId).toBeNull();
 			expect(client.conversation.create).not.toHaveBeenCalled();
+			await store.createConversation();
+			expect(store.activeConversationId).toBe("first");
+			expect(store.conversations.map((item) => item.conversationId)).toEqual(["first"]);
+			expect(client.conversation.select).not.toHaveBeenCalled();
 		} finally {
 			dispose();
 		}
@@ -121,25 +156,23 @@ describe("renderer-local conversation selection", () => {
 
 	it("selects, archives, and deletes explicit conversations without aborting another session", async () => {
 		const { client } = createTestClient();
-		const conversations = [summary("a"), summary("b")];
+		const conversations = [summary("b"), summary("a")];
 		client.conversation.list = vi.fn(({ archived = false }) =>
 			Promise.resolve({
 				ok: true as const,
 				data: { conversations: archived ? [] : [...conversations] },
 			}),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		const select = mockActiveConversation(client);
 		client.conversation.archive = vi.fn(({ conversationId }) => {
 			const index = conversations.findIndex((item) => item.conversationId === conversationId);
 			if (index >= 0) conversations.splice(index, 1);
-			return Promise.resolve({ ok: true as const, data: {} });
+			return Promise.resolve(select(detail("a")));
 		});
 		client.conversation.delete = vi.fn(({ conversationId }) => {
 			const index = conversations.findIndex((item) => item.conversationId === conversationId);
 			if (index >= 0) conversations.splice(index, 1);
-			return Promise.resolve({ ok: true as const, data: {} });
+			return Promise.resolve(select(null));
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
@@ -149,13 +182,15 @@ describe("renderer-local conversation selection", () => {
 			await store.archiveConversation("b");
 			expect(store.activeConversationId).toBe("a");
 			await store.deleteConversation("a");
+			expect(store.activeConversationId).toBeNull();
+			expect(store.conversations).toEqual([]);
 			expect(client.message.abort).not.toHaveBeenCalled();
 		} finally {
 			dispose();
 		}
 	});
 
-	it("does not let a delayed startup open overwrite an explicit user selection", async () => {
+	it("does not let a delayed startup projection overwrite an explicit user selection", async () => {
 		const { client } = createTestClient();
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({
@@ -163,54 +198,45 @@ describe("renderer-local conversation selection", () => {
 				data: { conversations: [summary("a"), summary("b")] },
 			}),
 		);
-		let resolveStartup: ((value: { ok: true; data: ConversationDetail }) => void) | undefined;
-		client.conversation.open = vi.fn(({ conversationId }) => {
-			if (conversationId === "a") {
-				return new Promise((resolve) => {
-					resolveStartup = resolve;
-				});
-			}
-			return Promise.resolve({ ok: true as const, data: detail(conversationId) });
-		});
+		mockActiveConversation(client);
+		const startup = Promise.withResolvers<{ ok: true; data: ConversationActiveResponse }>();
+		client.conversation.activeGet = vi.fn(() => startup.promise);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
-			await waitFor(() => expect(resolveStartup).toBeTypeOf("function"));
+			await waitFor(() => expect(client.conversation.activeGet).toHaveBeenCalledTimes(2));
 			await store.selectConversation("b");
 			expect(store.activeConversationId).toBe("b");
-			resolveStartup?.({ ok: true, data: detail("a") });
-			await waitFor(() => expect(client.conversation.open).toHaveBeenCalledTimes(2));
+			startup.resolve({ ok: true, data: { activeConversation: detail("a") } });
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
 			expect(store.activeConversationId).toBe("b");
 		} finally {
 			dispose();
 		}
 	});
 
-	it("does not let a delayed open reactivate a deleted conversation", async () => {
+	it("does not let a delayed selection reactivate a deleted conversation", async () => {
 		const { client } = createTestClient();
 		const conversations = [summary("a"), summary("b")];
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [...conversations] } }),
 		);
-		const openingB = Promise.withResolvers<{ ok: true; data: ConversationDetail }>();
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			conversationId === "b"
-				? openingB.promise
-				: Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		const select = mockActiveConversation(client);
+		const openingB = Promise.withResolvers<{ ok: true; data: ConversationActiveResponse }>();
+		client.conversation.select = vi.fn(() => openingB.promise);
 		client.conversation.delete = vi.fn(({ conversationId }) => {
 			const index = conversations.findIndex((item) => item.conversationId === conversationId);
 			if (index >= 0) conversations.splice(index, 1);
-			return Promise.resolve({ ok: true as const, data: {} });
+			return Promise.resolve(select(detail("a")));
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
 			const selecting = store.selectConversation("b");
 			await waitFor(() =>
-				expect(client.conversation.open).toHaveBeenCalledWith({ conversationId: "b" }),
+				expect(client.conversation.select).toHaveBeenCalledWith({ conversationId: "b" }),
 			);
 			await store.deleteConversation("b");
-			openingB.resolve({ ok: true, data: detail("b") });
+			openingB.resolve({ ok: true, data: { activeConversation: detail("b") } });
 			await selecting;
 
 			expect(store.activeConversationId).toBe("a");
@@ -226,9 +252,7 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations } }),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		mockActiveConversation(client);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -256,9 +280,7 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		mockActiveConversation(client);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -352,20 +374,30 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [...conversations] } }),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		const select = mockActiveConversation(client);
 		client.conversation.delete = vi.fn(({ conversationId }) => {
 			const index = conversations.findIndex((item) => item.conversationId === conversationId);
 			if (index >= 0) conversations.splice(index, 1);
-			return Promise.resolve({ ok: true as const, data: {} });
+			return Promise.resolve(select(detail("a")));
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
 			await store.deleteConversation("b");
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "b",
+				event: { type: "entry_appended", entry: userEntry("deleted-entry", "late") },
+			});
 			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_start" } });
 			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_settled" } });
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: { type: "entry_appended", entry: userEntry("barrier", "still active") },
+			});
+			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("barrier"));
+			expect(store.activePiEntries?.some((entry) => entry.id === "deleted-entry")).toBe(false);
 			expect(store.completedConversationIds.has("b")).toBe(false);
 			expect(store.conversations.some((item) => item.conversationId === "b")).toBe(false);
 		} finally {
@@ -376,8 +408,10 @@ describe("renderer-local conversation selection", () => {
 	it("releases every conversation projection when switching characters", async () => {
 		const { client } = createTestClient();
 		let switched = false;
+		const select = mockActiveConversation(client);
 		client.character.activate = vi.fn(() => {
 			switched = true;
+			select(detail("c"));
 			return Promise.resolve({ ok: true as const, data: null });
 		});
 		client.conversation.list = vi.fn(({ archived = false }) =>
@@ -387,9 +421,6 @@ describe("renderer-local conversation selection", () => {
 					conversations: archived ? [] : switched ? [summary("c")] : [summary("a"), summary("b")],
 				},
 			}),
-		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
 		);
 		const { store, queryClient, dispose } = createStoreWithCleanup(client);
 		try {
@@ -430,9 +461,7 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		mockActiveConversation(client);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -452,18 +481,15 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
 		);
-		const openingB = Promise.withResolvers<{ ok: true; data: ConversationDetail }>();
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			conversationId === "b"
-				? openingB.promise
-				: Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		mockActiveConversation(client);
+		const openingB = Promise.withResolvers<{ ok: true; data: ConversationActiveResponse }>();
+		client.conversation.select = vi.fn(() => openingB.promise);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
 			const selecting = store.selectConversation("b");
 			await waitFor(() =>
-				expect(client.conversation.open).toHaveBeenCalledWith({ conversationId: "b" }),
+				expect(client.conversation.select).toHaveBeenCalledWith({ conversationId: "b" }),
 			);
 			pushPiEvent(client, {
 				type: "pi",
@@ -474,7 +500,7 @@ describe("renderer-local conversation selection", () => {
 			expect(store.activeConversationId).toBe("a");
 			expect(store.activePiLiveState?.isStreaming).toBe(false);
 			expect(store.activeTimeline).toEqual([]);
-			openingB.resolve({ ok: true, data: detail("b") });
+			openingB.resolve({ ok: true, data: { activeConversation: detail("b") } });
 			await selecting;
 
 			expect(store.activePiLiveState?.isStreaming).toBe(true);
@@ -495,17 +521,44 @@ describe("renderer-local conversation selection", () => {
 				data: { conversations: [summary("a")] },
 			}),
 		);
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: detail("a") }),
+		mockActiveConversation(client);
+		let revision = 0;
+		client.companionState.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					schema: { type: "object", properties: {} },
+					state: {
+						character: {
+							document: { mood: revision === 0 ? "quiet" : "happy" },
+							revisions: { conversation: revision, global: 0 },
+						},
+						display: {
+							sceneId: revision === 0 ? "default" : "garden",
+							expressionId: revision === 0 ? "default" : "smile",
+						},
+						revisions: { display: revision },
+					},
+				},
+			}),
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
-			await waitFor(() => expect(client.companionState.get).toHaveBeenCalled());
-			const readsBeforeSettle = vi.mocked(client.companionState.get).mock.calls.length;
+			await waitFor(() =>
+				expect(store.companionState?.state.character.document).toEqual({ mood: "quiet" }),
+			);
+			revision = 1;
 			pushPiEvent(client, { type: "pi", conversationId: "a", event: { type: "agent_settled" } });
 			await waitFor(() =>
-				expect(client.companionState.get).toHaveBeenCalledTimes(readsBeforeSettle + 1),
+				expect(store.companionState?.state).toEqual({
+					character: {
+						document: { mood: "happy" },
+						revisions: { conversation: 1, global: 0 },
+					},
+					display: { sceneId: "garden", expressionId: "smile" },
+					revisions: { display: 1 },
+				}),
 			);
 		} finally {
 			dispose();
@@ -517,9 +570,7 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
 		);
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: detail("a") }),
-		);
+		mockActiveConversation(client);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -546,16 +597,22 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
 		);
-		let authoritative = detail("a");
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: authoritative }),
+		let authoritative = detail("a", [userEntry("stale", "old projection")]);
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { activeConversation: authoritative } }),
 		);
 		let subscriptions = 0;
+		const disconnect = Promise.withResolvers<void>();
 		client.live.subscribe = vi.fn(async (signal): Promise<AsyncIterable<LivePush>> => {
 			subscriptions += 1;
 			if (subscriptions === 1) {
-				authoritative = detail("a", [userEntry("reconciled", "from snapshot")]);
-				throw new Error("disconnect");
+				return {
+					async *[Symbol.asyncIterator]() {
+						yield { type: "pi", conversationId: "a", event: { type: "agent_start" } };
+						await disconnect.promise;
+						throw new Error("disconnect");
+					},
+				};
 			}
 			return {
 				async *[Symbol.asyncIterator]() {
@@ -567,8 +624,14 @@ describe("renderer-local conversation selection", () => {
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
+			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("stale"));
+			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
+			authoritative = detail("a", [userEntry("reconciled", "from snapshot")]);
+			disconnect.resolve();
 			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("reconciled"));
 			await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledTimes(2));
+			expect(store.activePiEntries?.map((entry) => entry.id)).toEqual(["reconciled"]);
+			expect(store.activePiLiveState?.isStreaming).toBe(false);
 		} finally {
 			dispose();
 		}
@@ -579,9 +642,13 @@ describe("renderer-local conversation selection", () => {
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
 		);
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: detail("a") }),
-		);
+		mockActiveConversation(client);
+		const projection = Promise.withResolvers<{ ok: true; data: ConversationActiveResponse }>();
+		vi.mocked(client.conversation.activeGet)
+			.mockImplementationOnce(() =>
+				Promise.resolve({ ok: true, data: { activeConversation: detail("a") } }),
+			)
+			.mockImplementation(() => projection.promise);
 		let connect!: (events: AsyncIterable<LivePush>) => void;
 		client.live.subscribe = vi.fn(
 			() =>
@@ -589,9 +656,7 @@ describe("renderer-local conversation selection", () => {
 					connect = resolve;
 				}),
 		);
-		client.message.send = vi.fn(({ text }) =>
-			Promise.resolve({ ok: true as const, data: { entry: userEntry("accepted", text) } }),
-		);
+		client.message.send = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -604,6 +669,9 @@ describe("renderer-local conversation selection", () => {
 					await new Promise<void>(() => undefined);
 				},
 			});
+			await waitFor(() => expect(client.conversation.activeGet).toHaveBeenCalledTimes(2));
+			expect(client.message.send).not.toHaveBeenCalled();
+			projection.resolve({ ok: true, data: { activeConversation: detail("a") } });
 			await sending;
 			expect(client.message.send).toHaveBeenCalledWith(
 				expect.objectContaining({ conversationId: "a", text: "hello" }),
@@ -613,14 +681,12 @@ describe("renderer-local conversation selection", () => {
 		}
 	});
 
-	it("replaces the optimistic user message when Pi appends its authoritative entry", async () => {
+	it("replaces the pending user message when Pi appends its authoritative entry", async () => {
 		const { client } = createTestClient();
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
 		);
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: detail("a") }),
-		);
+		mockActiveConversation(client);
 		const accepted = Promise.withResolvers<{ ok: true; data: Record<string, never> }>();
 		client.message.send = vi.fn(() => accepted.promise);
 		const { store, dispose } = createStoreWithCleanup(client);
@@ -645,14 +711,12 @@ describe("renderer-local conversation selection", () => {
 		}
 	});
 
-	it("releases an optimistic failure that arrives after the user switches conversations", async () => {
+	it("releases a pending failure that arrives after the user switches conversations", async () => {
 		const { client } = createTestClient();
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
 		);
-		client.conversation.open = vi.fn(({ conversationId }) =>
-			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
-		);
+		mockActiveConversation(client);
 		const accepted = Promise.withResolvers<{ ok: true; data: Record<string, never> }>();
 		client.message.send = vi.fn(() => accepted.promise);
 		const { store, dispose } = createStoreWithCleanup(client);
@@ -679,26 +743,18 @@ describe("renderer-local conversation selection", () => {
 		);
 		const snapshot = Promise.withResolvers<{
 			ok: true;
-			data: ConversationDetail;
+			data: ConversationActiveResponse;
 		}>();
-		client.conversation.open = vi.fn(() => snapshot.promise);
-		client.live.subscribe = vi.fn(
-			async (signal): Promise<AsyncIterable<LivePush>> => ({
-				async *[Symbol.asyncIterator]() {
-					yield { type: "pi", conversationId: "a", event: { type: "agent_start" } };
-					await new Promise<void>((resolve) =>
-						signal.addEventListener("abort", () => resolve(), { once: true }),
-					);
-				},
-			}),
-		);
+		client.conversation.activeGet = vi.fn(() => snapshot.promise);
+		client.live.subscribe = vi.fn(client.live.subscribe);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledOnce());
-			await waitFor(() => expect(client.conversation.open).toHaveBeenCalled());
+			await waitFor(() => expect(client.conversation.activeGet).toHaveBeenCalledTimes(2));
+			pushPiEvent(client, { type: "pi", conversationId: "a", event: { type: "agent_start" } });
 			expect(store.activePiLiveState?.isStreaming).not.toBe(true);
 
-			snapshot.resolve({ ok: true, data: detail("a") });
+			snapshot.resolve({ ok: true, data: { activeConversation: detail("a") } });
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
 			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
 		} finally {

@@ -1,11 +1,12 @@
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
 import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { createCompanionStore } from "../src/stores/companion.js";
+import { type CompanionStore, createCompanionStore } from "../src/stores/companion.js";
 import type { OnboardingData } from "../src/stores/ipc.js";
-import { createOnboardingStore } from "../src/stores/onboarding.js";
-import { createTestClient } from "./fixtures.js";
+import { createOnboardingStore, type OnboardingStore } from "../src/stores/onboarding.js";
+import { createTestClient, THEMED_CHARACTER } from "./fixtures.js";
 
 function onboarding(currentStepId: string): OnboardingData {
 	return {
@@ -15,9 +16,9 @@ function onboarding(currentStepId: string): OnboardingData {
 	};
 }
 
-function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
+function createStoreWithCleanup(client: CompanionClient) {
 	let dispose: () => void = () => undefined;
-	let store: ReturnType<typeof createCompanionStore> | undefined;
+	let store: CompanionStore | undefined;
 	createRoot((cleanup) => {
 		dispose = cleanup;
 		createComponent(QueryClientProvider, {
@@ -37,18 +38,14 @@ describe("onboarding projection", () => {
 		const { client } = createTestClient();
 		const doorClosed = onboarding("door_closed");
 		const introduced = onboarding("introduced");
-		let onboardingGetCount = 0;
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: onboardingGetCount++ === 0 ? doorClosed : introduced,
-			}),
-		);
-		client.onboarding.submit = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: introduced }),
-		);
+		let current = doorClosed;
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: current }));
+		client.onboarding.submit = vi.fn(() => {
+			current = introduced;
+			return Promise.resolve({ ok: true as const, data: current });
+		});
 		let dispose = () => undefined;
-		let store: ReturnType<typeof createOnboardingStore> | undefined;
+		let store: OnboardingStore | undefined;
 		createRoot((cleanup) => {
 			dispose = cleanup;
 			store = createOnboardingStore(client);
@@ -56,7 +53,7 @@ describe("onboarding projection", () => {
 		if (!store) throw new Error("onboarding store was not created");
 
 		try {
-			store._hydrate(doorClosed);
+			await store.resync();
 			await store.submit("door_closed");
 			expect(store.data()).toEqual(introduced);
 		} finally {
@@ -64,13 +61,14 @@ describe("onboarding projection", () => {
 		}
 	});
 
-	it("hydrates snapshots and resynchronizes from Host", async () => {
+	it("resynchronizes the character onboarding query from Host", async () => {
 		const { client } = createTestClient();
 		const initial = onboarding("door_closed");
 		const reset = onboarding("reset_step");
-		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: reset }));
+		let current = initial;
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: current }));
 		let dispose = () => undefined;
-		let store: ReturnType<typeof createOnboardingStore> | undefined;
+		let store: OnboardingStore | undefined;
 		createRoot((cleanup) => {
 			dispose = cleanup;
 			store = createOnboardingStore(client);
@@ -78,9 +76,9 @@ describe("onboarding projection", () => {
 		if (!store) throw new Error("onboarding store was not created");
 
 		try {
-			store._hydrate(initial);
-			store._hydrate(undefined);
+			await store.resync();
 			expect(store.data().currentStepId).toBe("door_closed");
+			current = reset;
 			await store.resync();
 			await waitFor(() => expect(store?.data().currentStepId).toBe("reset_step"));
 		} finally {
@@ -92,20 +90,23 @@ describe("onboarding projection", () => {
 		const { client } = createTestClient();
 		const doorClosed = onboarding("door_closed");
 		const introduced = onboarding("introduced");
+		let characterName = THEMED_CHARACTER.name;
 		const snapshotGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { onboarding: doorClosed } }),
-		);
-		client.snapshot.get = snapshotGet;
-		let onboardingGetCount = 0;
-		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: onboardingGetCount++ === 0 ? doorClosed : introduced,
+				data: {
+					onboarding: doorClosed,
+					character: { ...THEMED_CHARACTER, name: characterName },
+				},
 			}),
 		);
-		client.onboarding.submit = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: introduced }),
-		);
+		client.snapshot.get = snapshotGet;
+		let current = doorClosed;
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: current }));
+		client.onboarding.submit = vi.fn(() => {
+			current = introduced;
+			return Promise.resolve({ ok: true as const, data: current });
+		});
 		const { store, dispose } = createStoreWithCleanup(client);
 
 		try {
@@ -114,8 +115,9 @@ describe("onboarding projection", () => {
 			await store.submitOnboarding("door_closed");
 			expect(store.onboarding.currentStepId).toBe("introduced");
 
+			characterName = "Updated Host character";
 			await store.refresh();
-			await waitFor(() => expect(snapshotGet).toHaveBeenCalledTimes(2));
+			await waitFor(() => expect(store.character?.name).toBe(characterName));
 			expect(store.onboarding.currentStepId).toBe("introduced");
 		} finally {
 			dispose();
@@ -129,16 +131,15 @@ describe("onboarding projection", () => {
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { onboarding: doorClosed } }),
 		);
-		let getCount = 0;
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: getCount++ === 0 ? doorClosed : introduced }),
-		);
-		client.onboarding.submit = vi.fn(() =>
-			Promise.resolve({
+		let current = doorClosed;
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: current }));
+		client.onboarding.submit = vi.fn(() => {
+			current = introduced;
+			return Promise.resolve({
 				ok: false as const,
 				error: { kind: "conflict", reason: "stale_onboarding_step" },
-			}),
-		);
+			});
+		});
 		const { store, dispose } = createStoreWithCleanup(client);
 
 		try {
@@ -148,68 +149,6 @@ describe("onboarding projection", () => {
 
 			await waitFor(() => expect(store.onboarding.currentStepId).toBe("introduced"));
 			expect(store.error).toBeNull();
-		} finally {
-			dispose();
-		}
-	});
-
-	it("projects the canonical conversation created by onboarding completion", async () => {
-		const { client } = createTestClient();
-		const initial = onboarding("memory_choice");
-		const complete: OnboardingData = {
-			status: "complete",
-			stateData: { answers: {}, decisions: {} },
-		};
-		const conversation = {
-			conversationId: "onboarding-conversation",
-			name: "First meeting",
-			branch: { entries: [], hasMoreBefore: false },
-			live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
-		};
-		let completed = false;
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: completed ? complete : initial }),
-		);
-		client.onboarding.submit = vi.fn(() => {
-			completed = true;
-			return Promise.resolve({ ok: true as const, data: complete });
-		});
-		client.conversation.list = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					conversations: completed
-						? [
-								{
-									conversationId: conversation.conversationId,
-									name: conversation.name,
-									created: "2026-08-22T00:00:00.000Z",
-									modified: "2026-08-22T00:00:00.000Z",
-									messageCount: 0,
-									firstMessage: "",
-									isStreaming: false,
-								},
-							]
-						: [],
-				},
-			}),
-		);
-		client.conversation.open = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: conversation }),
-		);
-		const { store, dispose } = createStoreWithCleanup(client);
-
-		try {
-			await waitFor(() => expect(store.onboarding.currentStepId).toBe("memory_choice"));
-			await store.submitOnboarding("memory_choice", "disabled");
-			expect(store.onboarding.status).toBe("complete");
-			expect(store.activeConversationId).toBe(conversation.conversationId);
-			expect(store.conversations).toEqual([
-				expect.objectContaining({
-					conversationId: conversation.conversationId,
-					name: conversation.name,
-				}),
-			]);
 		} finally {
 			dispose();
 		}

@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
-import type { HostUpdateService } from "../src/composition.js";
-import { createHostRuntime } from "../src/index.js";
+import { createHostRuntime, type HostRuntimeOptions } from "../src/index.js";
 
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -17,7 +16,7 @@ const vault = {
 	decryptString: (value: Buffer) => value.toString("utf8"),
 };
 
-function makeRuntime(updateService?: HostUpdateService) {
+function makeRuntime(updateService?: HostRuntimeOptions["updateService"]) {
 	const dataDir = mkdtempSync(join(tmpdir(), "bear-update-ipc-"));
 	roots.push(dataDir);
 	return createHostRuntime({
@@ -35,10 +34,8 @@ afterEach(() => {
 
 describe("Host update IPC handlers", () => {
 	it("routes check, discard, and apply through the desktop adapter", async () => {
-		const calls: string[] = [];
-		const updateService: HostUpdateService = {
+		const updateService: NonNullable<HostRuntimeOptions["updateService"]> = {
 			check: async () => {
-				calls.push("check");
 				return {
 					state: "available",
 					currentVersion: "1.0.0",
@@ -47,11 +44,9 @@ describe("Host update IPC handlers", () => {
 				};
 			},
 			discard: async () => {
-				calls.push("discard");
 				return { state: "idle", discarded: true };
 			},
 			apply: async () => {
-				calls.push("apply");
 				return {
 					state: "ready",
 					applyUnsupported: true,
@@ -62,19 +57,27 @@ describe("Host update IPC handlers", () => {
 		const runtime = makeRuntime(updateService);
 		try {
 			await runtime.start();
-			expect(await runtime.dispatch("update.check", {})).toMatchObject({
+			expect(await runtime.dispatch("update.check", {})).toEqual({
 				ok: true,
-				data: { state: "available", currentVersion: "1.0.0", latestVersion: "2.0.0" },
+				data: {
+					state: "available",
+					currentVersion: "1.0.0",
+					latestVersion: "2.0.0",
+					feedUrl: "https://updates.example/feed.json",
+				},
 			});
-			expect(await runtime.dispatch("update.discard", {})).toMatchObject({
+			expect(await runtime.dispatch("update.discard", {})).toEqual({
 				ok: true,
 				data: { state: "idle", discarded: true },
 			});
-			expect(await runtime.dispatch("update.apply", {})).toMatchObject({
+			expect(await runtime.dispatch("update.apply", {})).toEqual({
 				ok: true,
-				data: { state: "ready", applyUnsupported: true },
+				data: {
+					state: "ready",
+					applyUnsupported: true,
+					error: "Update installation requires an external installer",
+				},
 			});
-			expect(calls).toEqual(["check", "discard", "apply"]);
 		} finally {
 			await runtime.close();
 		}

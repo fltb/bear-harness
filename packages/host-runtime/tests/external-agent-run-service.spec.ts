@@ -305,21 +305,32 @@ describe("ExternalAgentRunService restart recovery", () => {
 	});
 
 	it("does not treat historical completed interrupted rows as live resource owners", async () => {
-		const { database, launch, service } = setup();
+		const { database, service } = setup();
 		try {
-			seedRun(database, "historical-a", "interrupted", "2026-08-31T00:00:00.000Z");
-			seedRun(database, "historical-b", "interrupted", "2026-08-31T00:00:00.000Z");
+			const completedAt = "2026-08-31T00:00:00.000Z";
+			seedRun(database, "historical-a", "interrupted", completedAt);
+			seedRun(database, "historical-b", "interrupted", completedAt);
 
-			await expect(
-				service.delegate({
-					conversationId: "conversation-1",
-					triggerEntryId: "entry-allowed",
-					agent: "codex",
-					inputPaths: [],
-					instruction: "Use the available executor slot.",
-				}),
-			).resolves.toMatchObject({ status: "enqueued" });
-			expect(launch).toHaveBeenCalledOnce();
+			const delegated = await service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "entry-allowed",
+				agent: "codex",
+				inputPaths: [],
+				instruction: "Use the available executor slot.",
+			});
+
+			expect(delegated.status).toBe("enqueued");
+			expect(service.list()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: delegated.runId,
+						status: "enqueued",
+						completedAt: null,
+					}),
+					expect.objectContaining({ id: "historical-a", status: "interrupted", completedAt }),
+					expect.objectContaining({ id: "historical-b", status: "interrupted", completedAt }),
+				]),
+			);
 		} finally {
 			await service.close();
 			database.close();

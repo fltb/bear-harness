@@ -15,6 +15,9 @@ export default defineConfig({
 	test: {
 		environment: "node",
 		include: ["tests/**/*.spec.ts"],
+		// Real Pi/TDAI imports and native store initialization compete for CPU;
+		// bound file workers rather than extending individual test deadlines.
+		maxWorkers: 2,
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "json", "html", "lcov"],

@@ -3,9 +3,12 @@ import { type ProductConfig, productConfig } from "@bear-harness/product-config"
 import type {
 	ConversationDetail,
 	ConversationSummary,
-	EmbeddingDownloadState,
 	LivePush,
+	LocalEmbeddingAcquisitionState,
+	LocalEmbeddingInventoryResponse,
+	LocalEmbeddingTarget,
 	ProviderLoginResponse,
+	SystemModelDefaultsGetResponse,
 } from "@bear-harness/protocol";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
@@ -116,7 +119,33 @@ const DEFAULT_SETTINGS: SettingsData = {
 /** Minimal raw embedding binding for partial CompanionStore fixtures. */
 export function createEmbeddingBinding() {
 	return {
-		downloadState: () => ({ status: "idle", downloadedBytes: 0 }),
+		acquisitionState: () => ({ revision: 0, phase: "idle" as const, downloadedBytes: 0 }),
+		cancelAcquisition: vi.fn(async () => ({
+			revision: 0,
+			phase: "idle" as const,
+			downloadedBytes: 0,
+		})),
+		inventoryQuery: {
+			data: {
+				candidates: [
+					{
+						id: "test-embedding",
+						name: "Test embedding",
+						dimensions: 768,
+						isDefault: true,
+						target: { kind: "candidate" as const, candidateId: "test-embedding" },
+						installed: false,
+					},
+				],
+			},
+			isPending: false,
+			error: null,
+		},
+		acquisitionQuery: {
+			data: { revision: 0, phase: "idle" as const, downloadedBytes: 0 },
+			isPending: false,
+			error: null,
+		},
 		settingsQuery: {
 			data: { settings: { ...DEFAULT_SETTINGS } },
 			isPending: false,
@@ -144,8 +173,20 @@ export function createEmbeddingBinding() {
 			error: null,
 			isSuccess: false,
 		},
-		localConfigureMutation: {
-			mutateAsync: vi.fn(async () => ({ ready: true })),
+		acquisitionStartMutation: {
+			mutateAsync: vi.fn(async () => ({ revision: 0, phase: "idle" as const, downloadedBytes: 0 })),
+			isPending: false,
+			error: null,
+			isSuccess: false,
+		},
+		activateLocalMutation: {
+			mutateAsync: vi.fn(async () => ({ settings: { ...DEFAULT_SETTINGS } })),
+			isPending: false,
+			error: null,
+			isSuccess: false,
+		},
+		completeEmbeddingMutation: {
+			mutateAsync: vi.fn(async () => ({ settings: { ...DEFAULT_SETTINGS } })),
 			isPending: false,
 			error: null,
 			isSuccess: false,
@@ -158,6 +199,8 @@ const DEFAULT_MODEL = {
 	modelId: "test-model",
 	label: "Test Model",
 	supportsImages: true,
+	enabled: true,
+	readiness: "ready" as const,
 	createdAt: "2026-01-01 00:00:00",
 };
 
@@ -167,8 +210,8 @@ const DEFAULT_MODEL = {
  *
  * Most calls resolve a success envelope with empty domain data, so the store
  * boots into the same idle shell a missing bridge used to produce; conversation
- * creation and opening additionally return a Pi-native detail for renderer-local selection.
- * the invalidation stream parks on a promise that never settles — tests never
+ * creation and selection update the authoritative active conversation projection.
+ * The invalidation stream parks on a promise that never settles — tests never
  * race polling timers and the loop dies with the
  * store's cleanup. `settings.set` mutates the backing settings so the
  * follow-up `settings.get` re-read reflects the patch, mirroring the host's
@@ -176,6 +219,27 @@ const DEFAULT_MODEL = {
  */
 export function createTestClient() {
 	let settings = { ...DEFAULT_SETTINGS };
+	let systemDefaults: SystemModelDefaultsGetResponse = {
+		reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+		vision: { mode: "auto" },
+	};
+	let acquisition: LocalEmbeddingAcquisitionState = {
+		revision: 0,
+		phase: "idle",
+		downloadedBytes: 0,
+	};
+	let inventory: LocalEmbeddingInventoryResponse = {
+		candidates: [
+			{
+				id: "test-embedding",
+				name: "Test embedding",
+				dimensions: 768,
+				isDefault: true,
+				target: { kind: "candidate", candidateId: "test-embedding" },
+				installed: false,
+			},
+		],
+	};
 
 	const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
 
@@ -187,17 +251,53 @@ export function createTestClient() {
 			else next[key] = value;
 		}
 		settings = next as unknown as SettingsData;
+		settings.relationshipMemoryEnabled = settings.memoryVectorService.enabled;
 		return ok({ settings });
 	});
+	const activateLocalEmbedding = ({ target }: { target: LocalEmbeddingTarget }) => {
+		settings = {
+			...settings,
+			relationshipMemoryEnabled: true,
+			memoryVectorService: {
+				enabled: true,
+				provider: "local",
+				...(target.kind === "candidate"
+					? { localModel: target.candidateId, dimensions: 768 }
+					: { customPath: target.customPath, dimensions: target.dimensions }),
+			},
+		};
+		inventory = {
+			...inventory,
+			activeTarget: target,
+			candidates: inventory.candidates.map((candidate) => ({
+				...candidate,
+				installed:
+					candidate.installed ||
+					(target.kind === "candidate" && candidate.id === target.candidateId),
+			})),
+		};
+		return ok({ settings });
+	};
 
 	/** Pi sessions created by the fixture. */
 	const conversations: ConversationSummary[] = [];
-	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
+	const archivedConversations = new Set<string>();
+	let activeConversationId: string | null = null;
+	let nextConversationId = 1;
+	const conversationList = vi.fn(() =>
+		ok({
+			conversations: conversations.filter(
+				(conversation) => !archivedConversations.has(conversation.conversationId),
+			),
+		}),
+	);
 	const conversationDetails = new Map<string, ConversationDetail>();
+	const activeConversation = () =>
+		activeConversationId === null ? null : (conversationDetails.get(activeConversationId) ?? null);
 	const conversationProjection = (id: string, title: string): ConversationDetail => ({
 		conversationId: id,
 		name: title,
-		branch: { entries: [], hasMoreBefore: false },
+		branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
 		live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
@@ -228,7 +328,7 @@ export function createTestClient() {
 		ok({
 			onboarding: {
 				status: "complete" as const,
-				stateData: { answers: {}, decisions: {} },
+				stateData: { answers: {} },
 			},
 			character: THEMED_CHARACTER,
 		}),
@@ -293,57 +393,46 @@ export function createTestClient() {
 			get: vi.fn(() =>
 				ok({
 					status: "complete",
-					stateData: { answers: {}, decisions: {} },
+					stateData: { answers: {} },
 				}),
 			),
 			submit: vi.fn(() =>
 				ok({
 					status: "complete",
-					stateData: { answers: {}, decisions: {} },
+					stateData: { answers: {} },
 				}),
 			),
 		},
 		conversation: {
 			list: conversationList,
-			create: vi.fn(({ title }: { title?: string }) => {
-				// The renderer activates the returned detail, so register it in the list too.
-				let summary = conversations.find((conversation) => conversation.conversationId === "c1");
-				if (summary === undefined) {
-					summary = {
-						conversationId: "c1",
-						name: title ?? "New conversation",
-						created: "2026-01-01T00:00:00.000Z",
-						modified: "2026-01-01T00:00:00.000Z",
-						messageCount: 0,
-						firstMessage: "",
-						isStreaming: false,
-					};
-					conversations.push(summary);
-				} else if (title !== undefined) {
-					summary.name = title;
+			activeGet: vi.fn(() => ok({ activeConversation: activeConversation() })),
+			select: vi.fn(({ conversationId }: { conversationId: string }) => {
+				if (!conversationDetails.has(conversationId)) {
+					throw new Error(`Unknown fixture conversation: ${conversationId}`);
 				}
-				const detail = conversationProjection("c1", summary.name ?? summary.firstMessage);
+				activeConversationId = conversationId;
+				return ok({ activeConversation: activeConversation() });
+			}),
+			create: vi.fn(({ title }: { title?: string }) => {
+				const conversationId = `c${nextConversationId++}`;
+				const summary = {
+					conversationId,
+					name: title ?? "New conversation",
+					created: "2026-01-01T00:00:00.000Z",
+					modified: "2026-01-01T00:00:00.000Z",
+					messageCount: 0,
+					firstMessage: "",
+					isStreaming: false,
+				};
+				conversations.push(summary);
+				const detail = conversationProjection(conversationId, summary.name);
 				conversationDetails.set(detail.conversationId, detail);
+				activeConversationId = detail.conversationId;
 				return ok(detail);
 			}),
 			open: vi.fn(({ conversationId }: { conversationId: string }) => {
-				let conversation = conversations.find((item) => item.conversationId === conversationId);
-				if (conversation === undefined) {
-					conversation = {
-						conversationId,
-						name: "New conversation",
-						created: "2026-01-01T00:00:00.000Z",
-						modified: "2026-01-01T00:00:00.000Z",
-						messageCount: 0,
-						firstMessage: "",
-						isStreaming: false,
-					};
-					conversations.push(conversation);
-				}
-				const detail =
-					conversationDetails.get(conversationId) ??
-					conversationProjection(conversationId, conversation.name ?? conversation.firstMessage);
-				conversationDetails.set(conversationId, detail);
+				const detail = conversationDetails.get(conversationId);
+				if (!detail) throw new Error(`Unknown fixture conversation: ${conversationId}`);
 				return ok(detail);
 			}),
 			rename: vi.fn(({ conversationId, title }: { conversationId: string; title: string }) => {
@@ -356,12 +445,12 @@ export function createTestClient() {
 			archive: vi.fn(
 				({ conversationId, archived }: { conversationId: string; archived: boolean }) => {
 					if (archived) {
-						const index = conversations.findIndex(
-							(conversation) => conversation.conversationId === conversationId,
-						);
-						if (index >= 0) conversations.splice(index, 1);
+						archivedConversations.add(conversationId);
+						if (activeConversationId === conversationId) activeConversationId = null;
+					} else {
+						archivedConversations.delete(conversationId);
 					}
-					return ok({});
+					return ok({ activeConversation: activeConversation() });
 				},
 			),
 			delete: vi.fn(({ conversationId }: { conversationId: string }) => {
@@ -370,7 +459,9 @@ export function createTestClient() {
 				);
 				if (index >= 0) conversations.splice(index, 1);
 				conversationDetails.delete(conversationId);
-				return ok({});
+				archivedConversations.delete(conversationId);
+				if (activeConversationId === conversationId) activeConversationId = null;
+				return ok({ activeConversation: activeConversation() });
 			}),
 		},
 		message: {
@@ -391,14 +482,62 @@ export function createTestClient() {
 					firstMessage: "",
 					isStreaming: false,
 				});
+				activeConversationId = detail.conversationId;
 				return ok(detail);
 			}),
 			abort: vi.fn(() => ok({})),
 		},
 		memory: {
-			localEmbeddingDownloadStatus: vi.fn(() => ok({ status: "preparing", downloadedBytes: 0 })),
-			cancelLocalEmbeddingDownload: vi.fn(() => ok({})),
-			configureLocalEmbedding: vi.fn(() => ok({ ready: true })),
+			localEmbeddingInventory: vi.fn(() => ok(inventory)),
+			localEmbeddingAcquisitionStatus: vi.fn(() => ok(acquisition)),
+			localEmbeddingAcquisitionStart: vi.fn(({ target }: { target: LocalEmbeddingTarget }) => {
+				acquisition = {
+					revision: acquisition.revision + 1,
+					phase: "preparing",
+					operationId: `embedding-${acquisition.revision + 1}`,
+					target,
+					downloadedBytes: 0,
+				};
+				return ok(acquisition);
+			}),
+			localEmbeddingAcquisitionCancel: vi.fn(() => {
+				if (acquisition.phase !== "idle") {
+					acquisition = { ...acquisition, revision: acquisition.revision + 1, phase: "cancelled" };
+				}
+				return ok(acquisition);
+			}),
+			activateLocalEmbedding: vi.fn(activateLocalEmbedding),
+		},
+		systemOnboarding: {
+			completeModel: vi.fn(({ reply, vision }) => {
+				systemDefaults = { reply, vision };
+				settings = { ...settings, firstRunStage: "embedding" };
+				return ok({ settings, defaults: systemDefaults });
+			}),
+			completeEmbedding: vi.fn(async (request) => {
+				if (request.choice === "local") {
+					await activateLocalEmbedding({ target: request.target });
+				} else {
+					settings = {
+						...settings,
+						relationshipMemoryEnabled: request.choice === "remote",
+						memoryVectorService:
+							request.choice === "remote"
+								? {
+										enabled: true,
+										provider: "remote",
+										baseUrl: request.configuration.baseUrl,
+										model: request.configuration.model,
+										dimensions: request.configuration.dimensions,
+										hasCredential: Boolean(request.configuration.apiKey),
+									}
+								: { enabled: false, provider: "none" },
+					};
+					inventory = { candidates: inventory.candidates };
+				}
+				settings = { ...settings, firstRunStage: "role" };
+				return ok({ settings });
+			}),
 		},
 		canon: {
 			listSources: vi.fn(() => ok({ sources: [] })),
@@ -414,9 +553,9 @@ export function createTestClient() {
 			customUpsert: vi.fn(() => ok(null)),
 			overrideBaseUrl: vi.fn(() => ok(null)),
 			setApiKey: vi.fn(() => ok(null)),
-			login: vi.fn(() => ok({ providerId: "test", status: "completed" })),
-			loginStatus: vi.fn(() => ok({ providerId: "test", status: "completed" })),
-			loginAnswer: vi.fn(() => ok({ providerId: "test", status: "running" })),
+			login: vi.fn(() => ok({ providerId: "test", status: "completed", events: [] })),
+			loginStatus: vi.fn(() => ok({ providerId: "test", status: "completed", events: [] })),
+			loginAnswer: vi.fn(() => ok({ providerId: "test", status: "running", events: [] })),
 			loginCancel: vi.fn(() => ok(null)),
 			logout: vi.fn(() => ok(null)),
 			remove: vi.fn(() => ok(null)),
@@ -440,13 +579,11 @@ export function createTestClient() {
 				}),
 			),
 			defaultsSetVision: vi.fn((vision) => ok({ vision, onboardingComplete: true })),
-			systemDefaultsGet: vi.fn(() =>
-				ok({
-					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
-					vision: { mode: "auto" as const },
-				}),
-			),
-			systemDefaultsSet: vi.fn(({ reply, vision }) => ok({ reply, vision })),
+			systemDefaultsGet: vi.fn(() => ok(systemDefaults)),
+			systemDefaultsSet: vi.fn(({ reply, vision }) => {
+				systemDefaults = { reply, vision };
+				return ok(systemDefaults);
+			}),
 			defaultsInitialize: vi.fn(() =>
 				ok({
 					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
@@ -540,16 +677,31 @@ export function createTestClient() {
 	};
 	HOST_EVENT_SENDERS.set(client, (kind, payload) => {
 		const event: LivePush =
-			kind === "memory.embedding_download_changed"
+			kind === "memory.embedding_acquisition_changed"
 				? {
-						type: "embeddingDownload",
-						state: payload as EmbeddingDownloadState,
+						type: "embeddingAcquisition",
+						state: payload as LocalEmbeddingAcquisitionState,
 					}
 				: {
 						type: "providerLogin",
 						providerId: String(payload.providerId),
 						state: payload as ProviderLoginResponse,
 					};
+		if (event.type === "embeddingAcquisition") {
+			acquisition = event.state;
+			if (acquisition.phase === "completed") {
+				const target = acquisition.target;
+				inventory = {
+					...inventory,
+					candidates: inventory.candidates.map((candidate) => ({
+						...candidate,
+						installed:
+							candidate.installed ||
+							(target.kind === "candidate" && candidate.id === target.candidateId),
+					})),
+				};
+			}
+		}
 		const deliver = receiveLive;
 		if (deliver) {
 			receiveLive = undefined;
