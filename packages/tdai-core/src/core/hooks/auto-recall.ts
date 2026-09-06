@@ -91,13 +91,16 @@ export async function performAutoRecall(params: {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	return Promise.race([
-		performAutoRecallInner(params).finally(() => {
-			if (timer) clearTimeout(timer);
+		performAutoRecallInner(params).catch(() => {
+			logger?.warn?.(`${TAG} memory_recall_failed: optional recall omitted; memory availability is unknown`);
+			return undefined;
+		}).finally(() => {
+			clearTimeout(timer);
 		}),
 		new Promise<undefined>((resolve) => {
 			timer = setTimeout(() => {
 				logger?.warn?.(
-					`${TAG} ⚠️ Recall timed out after ${timeoutMs}ms — skipping memory injection to avoid blocking the user`,
+					`${TAG} memory_recall_timeout: optional recall omitted after ${timeoutMs}ms; memory availability is unknown`,
 				);
 				resolve(undefined);
 			}, timeoutMs);
@@ -130,30 +133,35 @@ async function performAutoRecallInner(params: {
 		);
 	} else {
 		effectiveStrategy = cfg.recall.strategy ?? "hybrid";
-		const searchResult = await searchMemories(
-			userText,
-			pluginDataDir,
-			cfg,
-			logger,
-			effectiveStrategy as "keyword" | "embedding" | "hybrid",
-			vectorStore,
-			embeddingService,
-		);
-		memoryLines = searchResult.lines;
-		searchTiming = searchResult.timing;
-		memoryLines = applyRecallBudget(memoryLines, cfg.recall, logger);
+		try {
+			const searchResult = await searchMemories(
+				userText,
+				pluginDataDir,
+				cfg,
+				logger,
+				effectiveStrategy as "keyword" | "embedding" | "hybrid",
+				vectorStore,
+				embeddingService,
+			);
+			memoryLines = searchResult.lines;
+			searchTiming = searchResult.timing;
+			memoryLines = applyRecallBudget(memoryLines, cfg.recall, logger);
 
-		// Extract structured RecalledMemory from formatted lines for metric reporting
-		recalledL1Memories = memoryLines.map((line) => {
-			const match = line.match(/^-\s+\[([^\]]+)\]\s+(.+?)(?:\s*\(活动时间:.*\))?$/);
-			if (match) {
-				const tag = match[1];
-				const content = match[2].trim();
-				const typePart = tag.includes("|") ? tag.split("|")[0] : tag;
-				return { content, score: 0, type: typePart };
-			}
-			return { content: line, score: 0, type: "unknown" };
-		});
+			// Extract structured RecalledMemory from formatted lines for metric reporting.
+			recalledL1Memories = memoryLines.map((line) => {
+				const match = line.match(/^-\s+\[([^\]]+)\]\s+(.+?)(?:\s*\(活动时间:.*\))?$/);
+				if (match) {
+					const tag = match[1];
+					const content = match[2].trim();
+					const typePart = tag.includes("|") ? tag.split("|")[0] : tag;
+					return { content, score: 0, type: typePart };
+				}
+				return { content: line, score: 0, type: "unknown" };
+			});
+		} catch {
+			effectiveStrategy = "failed";
+			logger?.warn?.(`${TAG} memory_recall_failed: retrieval omitted; memory availability is unknown`);
+		}
 	}
 	const tSearchEnd = performance.now();
 
@@ -168,8 +176,12 @@ async function performAutoRecallInner(params: {
 		logger?.debug?.(
 			`${TAG} Persona loaded: ${personaContent ? `${personaContent.length} chars` : "empty"}`,
 		);
-	} catch {
-		logger?.debug?.(`${TAG} No persona file found (expected for new users)`);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+			logger?.debug?.(`${TAG} No persona file found (expected for new users)`);
+		} else {
+			logger?.warn?.(`${TAG} memory_recall_failed: persona read failed`);
+		}
 	}
 	const tPersonaEnd = performance.now();
 
@@ -183,7 +195,7 @@ async function performAutoRecallInner(params: {
 			logger?.debug?.(`${TAG} Scene navigation generated: ${sceneIndex.length} scenes`);
 		}
 	} catch {
-		logger?.debug?.(`${TAG} No scene index found`);
+		logger?.warn?.(`${TAG} memory_recall_failed: scene index read failed`);
 	}
 	const tSceneEnd = performance.now();
 
@@ -197,7 +209,7 @@ async function performAutoRecallInner(params: {
 				`persona=${(tPersonaEnd - tPersonaStart).toFixed(0)}ms, ` +
 				`scene=${(tSceneEnd - tSceneStart).toFixed(0)}ms — no context to inject`,
 		);
-		logger?.debug?.(`${TAG} No memories/persona/scenes to inject`);
+		logger?.debug?.(`${TAG} No successfully retrieved context to inject`);
 		return undefined;
 	}
 
@@ -464,9 +476,9 @@ async function searchMemories(
 		);
 	} catch (err) {
 		logger?.warn?.(
-			`${TAG} Memory search failed (strategy=${effectiveStrategy}): ${err instanceof Error ? err.message : String(err)}`,
+			`${TAG} memory_search_failed: recall retrieval failed (strategy=${effectiveStrategy})`,
 		);
-		return emptyResult;
+		throw err;
 	}
 }
 
@@ -482,6 +494,9 @@ async function searchByKeyword(
 	logger?: Logger,
 	vectorStore?: IMemoryStore,
 ): Promise<string[]> {
+	if (!vectorStore?.isFtsAvailable()) {
+		throw Object.assign(new Error("Keyword recall index is unavailable"), { code: "memory_search_unavailable" });
+	}
 	// Prefer FTS5 if available
 	if (vectorStore?.isFtsAvailable()) {
 		const ftsQuery = buildFtsQuery(userText);
@@ -521,8 +536,8 @@ async function searchByKeyword(
 		}
 	}
 
-	// FTS5 not available or returned no results — skip in-memory fallback to avoid O(N) full scan
-	logger?.debug?.(`${TAG} [keyword] FTS5 unavailable or no results, skipping keyword search`);
+	// No full-scan fallback: a successful keyword search can legitimately yield no matches.
+	logger?.debug?.(`${TAG} [keyword] No keyword matches selected`);
 	return [];
 }
 
@@ -608,6 +623,9 @@ async function searchHybrid(
 ): Promise<SearchResult> {
 	// Run keyword and embedding searches in parallel
 	const candidateK = maxResults * 3; // retrieve more for merging
+	let keywordOk = false;
+	let embeddingOk = false;
+	const failures: unknown[] = [];
 
 	const [keywordResult, embeddingResult] = await Promise.all([
 		// Keyword search: FTS5 only (no in-memory fallback)
@@ -619,6 +637,7 @@ async function searchHybrid(
 					const ftsQuery = buildFtsQuery(userText);
 					if (ftsQuery) {
 						const ftsResults = await vectorStore.searchL1Fts(ftsQuery, candidateK);
+						keywordOk = true;
 						if (ftsResults.length > 0) {
 							logger?.debug?.(
 								`${TAG} [hybrid-keyword-fts] FTS5 found ${ftsResults.length} candidates`,
@@ -655,14 +674,16 @@ async function searchHybrid(
 						}
 					}
 				}
-				// FTS5 not available or returned no results — skip in-memory fallback
+				// No usable query tokens or no matches; availability is tracked separately.
 				logger?.debug?.(
-					`${TAG} [hybrid-keyword] FTS5 unavailable or no results, skipping keyword part`,
+					`${TAG} [hybrid-keyword] No keyword candidates selected`,
 				);
 				return { records: [] as ScoredRecord[], ms: performance.now() - tStart };
 			} catch (err) {
+				keywordOk = false;
+				failures.push(err);
 				logger?.warn?.(
-					`${TAG} Hybrid: keyword part failed: ${err instanceof Error ? err.message : String(err)}`,
+					`${TAG} memory_search_failed: hybrid keyword retrieval failed`,
 				);
 				return { records: [] as ScoredRecord[], ms: performance.now() - tStart };
 			}
@@ -677,16 +698,27 @@ async function searchHybrid(
 					`${TAG} [hybrid-embedding] Embedding OK, dims=${queryEmbedding.length}, searching top-${candidateK}...`,
 				);
 				const results = await vectorStore.searchL1Vector(queryEmbedding, candidateK, userText);
+				embeddingOk = true;
 				logger?.debug?.(`${TAG} [hybrid-embedding] Got ${results.length} candidates`);
 				return { results, ms: performance.now() - tStart };
 			} catch (err) {
+				embeddingOk = false;
+				failures.push(err);
 				logger?.warn?.(
-					`${TAG} Hybrid: embedding part failed: ${err instanceof Error ? err.message : String(err)}`,
+					`${TAG} memory_search_failed: hybrid embedding retrieval failed`,
 				);
 				return { results: [] as L1SearchResult[], ms: performance.now() - tStart };
 			}
 		})(),
 	]);
+	if (!keywordOk && !embeddingOk) {
+		throw Object.assign(new AggregateError(failures, "Recall failed: no retrieval path succeeded"), {
+			code: "memory_search_failed",
+		});
+	}
+	if (!keywordOk || !embeddingOk) {
+		logger?.warn?.(`${TAG} memory_recall_degraded: only ${keywordOk ? "keyword" : "embedding"} retrieval succeeded`);
+	}
 
 	const keywordResults = keywordResult.records;
 	const embeddingResults = embeddingResult.results;
@@ -698,7 +730,7 @@ async function searchHybrid(
 	};
 
 	if (keywordResults.length === 0 && embeddingResults.length === 0) {
-		logger?.debug?.(`${TAG} Hybrid search: both strategies returned 0 results`);
+		logger?.debug?.(`${TAG} Hybrid search: successful retrieval paths returned 0 results`);
 		return { lines: [], timing };
 	}
 

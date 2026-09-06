@@ -1,15 +1,15 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { faSliders } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { ConversationStatePanel } from "./ConversationStatePanel.js";
 import { Icon } from "./Icon.js";
+import { RunTaskPanel } from "./RunTaskPanel.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button } from "./ui/primitives.js";
-import { WorkRunCard } from "./WorkPanel.js";
 
 /**
- * Thread head: the current scene title and the "进行中的事" work pill
- * (live run count from the store, opens the run queue). The OS window
+ * Thread head: current scene and external-task queue. Pi conversation execution
+ * is shown separately in the thread, not counted as an external task. The OS window
  * frame provides the real title bar, so this header only carries thread
  * context and top actions.
  */
@@ -21,17 +21,14 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [stateOpen, setStateOpen] = createSignal(false);
 	const activeCharacterState = createMemo(() => workflow.host.companionState?.state.character);
-	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
-	const recentRuns = createMemo(() =>
-		workflow.host.runs.filter(
-			(run) =>
-				run.conversationId === workflow.host.activeConversationId &&
-				!activeRuns().some((activeRun) => activeRun.id === run.id),
-		),
-	);
 	let wrapper: HTMLDivElement | undefined;
 	let queueTrigger: HTMLButtonElement | undefined;
 	let conversationStateTrigger: HTMLButtonElement | undefined;
+	let panel: HTMLElement | undefined;
+	const closeQueue = () => {
+		workflow.closeQueue();
+		if (queueTrigger?.isConnected) queueTrigger.focus();
+	};
 	const setConversationStateOpen = (open: boolean) => {
 		setStateOpen(open);
 		if (!open) {
@@ -45,10 +42,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 		const onKey = (event: KeyboardEvent) => {
 			if (!queueOpen() || event.key !== "Escape") return;
 			event.preventDefault();
-			workflow.closeQueue();
-			queueMicrotask(() => {
-				if (queueTrigger?.isConnected) queueTrigger.focus();
-			});
+			closeQueue();
 		};
 		const onPointerDown = (event: PointerEvent) => {
 			if (!queueOpen() || wrapper?.contains(event.target as Node)) return;
@@ -88,27 +82,36 @@ export function ThreadHead(props: { sceneLabel: string }) {
 					type="button"
 					class="work-pill"
 					aria-expanded={queueOpen()}
-					aria-haspopup="true"
+					aria-controls="current-work-panel"
 					onClick={workflow.toggleQueue}
 				>
-					<span class="pulse" aria-hidden="true" />
+					<Show when={activeRuns().length > 0}>
+						<span class="pulse" aria-hidden="true" />
+					</Show>
 					{t("threadHead.runningWork")}
 					<b>{activeRuns().length}</b>
 				</Button>
 				<Show when={queueOpen()}>
-					<div class="queue-pop" role="menu" aria-label={t("threadHead.runningWork")}>
-						<h3>{t("threadHead.runningWork")}</h3>
-						<Show
-							when={activeRuns().length > 0}
-							fallback={<div class="empty">{t("threadHead.noRunningWork")}</div>}
-						>
-							<For each={activeRuns()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
-						</Show>
-						<Show when={recentRuns().length > 0}>
-							<h3>{t("threadHead.recentWork")}</h3>
-							<For each={recentRuns()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
-						</Show>
-					</div>
+					<section
+						ref={(element) => {
+							panel = element;
+							onMount(() => {
+								if (!workflow.selectedTaskId() && element.isConnected) element.focus();
+							});
+						}}
+						id="current-work-panel"
+						class="queue-pop task-workspace"
+						tabIndex={-1}
+						aria-label={t("threadHead.runningWork")}
+					>
+						<div class="task-panel-heading">
+							<h2>{t("threadHead.runningWork")}</h2>
+							<Button type="button" onClick={closeQueue}>
+								{t("work.task.close")}
+							</Button>
+						</div>
+						<RunTaskPanel onBack={() => panel?.isConnected && panel.focus()} />
+					</section>
 				</Show>
 			</div>
 			<ConversationStatePanel open={stateOpen()} onOpenChange={setConversationStateOpen} />

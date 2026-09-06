@@ -163,21 +163,26 @@ function upgradeSystemSchema(connection: DatabaseSync): void {
 }
 
 function upgradeCompanionSchema(connection: DatabaseSync): void {
-	if (
-		!tableExists(connection, "runtime_identity") ||
-		!tableExists(connection, "conversations") ||
-		tableExists(connection, "active_conversations")
-	)
+	if (!tableExists(connection, "runtime_identity") || !tableExists(connection, "conversations"))
 		return;
 	connection.exec("BEGIN IMMEDIATE");
 	try {
 		connection.exec(`
-			CREATE TABLE active_conversations (
+			CREATE TABLE IF NOT EXISTS active_conversations (
 				companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
 				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			)
 		`);
+		if (tableExists(connection, "runs")) {
+			if (!columnNames(connection, "runs").has("tool_call_id")) {
+				connection.exec("ALTER TABLE runs ADD COLUMN tool_call_id TEXT");
+			}
+			connection.exec(`
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_conversation_tool_call
+				ON runs(conversation_id, tool_call_id)
+			`);
+		}
 		connection.exec("COMMIT");
 	} catch (error) {
 		connection.exec("ROLLBACK");

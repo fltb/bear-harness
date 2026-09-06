@@ -44,9 +44,6 @@ export function createStoreBundle(
 ): StoreBundle {
 	const { logger } = options;
 
-	// ── BM25 local encoder ──
-	const bm25Encoder = createBM25Encoder(config.bm25, logger);
-
 	switch (config.storeBackend) {
 		case "tcvdb": {
 			const tcvdbCfg = config.tcvdb;
@@ -64,6 +61,7 @@ export function createStoreBundle(
 						`the output dimension of tcvdb.embeddingModel (${tcvdbCfg.embeddingModel})`,
 				);
 			}
+			const bm25Encoder = createBM25Encoder(config.bm25, logger);
 			const database = tcvdbCfg.database;
 			const store = new TcvdbMemoryStore({
 				url: tcvdbCfg.url,
@@ -145,14 +143,12 @@ export function createStoreBundle(
 
 			logger?.debug?.(
 				`${TAG} Store created: backend=sqlite, dbPath=${dbPath}, dimensions=${dims}, ` +
-					`embedding=${embeddingService ? "enabled" : "disabled"}, ` +
-					`bm25=${bm25Encoder ? "enabled" : "disabled"}`,
+					`embedding=${embeddingService ? "enabled" : "disabled"}`,
 			);
 
 			return {
 				store,
 				embedding: embeddingService as unknown as IEmbeddingService,
-				bm25Encoder,
 				storeSnapshot: {
 					type: "sqlite",
 					sqlitePath: path.relative(options.dataDir, dbPath),

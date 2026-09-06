@@ -51,9 +51,11 @@ const settingsPages = [
 
 async function revealSidebar(page: Page, viewport: Viewport): Promise<Locator> {
 	const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
-	if (viewport.mode === "mobile" && ((await navigation.boundingBox())?.x ?? -1) < 0) {
-		await page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }).click();
+	if (viewport.mode === "mobile") {
+		const trigger = page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true });
+		if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
 	}
+	await expect(navigation).toBeVisible();
 	await expect
 		.poll(async () => (await navigation.boundingBox())?.x ?? -999)
 		.toBeGreaterThanOrEqual(-1);
@@ -101,15 +103,25 @@ async function assertViewportIntegrity(page: Page, viewport: Viewport): Promise<
 	);
 }
 
-async function capture(page: Page, viewport: Viewport, state: string): Promise<void> {
+async function assertSurface(page: Page, viewport: Viewport, surface: Locator): Promise<void> {
+	await expect(surface).toBeVisible();
+	await expect(surface).toBeInViewport();
+	await expect
+		.poll(
+			async () => {
+				const box = await surface.boundingBox();
+				return (
+					box !== null &&
+					box.x >= -1 &&
+					box.y >= -1 &&
+					box.x + box.width <= viewport.width + 1 &&
+					box.y + box.height <= viewport.height + 1
+				);
+			},
+			{ message: `${viewport.mode} surface must fit inside the viewport` },
+		)
+		.toBe(true);
 	await assertViewportIntegrity(page, viewport);
-	// test-quality-allow locator: volatile hashes and local installation paths are masked in baselines
-	const volatile = page.locator("code");
-	await expect(page).toHaveScreenshot(`${state}-${viewport.mode}.png`, {
-		animations: "disabled",
-		caret: "hide",
-		mask: (await volatile.count()) > 0 ? [volatile] : [],
-	});
 }
 
 async function activeConversationRow(page: Page): Promise<Locator> {
@@ -117,6 +129,8 @@ async function activeConversationRow(page: Page): Promise<Locator> {
 	// test-quality-allow locator: conversation id and aria-current are the public navigation contract
 	const active = navigation.locator('[data-conversation-id][aria-current="page"]');
 	await expect(active).toHaveCount(1);
+	// Navigation actions are revealed by hovering the conversation row.
+	await active.hover();
 	// test-quality-allow locator: the action group is the active conversation button's public container
 	return active.locator("..");
 }
@@ -141,15 +155,42 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	const application = page.getByRole("application", { name: zhCN.shell.productName });
 	await expect(application).toHaveAttribute("data-layout", viewport.mode);
 	await expect(page.getByText(zhCN.language.warningTitle, { exact: true })).toBeHidden();
-	await capture(page, viewport, "layout");
+	await assertSurface(
+		page,
+		viewport,
+		page.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
+	);
+	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEditable();
 
 	const workButton = page.getByRole("button", {
-		name: new RegExp(zhCN.threadHead.runningWork),
+		name: new RegExp(`^${zhCN.threadHead.runningWork}\\s*\\d+$`),
 	});
 	await workButton.click();
-	await expect(page.getByRole("menu", { name: zhCN.threadHead.runningWork })).toBeVisible();
-	await capture(page, viewport, "work-menu");
+	const taskWorkspace = page.getByRole("region", { name: zhCN.threadHead.runningWork });
+	await expect(taskWorkspace).toBeVisible();
+	await expect(workButton).toHaveAttribute("aria-expanded", "true");
+	await expect(taskWorkspace).toBeFocused();
+	await assertSurface(page, viewport, taskWorkspace);
+	const historyButton = taskWorkspace.getByRole("button", { name: zhCN.work.task.history });
+	await historyButton.click();
+	await expect(historyButton).toHaveAttribute("aria-expanded", "true");
+	const history = taskWorkspace.getByRole("region", { name: zhCN.work.task.history });
+	await expect(history).toBeVisible();
+	await expect(history).toHaveAttribute("aria-busy", "false");
+	await expect(history.getByRole("alert")).toHaveCount(0);
+	await historyButton.click();
+	await expect(historyButton).toHaveAttribute("aria-expanded", "false");
+	await expect(history).toBeHidden();
+	await taskWorkspace.getByRole("button", { name: zhCN.work.task.close }).click();
+	await expect(taskWorkspace).toBeHidden();
+	await expect(workButton).toHaveAttribute("aria-expanded", "false");
+	await expect(workButton).toBeFocused();
+	await workButton.click();
+	await expect(taskWorkspace).toBeVisible();
 	await page.keyboard.press("Escape");
+	await expect(taskWorkspace).toBeHidden();
+	await expect(workButton).toHaveAttribute("aria-expanded", "false");
+	await expect(workButton).toBeFocused();
 
 	const navigation = await revealSidebar(page, viewport);
 	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
@@ -163,20 +204,33 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	const rename = page.getByRole("textbox", { name: zhCN.sidebar.renameConversation });
 	await expect(rename).toBeVisible();
 	await rename.fill(`站点地图-${viewport.mode}`);
-	await capture(page, viewport, "conversation-rename");
+	await assertSurface(page, viewport, rename);
 	await page.getByRole("button", { name: zhCN.sidebar.saveConversation }).click();
+	await expect(rename).toBeHidden();
+	await expect(
+		row.getByRole("button", { name: new RegExp(`^站点地图-${viewport.mode}`) }),
+	).toBeVisible();
 
 	await revealSidebar(page, viewport);
 	const renamedRow = await activeConversationRow(page);
 	await renamedRow.getByRole("button", { name: zhCN.sidebar.deleteConversation }).click();
 	const deleteDialog = page.getByRole("dialog", { name: zhCN.sidebar.deleteConversationTitle });
 	await expect(deleteDialog).toBeVisible();
-	await capture(page, viewport, "conversation-delete-confirmation");
+	await assertSurface(page, viewport, deleteDialog);
+	await expect(
+		deleteDialog.getByRole("button", { name: zhCN.sidebar.deleteConversationConfirmAction }),
+	).toBeEnabled();
 	await deleteDialog.getByRole("button", { name: zhCN.messages.cancel }).click();
+	await expect(deleteDialog).toBeHidden();
+	await expect(
+		renamedRow.getByRole("button", { name: zhCN.sidebar.deleteConversation }),
+	).toBeFocused();
 
 	await revealSidebar(page, viewport);
 	const conversationNavigation = page.getByRole("navigation", {
 		name: zhCN.sidebar.conversations,
+		// Creating a conversation closes the mobile drawer; membership remains observable.
+		includeHidden: true,
 	});
 	// test-quality-allow locator: conversation id is the explicit navigation identity contract
 	const conversationButtons = conversationNavigation.locator("[data-conversation-id]");
@@ -201,6 +255,10 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	const archiveRow = await activeConversationRow(page);
 	await archiveRow.getByRole("button", { name: zhCN.sidebar.archiveConversation }).click();
 	await expect.poll(() => conversationButtons.count()).toBe(beforeCreate);
+	// Archiving the selected conversation does not select another one.
+	await revealSidebar(page, viewport);
+	await conversationNavigation.locator(`[data-conversation-id="${previousId}"]`).click();
+	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeVisible();
 }
 
 async function visitCharacterSettings(page: Page, viewport: Viewport): Promise<void> {
@@ -211,14 +269,17 @@ async function visitCharacterSettings(page: Page, viewport: Viewport): Promise<v
 	await expect(
 		dialog.getByRole("region", { name: zhCN.currentRolePackage.selectorLabel }),
 	).toBeVisible();
-	await expect(dialog.getByRole("group", { name: zhCN.currentRolePackage.manifest })).toBeVisible();
-	await capture(page, viewport, "character-role-package");
+	await expect(
+		dialog.getByRole("group", { name: zhCN.currentRolePackage.promptEditor }),
+	).toBeVisible();
+	await assertSurface(page, viewport, dialog);
 
 	const localData = dialog.getByRole("region", { name: zhCN.currentRolePackage.localDataTitle });
 	await localData.scrollIntoViewIfNeeded();
 	await expect(localData).toBeVisible();
-	await capture(page, viewport, "character-local-data");
+	await assertSurface(page, viewport, dialog);
 	await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
+	await expect(dialog).toBeHidden();
 }
 
 async function visitSystemSettings(page: Page, viewport: Viewport): Promise<void> {
@@ -230,7 +291,7 @@ async function visitSystemSettings(page: Page, viewport: Viewport): Promise<void
 	for (const settingsPage of settingsPages) {
 		await selectSettingsPage(page, dialog, viewport, settingsPage.label);
 		await expect(settingsPage.landmark(dialog)).toBeVisible();
-		await capture(page, viewport, `settings-${settingsPage.id}`);
+		await assertSurface(page, viewport, dialog);
 		if (settingsPage.id === "archived") {
 			const archivedDelete = dialog.getByRole("button", {
 				name: zhCN.sidebar.deleteConversation,
@@ -241,18 +302,25 @@ async function visitSystemSettings(page: Page, viewport: Viewport): Promise<void
 				name: zhCN.sidebar.deleteConversationTitle,
 			});
 			await expect(confirmation).toBeVisible();
-			await capture(page, viewport, "archived-delete-confirmation");
+			await assertSurface(page, viewport, confirmation);
+			await expect(
+				confirmation.getByRole("button", { name: zhCN.sidebar.deleteConversationConfirmAction }),
+			).toBeEnabled();
 			await confirmation.getByRole("button", { name: zhCN.messages.cancel }).click();
+			await expect(confirmation).toBeHidden();
+			await expect(archivedDelete).toBeFocused();
 		}
 	}
 	await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
+	await expect(dialog).toBeHidden();
 }
 
 async function visitConversationContent(page: Page, viewport: Viewport): Promise<void> {
 	await sendMessage(page, "E2E_STORY_ENTRY");
 	const choices = page.getByRole("region", { name: "要进入《未送达的回报》吗？" });
 	await expect(choices).toBeVisible();
-	await capture(page, viewport, "conversation-choices");
+	await choices.scrollIntoViewIfNeeded();
+	await assertSurface(page, viewport, choices);
 	const [choiceResponse] = await Promise.all([
 		page.waitForResponse(
 			(response) =>
@@ -264,31 +332,111 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 
 	await sendMessage(page, "E2E_MEDIA_PREVIEW");
 	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
-	await expect(mediaCard).toBeVisible();
-	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	const mediaPreview = page.getByRole("complementary", { name: "极昼的来处" });
-	await expect(mediaPreview).toBeVisible();
-	await capture(page, viewport, "media-preview");
+	const mediaTrigger = mediaCard.getByRole("button", { name: zhCN.messages.openMedia });
+	const mediaPreview = page.getByRole("dialog", { name: "极昼的来处" });
+	await expect(mediaCard.getByRole("img", { name: "极昼的来处" })).toBeVisible();
+	await expect(mediaPreview).toHaveCount(0);
+	await mediaTrigger.click();
+	await assertSurface(page, viewport, mediaPreview);
+	const picture = mediaPreview.getByRole("img", { name: "极昼的来处" });
+	await expect(picture).toBeVisible();
+	await expect
+		.poll(() =>
+			picture.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+		)
+		.toBe(true);
+	if (viewport.mode === "mobile") {
+		await expect(mediaPreview).toHaveJSProperty("clientWidth", viewport.width);
+		await expect(mediaPreview).toHaveJSProperty("clientHeight", viewport.height);
+	} else {
+		await mediaPreview.getByRole("button", { name: zhCN.messages.expandMedia }).click();
+		await expect(mediaPreview).toHaveJSProperty("clientWidth", viewport.width);
+		await expect(mediaPreview).toHaveJSProperty("clientHeight", viewport.height);
+		await mediaPreview.getByRole("button", { name: zhCN.messages.restoreMedia }).click();
+		await assertSurface(page, viewport, mediaPreview);
+	}
+	await mediaPreview.getByRole("button", { name: zhCN.messages.originalMediaSize }).click();
+	const fitMedia = mediaPreview.getByRole("button", { name: zhCN.messages.fitMedia });
+	await expect(fitMedia).toHaveAttribute("aria-pressed", "true");
+	await fitMedia.click();
+	await expect(
+		mediaPreview.getByRole("button", { name: zhCN.messages.originalMediaSize }),
+	).toHaveAttribute("aria-pressed", "false");
 	await mediaPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
+	await expect(mediaPreview).toHaveCount(0);
+	await expect(mediaTrigger).toBeFocused();
 
 	await sendMessage(page, "E2E_DELEGATE_ARTIFACT");
 	const artifact = page.getByRole("button", { name: /查看成果: e2e-report\.txt/ });
 	await expect(artifact).toBeVisible({ timeout: 30_000 });
-	await artifact.click();
 	const artifactPreview = page.getByRole("dialog", { name: "e2e-report.txt" });
-	await expect(artifactPreview).toBeVisible();
+	await expect(artifactPreview).toHaveCount(0);
+	await artifact.click();
+	const safePreview = artifactPreview.getByRole("region", { name: "e2e-report.txt", exact: true });
+	await expect(safePreview).toHaveAttribute("data-preview-state", "ready");
+	await expect(safePreview).toHaveAttribute("aria-busy", "false");
+	await expect(safePreview).toBeVisible();
+	await expect(safePreview.getByRole("alert")).toHaveCount(0);
 	await expect(
-		artifactPreview.getByText("Artifact generated by the E2E external Run."),
+		artifactPreview
+			.getByRole("list", { name: zhCN.work.result.tabsLabel })
+			.getByRole("button", { name: /e2e-report\.txt/ }),
+	).toHaveAttribute("aria-current", "true");
+	await expect(
+		artifactPreview.getByRole("region", { name: zhCN.work.result.provenance }),
 	).toBeVisible();
-	await capture(page, viewport, "artifact-preview");
+	await expect(artifactPreview.getByRole("button", { name: zhCN.work.download })).toBeEnabled();
+	await assertSurface(page, viewport, artifactPreview);
+	const resultBox = await artifactPreview.boundingBox();
+	const mainBox = await page.getByRole("main").boundingBox();
+	if (!resultBox || !mainBox) throw new Error("Conversation and result require visible geometry");
+	const presence = page.getByRole("img", { name: "极昼值守中", exact: true });
+	if (viewport.mode === "fullscreen") {
+		await expect(presence).toHaveCount(0);
+		expect(resultBox.x).toBeGreaterThanOrEqual(mainBox.x + mainBox.width - 1);
+		expect(Math.abs(resultBox.width - mainBox.width)).toBeLessThanOrEqual(1);
+		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+		await composer.fill("边看结果边继续聊");
+		await expect(artifactPreview).toBeVisible();
+		await mediaTrigger.click();
+		await assertSurface(page, viewport, mediaPreview);
+		await page.keyboard.press("Escape");
+		await expect(mediaPreview).toHaveCount(0);
+		await expect(mediaTrigger).toBeFocused();
+		await expect(artifactPreview).toBeVisible();
+		await expect(safePreview).toHaveAttribute("data-preview-state", "ready");
+		await expect(composer).toHaveValue("边看结果边继续聊");
+		await composer.fill("");
+	} else if (viewport.mode === "window") {
+		expect(resultBox.x).toBeGreaterThan(0);
+		expect(Math.abs(resultBox.x + resultBox.width - viewport.width)).toBeLessThanOrEqual(1);
+		expect(resultBox.x).toBeLessThan(mainBox.x + mainBox.width);
+	} else {
+		await expect(artifactPreview).toHaveJSProperty("clientWidth", viewport.width);
+		await expect(artifactPreview).toHaveJSProperty("clientHeight", viewport.height);
+	}
 	await artifactPreview.getByRole("button", { name: zhCN.work.result.close }).click();
+	await expect(artifactPreview).toHaveCount(0);
+	if (viewport.mode === "fullscreen") await expect(presence).toBeVisible();
+	if (viewport.mode !== "fullscreen") {
+		await mediaTrigger.click();
+		await assertSurface(page, viewport, mediaPreview);
+		await page.keyboard.press("Escape");
+		await expect(mediaPreview).toHaveCount(0);
+		await expect(mediaTrigger).toBeFocused();
+	}
+	await assertSurface(
+		page,
+		viewport,
+		page.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
+	);
 }
 
 for (const viewport of viewports) {
 	test.describe(`${viewport.mode} complete site-map reachability`, () => {
 		test.use({ viewport: { width: viewport.width, height: viewport.height } });
 
-		test(`reaches and visually validates every persistent UI surface at ${viewport.width}x${viewport.height}`, async ({
+		test(`reaches and validates every persistent UI surface through DOM at ${viewport.width}x${viewport.height}`, async ({
 			page,
 		}) => {
 			test.setTimeout(120_000);

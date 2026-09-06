@@ -21,6 +21,7 @@ import {
 	externalAgentResultMessage,
 	type TerminalRunResult,
 } from "./external-agents/run-service.js";
+import { createMemoryDiagnosticsLogger } from "./memory/diagnostics.js";
 import { ExplicitMemoryFile } from "./memory/explicit-memory.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { namespaceFor, TencentDbRuntime } from "./memory/tencentdb-runtime.js";
@@ -68,6 +69,7 @@ export class CharacterRuntime {
 	readonly auditStore: AuditStore;
 	private readonly explicitMemoryFile: ExplicitMemoryFile;
 	private memory?: TencentDbRuntime;
+	private readonly memoryCaptures = new Map<string, Set<Promise<void>>>();
 	private unsubscribeRunChanges?: () => void;
 	private closed = false;
 
@@ -114,22 +116,67 @@ export class CharacterRuntime {
 				this.pi.requireAvailable(params.conversationId);
 				return this.externalAgentRuns.delegate(params);
 			},
-			canon: async (_companionId, query, limit) =>
-				this.canon.search(this.companionId, query, limit),
+			runRead: async (conversationId, runId) => {
+				this.pi.requireAvailable(conversationId);
+				if (runId) {
+					this.externalAgentRuns.assertConversationRun(conversationId, runId);
+					return this.externalAgentRuns.getDetail(runId);
+				}
+				return this.externalAgentRuns.listPage(this.companionId, { conversationId });
+			},
+			runControl: async (conversationId, request) => {
+				this.pi.requireAvailable(conversationId);
+				this.externalAgentRuns.assertConversationRun(conversationId, request.runId);
+				const { runId, instruction } = request;
+				switch (request.action) {
+					case "steer":
+						if (!instruction)
+							throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
+						return this.externalAgentRuns.steerRun(runId, instruction);
+					case "interrupt":
+						return this.externalAgentRuns.project(await this.externalAgentRuns.interruptRun(runId));
+					case "resume":
+						return this.externalAgentRuns.project(
+							await this.externalAgentRuns.resumeRun(runId, instruction),
+						);
+					case "cancel":
+						return this.externalAgentRuns.project(await this.externalAgentRuns.cancelRun(runId));
+					case "retryDelivery":
+						return this.externalAgentRuns.project(
+							await this.externalAgentRuns.retryDelivery(runId),
+						);
+				}
+			},
+			canon: async (_companionId, query, limit, moduleId) =>
+				this.canon.retrieve(this.companionId, query, { limit, moduleId, includeAdjacent: false }),
 			memory: {
+				enabled: () => this.memoryEnabled(),
 				recall: async (_companionId, _sessionId, userText) => {
 					if (!this.memoryEnabled()) return {};
 					return (await this.startMemory()).recall(userText, this.memoryNamespace);
 				},
 				capture: async (_companionId, sessionId, messages) => {
-					if (!this.memoryEnabled()) return;
-					await (await this.startMemory()).captureTurn({
-						userText: messageTextForRole(messages, "user"),
-						assistantText: messageTextForRole(messages, "assistant"),
-						messages,
-						sessionKey: this.memoryNamespace,
-						sessionId,
-					});
+					const pending = this.memoryCaptures.get(sessionId) ?? new Set<Promise<void>>();
+					this.memoryCaptures.set(sessionId, pending);
+					const capture = (async () => {
+						await (await this.startMemory()).captureTurn({
+							userText: messageTextForRole(messages, "user"),
+							assistantText: messageTextForRole(messages, "assistant"),
+							messages,
+							sessionKey: this.memoryNamespace,
+							sessionId,
+						});
+					})();
+					pending.add(capture);
+					try {
+						await capture;
+					} finally {
+						pending.delete(capture);
+						if (!pending.size) this.memoryCaptures.delete(sessionId);
+					}
+				},
+				drain: async (sessionId) => {
+					await Promise.allSettled(this.memoryCaptures.get(sessionId) ?? []);
 				},
 				search: async (_companionId, query, limit) => {
 					this.requireMemoryEnabled();
@@ -158,13 +205,23 @@ export class CharacterRuntime {
 			},
 			sessionContext: (conversationId) => contextPack.sessionContext(conversationId),
 			titleChanged: () => this.invalidations.invalidate(CacheKey.conversations()),
-			sessionEvent: (envelope) => {
-				const event = projectPiTransientEvent(envelope.event);
+			sessionActivity: (event) => options.onLivePush(event),
+			sessionEvent: (sessionId, nativeEvent, version) => {
+				const event = projectPiTransientEvent(nativeEvent);
 				if (!event) return;
-				options.onLivePush({
-					type: "pi",
-					conversationId: envelope.sessionId,
-					event,
+				// Pi notifies message_end listeners before appending to SessionManager.
+				// Defer all events alike to preserve order and expose post-append snapshots.
+				queueMicrotask(() => {
+					try {
+						options.onLivePush({
+							type: "pi",
+							conversationId: sessionId,
+							event,
+							version,
+						});
+					} catch {
+						// A UI transport cannot interrupt Pi's event loop.
+					}
 				});
 			},
 		});
@@ -181,12 +238,6 @@ export class CharacterRuntime {
 			executorRouter,
 			this.artifacts,
 			paths.runs,
-			async (agent) => {
-				if (agent === "pi") return "pi-default";
-				const status = await this.externalAgents.status();
-				if (!status.available) throw { kind: "unavailable", reason: "codex_not_configured" };
-				return status.profileId;
-			},
 			async (conversationId) => {
 				const route = await this.pi.modelFor(conversationId);
 				if (!route) return undefined;
@@ -210,7 +261,7 @@ export class CharacterRuntime {
 			},
 		);
 		this.unsubscribeRunChanges = this.externalAgentRuns.subscribeChanges((run) =>
-			options.onLivePush({ type: "run", run }),
+			options.onLivePush({ type: "run", companionId: this.companionId, run }),
 		);
 		this.sessions = new SessionCatalog(db, this.pi, this.companionStore, {
 			beforeDelete: (sessionId) => this.externalAgentRuns.prepareConversationDeletion(sessionId),
@@ -238,6 +289,7 @@ export class CharacterRuntime {
 				installationId: this.options.memoryScope.installationId,
 				userId: this.options.memoryScope.userId,
 				memoryConfig: this.options.memoryConfig(),
+				logger: createMemoryDiagnosticsLogger(this.options.storage.paths.diagnostics),
 			});
 		}
 		return this.memory;

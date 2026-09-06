@@ -135,6 +135,7 @@ CREATE TABLE runs (
 	id TEXT PRIMARY KEY,
 	conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 	trigger_entry_id TEXT NOT NULL,
+	tool_call_id TEXT,
 	executor_profile TEXT NOT NULL,
 	title TEXT NOT NULL,
 	instruction TEXT NOT NULL,
@@ -149,6 +150,7 @@ CREATE TABLE runs (
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_runs_conversation_trigger ON runs(conversation_id, trigger_entry_id);
+CREATE UNIQUE INDEX idx_runs_conversation_tool_call ON runs(conversation_id, tool_call_id);
 CREATE TABLE run_manifests (
 	id TEXT PRIMARY KEY,
 	run_id TEXT NOT NULL REFERENCES runs(id),

@@ -1,3 +1,4 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js";
 import { Marked, type Tokens } from "marked";
@@ -48,6 +49,9 @@ export function renderMarkdown(text: string): string {
 
 /** Pure projection: all content and lifecycle state come from reactive props. */
 export function MessageContent(props: MessageContentProps) {
+	const [t] = useTranslation(undefined, { i18n });
+	const filteredMarkup = () =>
+		props.format === "markdown" && /<\/?[a-z][^>]*>|!\[/.test(props.text);
 	return (
 		<div
 			class="message-content"
@@ -57,6 +61,19 @@ export function MessageContent(props: MessageContentProps) {
 		>
 			<Show when={props.format === "markdown"} fallback={<p>{props.text}</p>}>
 				<div class="message-markdown" innerHTML={renderMarkdown(props.text)} />
+			</Show>
+			<Show when={filteredMarkup()}>
+				<details class="native-filtered-source">
+					<summary>{t("messages.native.source")}</summary>
+					<p>
+						{t(
+							/!\[/.test(props.text)
+								? "messages.native.blockedImage"
+								: "messages.native.filteredHtml",
+						)}
+					</p>
+					<pre>{props.text}</pre>
+				</details>
 			</Show>
 		</div>
 	);

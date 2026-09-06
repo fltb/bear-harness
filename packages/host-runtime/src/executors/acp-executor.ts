@@ -5,7 +5,9 @@
  * External agents use their own native filesystem and terminal tools; Bear
  * deliberately advertises no Host filesystem or terminal callbacks.
  */
+
 import type * as acp from "@agentclientprotocol/sdk";
+import type { RunAction, RunSteerResponse } from "@bear-harness/protocol";
 import {
 	type AcpPermissionRequest,
 	type AcpProcessExit,
@@ -31,12 +33,15 @@ type ActiveRun = {
 	client: AcpRunClient;
 	pendingPermissionIds: Set<string>;
 	toolCallTitles: Map<string, string>;
-	messageParts: string[];
+	messageText: string;
 	settled: boolean;
 	/** A user interrupt is in flight; the next cancelled turn must pause, not settle. */
 	interruptRequested: boolean;
 	/** The run's turn has been paused by interrupt and awaits `resume`. */
 	paused: boolean;
+	turn: Promise<void> | null;
+	release: Promise<void> | null;
+	evidenceCount: number;
 };
 
 /** Host-side ACP filesystem implementation for one approved run. */
@@ -65,22 +70,27 @@ export abstract class AcpExecutorController implements ExecutorController {
 			client,
 			pendingPermissionIds: new Set(),
 			toolCallTitles: new Map(),
-			messageParts: [],
+			messageText: "",
 			settled: false,
 			interruptRequested: false,
 			paused: false,
+			turn: null,
+			release: null,
+			evidenceCount: 0,
 		};
 		this.activeRuns.set(request.run.runId, active);
 
 		try {
 			await client.start();
 		} catch (error) {
-			this.activeRuns.delete(request.run.runId);
+			if (active.client.recoveryState() === "confirmed_lost")
+				this.activeRuns.delete(request.run.runId);
 			throw error;
 		}
 
+		if (active.settled || active.release) return;
 		request.emit({ type: "started" });
-		void this.runPrompt(active);
+		active.turn = this.runPrompt(active);
 	}
 
 	async recover(run: ExecutorRun): Promise<ExecutorRecovery> {
@@ -93,40 +103,57 @@ export abstract class AcpExecutorController implements ExecutorController {
 		return "unknown";
 	}
 
+	runtime(run: ExecutorRun): { controller: ExecutorRecovery; actions: RunAction[] } {
+		const active = this.activeRuns.get(run.runId);
+		if (!active) return { controller: "unknown", actions: [] };
+		const controller = active.client.recoveryState();
+		if (controller !== "attached" || active.settled || active.release)
+			return { controller, actions: [] };
+		const actions: RunAction[] = ["cancel"];
+		if (active.client.shutdownRequested) return { controller, actions };
+		if (active.pendingPermissionIds.size) actions.push("respondPermission");
+		else if (active.paused) actions.push("resume");
+		else if (active.turn && !active.interruptRequested) actions.push("steer", "interrupt");
+		return { controller, actions };
+	}
+
 	async close(): Promise<void> {
-		const activeRuns = [...this.activeRuns.values()];
-		for (const active of activeRuns) {
-			active.settled = true;
-			this.activeRuns.delete(active.request.run.runId);
-		}
-		await Promise.all(activeRuns.map((active) => active.client.stop()));
+		await Promise.all([...this.activeRuns.values()].map((active) => this.stop(active.request.run)));
 	}
 
 	async stop(run: ExecutorRun): Promise<void> {
 		const active = this.activeRuns.get(run.runId);
 		if (!active) return;
+		active.release ??= active.client.stop();
+		try {
+			await active.release;
+		} catch (error) {
+			active.release = null;
+			throw error;
+		}
 		active.settled = true;
 		this.activeRuns.delete(run.runId);
-		await active.client.stop();
 	}
 
 	async cancel(run: ExecutorRun): Promise<void> {
 		const active = this.requireActive(run.runId);
-		await active.client.cancel();
+		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
+		await this.stop(run);
+		active.request.emit({ type: "cancelled" });
 	}
 
-	/**
-	 * Deliver a steering instruction to the live agent turn.
-	 *
-	 * Profile behavior: both registered profiles speak ACP and share this
-	 * implementation. The instruction is sent as the `_session/steering`
-	 * extension when supported, otherwise as a follow-up ACP prompt. Steering
-	 * is a pure signal: no run state changes.
-	 */
-	async steer(run: ExecutorRun, instruction: string): Promise<void> {
+	/** Steering support is explicit; unsupported extensions are never new prompts. */
+	async steer(run: ExecutorRun, instruction: string): Promise<RunSteerResponse> {
 		const active = this.requireActive(run.runId);
-		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
-		await active.client.steerTurn(instruction);
+		if (
+			active.settled ||
+			active.release ||
+			active.paused ||
+			active.interruptRequested ||
+			!active.turn
+		)
+			throw { kind: "conflict", reason: "executor_not_running" };
+		return active.client.steerTurn(instruction);
 	}
 
 	/**
@@ -141,9 +168,23 @@ export abstract class AcpExecutorController implements ExecutorController {
 	 */
 	async interrupt(run: ExecutorRun): Promise<void> {
 		const active = this.requireActive(run.runId);
-		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
+		if (
+			active.settled ||
+			active.release ||
+			active.paused ||
+			active.interruptRequested ||
+			!active.turn
+		)
+			throw { kind: "conflict", reason: "executor_not_running" };
 		active.interruptRequested = true;
-		await active.client.cancel();
+		try {
+			await active.client.cancel();
+			await active.turn;
+			if (!active.paused) throw { kind: "conflict", reason: "executor_pause_not_confirmed" };
+		} catch (error) {
+			active.interruptRequested = false;
+			throw error;
+		}
 	}
 
 	/**
@@ -156,19 +197,24 @@ export abstract class AcpExecutorController implements ExecutorController {
 	 * context. Profile behavior: the Pi worker continues the same agent
 	 * session with a follow-up prompt; codex-acp resumes on the same session.
 	 */
-	async resume(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void> {
+	async resume(
+		run: ExecutorRun,
+		response?: ExecutorPermissionResponse,
+		instruction?: string,
+	): Promise<void> {
 		const active = this.requireActive(run.runId);
+		if (active.settled || active.release || active.client.shutdownRequested)
+			throw { kind: "conflict", reason: "executor_not_running" };
 		if (response) {
-			if (!active.pendingPermissionIds.delete(response.requestId)) {
+			if (!active.pendingPermissionIds.has(response.requestId))
 				throw { kind: "not_found", reason: "executor_permission_not_found" };
-			}
 			active.client.respondToPermission(response.requestId, response.optionId);
+			active.pendingPermissionIds.delete(response.requestId);
 			return;
 		}
-		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
 		if (!active.paused) throw { kind: "conflict", reason: "executor_not_paused" };
 		active.paused = false;
-		void this.runPrompt(active, CONTINUATION_PROMPT);
+		active.turn = this.runPrompt(active, instruction ?? CONTINUATION_PROMPT);
 	}
 
 	protected abstract processSpec(request: ExecutorLaunchRequest): AcpProcessSpec;
@@ -179,6 +225,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 	): Promise<void> {
 		try {
 			const response = await active.client.prompt(text);
+			if (active.settled || active.release) return;
 			if (response.stopReason === "cancelled") {
 				if (active.interruptRequested) {
 					// The turn was paused by a user interrupt: keep the process and
@@ -192,25 +239,48 @@ export abstract class AcpExecutorController implements ExecutorController {
 					});
 					return;
 				}
-				this.settle(active, { type: "cancelled" });
-			} else {
-				this.settle(active, {
+				await this.settle(active, { type: "cancelled" });
+			} else if (response.stopReason === "end_turn") {
+				await this.settle(active, {
 					type: "completed",
-					summary: active.messageParts.join("").trim() || undefined,
+					summary: active.messageText.trim() || undefined,
+				});
+			} else {
+				await this.settle(active, {
+					type: "failed",
+					reason: `acp_stop_reason:${response.stopReason}`,
 				});
 			}
 		} catch (error) {
-			this.settle(active, { type: "failed", reason: executorFailureCode(error) });
+			await this.settle(active, { type: "failed", reason: executorFailureCode(error) });
 		}
 	}
 
 	private handleSessionUpdate(active: ActiveRun, notification: acp.SessionNotification): void {
+		if (active.settled) return;
 		const update = notification.update;
 		switch (update.sessionUpdate) {
 			case "agent_message_chunk":
-				if (update.content.type === "text") appendCapped(active.messageParts, update.content.text);
+				if (typeof update._meta?.bearError === "string") {
+					active.request.emit({
+						type: "evidence",
+						kind: "acp.error",
+						data: { message: update._meta.bearError.slice(0, 2_000) },
+					});
+					return;
+				}
+				if (update.content.type === "text") {
+					active.messageText = (active.messageText + update.content.text).slice(-MAX_SUMMARY_CHARS);
+					if (active.evidenceCount++ < 2_000)
+						active.request.emit({
+							type: "evidence",
+							kind: "acp.message",
+							data: { text: update.content.text.slice(0, MAX_SUMMARY_CHARS) },
+						});
+				}
 				return;
 			case "tool_call":
+				if (active.evidenceCount++ >= 2_000) return;
 				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
@@ -219,6 +289,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 				return;
 			case "tool_call_update":
+				if (active.evidenceCount++ >= 2_000) return;
 				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
@@ -227,6 +298,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 				return;
 			case "usage_update":
+				if (active.evidenceCount++ >= 2_000) return;
 				active.request.emit({
 					type: "evidence",
 					kind: "acp.usage",
@@ -243,10 +315,12 @@ export abstract class AcpExecutorController implements ExecutorController {
 		update: { toolCallId: string; title?: string | null; name?: string | null },
 	): void {
 		const label = update.title ?? update.name;
-		if (label) active.toolCallTitles.set(update.toolCallId, label);
+		if (label && active.toolCallTitles.size < 256)
+			active.toolCallTitles.set(update.toolCallId, label);
 	}
 
 	private handlePermissionRequest(active: ActiveRun, request: AcpPermissionRequest): void {
+		if (active.settled) return;
 		active.pendingPermissionIds.add(request.requestId);
 		active.request.emit({
 			type: "needs_user",
@@ -280,19 +354,28 @@ export abstract class AcpExecutorController implements ExecutorController {
 	}
 
 	private handleProcessExit(active: ActiveRun, result: AcpProcessExit): void {
-		if (active.settled) return;
-		this.settle(active, {
+		if (active.settled || active.release) return;
+		void this.settle(active, {
 			type: "failed",
 			reason: acpExitReason(result),
 		});
 	}
 
-	private settle(active: ActiveRun, event: Parameters<ExecutorLaunchRequest["emit"]>[0]): void {
-		if (active.settled) return;
+	private async settle(
+		active: ActiveRun,
+		event: Parameters<ExecutorLaunchRequest["emit"]>[0],
+	): Promise<void> {
+		if (active.settled || active.release) return;
 		active.settled = true;
-		this.activeRuns.delete(active.request.run.runId);
-		active.request.emit(event);
-		void active.client.stop();
+		active.release ??= active.client.stop();
+		try {
+			await active.release;
+			this.activeRuns.delete(active.request.run.runId);
+			active.request.emit(event);
+		} catch {
+			active.release = null;
+			active.request.emit({ type: "failed", reason: "acp_process_release_failed" });
+		}
 	}
 
 	private requireActive(runId: string): ActiveRun {
@@ -305,15 +388,9 @@ export abstract class AcpExecutorController implements ExecutorController {
 function executionPrompt(request: ExecutorLaunchRequest): string {
 	return (
 		`${request.task.instruction}\n\nYou are an independent external agent. Use your native tools and policy. ` +
-		`The supplied workspace and inputs are real local paths; Bear provides no sandbox or rollback. ` +
+		`Your cwd is a private writable workspace; supplied input snapshots are read-only. Process access is sandboxed. ` +
 		`Write chat deliverables only beneath BEAR_OUTPUT_DIR and report the result concisely.`
 	);
-}
-
-function appendCapped(parts: string[], value: string): void {
-	const current = parts.reduce((size, part) => size + part.length, 0);
-	if (current >= MAX_SUMMARY_CHARS) return;
-	parts.push(value.slice(0, MAX_SUMMARY_CHARS - current));
 }
 
 function compactToolUpdate(update: {
@@ -322,14 +399,46 @@ function compactToolUpdate(update: {
 	status?: string | null;
 	title?: string | null;
 	name?: string | null;
-}): Record<string, string | null> {
+	rawInput?: unknown;
+	rawOutput?: unknown;
+	content?: unknown;
+}): Record<string, unknown> {
 	return {
 		toolCallId: update.toolCallId,
 		kind: update.kind ?? null,
 		status: update.status ?? null,
 		title: update.title ?? null,
 		name: update.name ?? null,
+		rawInput: boundedEvidence(update.rawInput),
+		rawOutput: boundedEvidence(update.rawOutput),
+		content: boundedEvidence(update.content),
 	};
+}
+
+/** Bound public tool payloads without exposing binary blobs or thinking signatures. */
+function boundedEvidence(value: unknown, depth = 0, budget = { left: 12_000 }): unknown {
+	if (budget.left <= 0) return "[truncated]";
+	if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+	if (typeof value === "string") {
+		const text = value.slice(0, budget.left);
+		budget.left -= text.length;
+		return text;
+	}
+	if (depth >= 6) return "[truncated]";
+	if (Array.isArray(value))
+		return value.slice(0, 64).map((item) => boundedEvidence(item, depth + 1, budget));
+	if (value && typeof value === "object") {
+		const result: Record<string, unknown> = {};
+		for (const [key, item] of Object.entries(value).slice(0, 64)) {
+			if (/signature|thinking|token|secret|password|authorization|api.?key|^data$/i.test(key))
+				continue;
+			if (budget.left <= 0) break;
+			budget.left -= key.length;
+			result[key] = boundedEvidence(item, depth + 1, budget);
+		}
+		return result;
+	}
+	return null;
 }
 
 function executorFailureCode(error: unknown): string {

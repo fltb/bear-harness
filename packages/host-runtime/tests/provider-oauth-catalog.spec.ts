@@ -4,8 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import { drizzle } from "drizzle-orm/node-sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type AuthInteraction, ProviderCatalog } from "../src/providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "../src/providers/credential-store.js";
 
@@ -69,6 +70,15 @@ function makeCatalog(changed?: (providerId: string) => void): ProviderCatalog {
 }
 
 describe("ProviderCatalog OAuth contract", () => {
+	let ModelRuntime: typeof PiCodingAgent.ModelRuntime;
+
+	beforeAll(async () => {
+		// Cold SDK loading is fixture setup, not part of the OAuth interaction deadline.
+		({ ModelRuntime } = await vi.importActual<typeof PiCodingAgent>(
+			"@earendil-works/pi-coding-agent",
+		));
+	});
+
 	afterEach(() => {
 		runtime.login = undefined;
 		vi.clearAllMocks();
@@ -76,9 +86,6 @@ describe("ProviderCatalog OAuth contract", () => {
 	});
 
 	it("preserves the real pi Codex method selection and browser authorization URL", async () => {
-		const { ModelRuntime } = await vi.importActual<
-			typeof import("@earendil-works/pi-coding-agent")
-		>("@earendil-works/pi-coding-agent");
 		const root = mkdtempSync(join(tmpdir(), "bear-real-pi-oauth-"));
 		tempRoots.push(root);
 		const real = await ModelRuntime.create({
@@ -86,7 +93,12 @@ describe("ProviderCatalog OAuth contract", () => {
 			modelsPath: null,
 			refreshOnCreate: false,
 		});
-		runtime.login = (id, _type, interaction) => real.login(id, "oauth", interaction);
+		let loginSettled: Promise<unknown> | undefined;
+		runtime.login = (id, _type, interaction) => {
+			const login = real.login(id, "oauth", interaction);
+			loginSettled = login.catch(() => undefined);
+			return login;
+		};
 		const catalog = makeCatalog();
 		try {
 			catalog.startOAuth("openai-codex");
@@ -114,6 +126,8 @@ describe("ProviderCatalog OAuth contract", () => {
 			expect(state.prompt?.type).toBe("manual_code");
 		} finally {
 			catalog.dispose();
+			// Drain the cancelled real login before the fixture directory is removed.
+			await loginSettled;
 		}
 	});
 

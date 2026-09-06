@@ -6,7 +6,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import type { ProductConfig } from "@bear-harness/product-config";
 import { RPC, type RpcEndpoint } from "@bear-harness/protocol/schema";
 import { type ElectronApplication, _electron as electron, type Page } from "playwright";
-import { expect } from "playwright/test";
+import { expect, test } from "playwright/test";
 
 export type ElectronApp = ElectronApplication;
 
@@ -34,14 +34,18 @@ async function launchSourceAppFromRoot(
 		BEAR_E2E_PI_WORKER_PATH: sourceE2EPiWorkerPath,
 		...extraEnv,
 	};
-	const app = await electron.launch({
-		args: ["dist/main/index.js"],
-		cwd: desktopRoot,
-		env,
-		timeout: 60_000,
-	});
+	await test.info().attach("isolated-app-root", { body: tempRoot, contentType: "text/plain" });
+	const app = await test.step("launch Electron process", () =>
+		electron.launch({
+			args: ["dist/main/index.js"],
+			cwd: desktopRoot,
+			env,
+			timeout: 60_000,
+		}));
 	try {
-		if (options.waitForWindow !== false) await app.firstWindow({ timeout: 45_000 });
+		if (options.waitForWindow !== false) {
+			await test.step("wait for first Electron window", () => app.firstWindow({ timeout: 45_000 }));
+		}
 		return { app, tempRoot };
 	} catch (error) {
 		await app.close().catch(() => {});
@@ -107,14 +111,20 @@ export async function invokeRpc<Endpoint extends RpcEndpoint>(
 	endpoint: Endpoint,
 	params: unknown,
 ) {
-	const envelope = await window.evaluate(
-		async ({ channel, params }) => window.bearDesktop.transport.invoke(channel, params),
-		{ channel: endpoint.channel, params },
-	);
-	if (!envelope || typeof envelope !== "object" || !("ok" in envelope) || !envelope.ok) {
-		throw new Error(`RPC failed: ${endpoint.channel}`);
-	}
-	return endpoint.response.parse("data" in envelope ? envelope.data : undefined);
+	return test.step(`RPC ${endpoint.channel}`, async () => {
+		const envelope = await window.evaluate(
+			async ({ channel, params }) => window.bearDesktop.transport.invoke(channel, params),
+			{ channel: endpoint.channel, params },
+		);
+		if (!envelope || typeof envelope !== "object" || !("ok" in envelope) || !envelope.ok) {
+			const error =
+				envelope && typeof envelope === "object" && "error" in envelope
+					? envelope.error
+					: undefined;
+			throw new Error(`RPC failed: ${endpoint.channel}: ${JSON.stringify(error)}`);
+		}
+		return endpoint.response.parse("data" in envelope ? envelope.data : undefined);
+	});
 }
 
 export async function provisionReplyModel(window: Page) {
@@ -137,15 +147,12 @@ export async function provisionReplyModel(window: Page) {
 		modelId: model.id,
 		label: model.name,
 	});
-	await invokeRpc(window, RPC.model.systemDefaultsSet, {
+	await invokeRpc(window, RPC.systemOnboarding.completeModel, {
 		reply: { providerId: provider.id, modelId: model.id },
 		vision: { mode: "auto" },
 	});
-	await invokeRpc(window, RPC.model.defaultsInitialize, {});
+	await invokeRpc(window, RPC.systemOnboarding.completeEmbedding, { choice: "none" });
 	await invokeRpc(window, RPC.model.defaultsCompleteOnboarding, {});
-	await invokeRpc(window, RPC.settings.set, {
-		settings: { firstRunStage: "role" },
-	});
 	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
 	const steps = snapshot.character?.character.first_meeting.steps ?? [];
 	let onboarding = await invokeRpc(window, RPC.onboarding.get, {});

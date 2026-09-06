@@ -9,7 +9,7 @@
 /* --- user message role (was missing from the static prototype) ------ */
 
 .msg.user {
-	@apply max-w-2/3 self-end border;
+	@apply self-end border;
 	border-color: color-mix(in srgb, var(--sys-accent) 35%, transparent);
 	color: var(--text-on-message);
 	background: var(--surface-message-user);
@@ -33,6 +33,53 @@
 
 .message-send-status {
 	@apply mt-2 inline-flex items-center gap-2 text-xs;
+	color: var(--text-soft);
+}
+
+.conversation-submission,
+.conversation-activity,
+.conversation-connection-status {
+	@apply min-w-0 rounded-lg border px-3 py-2 text-xs;
+	border-color: var(--line-soft);
+	color: var(--text-soft);
+	background: var(--surface-control);
+	overflow-wrap: anywhere;
+}
+
+.conversation-submission {
+	border-style: dashed;
+}
+
+.conversation-submission p {
+	@apply my-1;
+}
+
+.submission-text {
+	@apply max-h-24 overflow-auto whitespace-pre-wrap;
+}
+
+.conversation-submission .message-inline-actions button {
+	@apply min-h-9 rounded-md px-3;
+	background: var(--surface-panel);
+}
+
+.conversation-activity {
+	@apply flex flex-wrap items-center gap-x-2 gap-y-1;
+}
+
+.conversation-activity[data-failed="true"] {
+	border-color: var(--text-danger);
+}
+
+.pi-tool-progress {
+	@apply mb-0 mt-2 max-h-24 overflow-auto whitespace-pre-wrap text-xs;
+	overflow-wrap: anywhere;
+	color: var(--text-soft);
+	font-family: inherit;
+}
+
+.message-edit-note {
+	@apply m-0 text-xs;
 	color: var(--text-soft);
 }
 

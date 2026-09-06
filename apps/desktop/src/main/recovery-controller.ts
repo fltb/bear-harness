@@ -11,6 +11,7 @@ import {
 	openSync,
 	readlinkSync,
 	readSync,
+	realpathSync,
 	symlinkSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -164,6 +165,9 @@ function assertExportPaths(
 	const parent = dirname(destination);
 	if (!lstatSync(parent).isDirectory()) {
 		throw new Error("Recovery export parent must be a real directory");
+	}
+	if (isWithin(realpathSync(source), join(realpathSync(parent), basename(destination)))) {
+		throw new Error("Recovery export destination must be outside the current data root");
 	}
 	return { source, destination };
 }

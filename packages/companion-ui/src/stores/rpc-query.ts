@@ -7,6 +7,7 @@ import {
 	type QueryKey,
 } from "@tanstack/solid-query";
 import type { Accessor } from "solid-js";
+import type { RunListRequest } from "./ipc.js";
 
 type MaybeAccessor<T> = T | Accessor<T>;
 interface Refresh {
@@ -24,6 +25,12 @@ export const queryKeys = {
 	companionState: CacheKey.companionState,
 	settingsCapabilities: CacheKey.settingsCapabilities(),
 	runs: CacheKey.runs(),
+	activeRuns: (characterId: string | undefined) =>
+		[...CacheKey.runs(), "active", characterId ?? null] as const,
+	runList: (characterId: string | undefined, request: RunListRequest) =>
+		[...CacheKey.runs(), "list", characterId ?? null, request] as const,
+	runDetail: (characterId: string | undefined, runId: string | undefined, cursor?: string) =>
+		[...CacheKey.runs(), "detail", characterId ?? null, runId ?? null, cursor ?? null] as const,
 	characters: CacheKey.characters(),
 	characterPackage: CacheKey.characterPackage,
 	characterDeletionStatus: CacheKey.characterDeletionStatus,

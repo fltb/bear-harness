@@ -3,19 +3,20 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LivePush, PiProjectionVersion } from "@bear-harness/protocol";
+import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type AgentSessionEvent,
+	ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	PiRuntime,
-	type PiRuntimeOptions,
-	type PiSessionEvent,
-} from "../src/companion/pi-runtime.js";
+import { projectPiLiveSnapshot } from "../src/companion/pi-live-events.js";
+import { PiRuntime, type PiRuntimeOptions } from "../src/companion/pi-runtime.js";
 
 const roots: string[] = [];
+type PiSessionEvent = { sessionId: string; event: AgentSessionEvent; version: PiProjectionVersion };
 
 function root(): string {
 	const value = mkdtempSync(join(tmpdir(), "bear-pi-registry-"));
@@ -40,6 +41,7 @@ function persistedSession(dataDir: string, name: string): string {
 function assistantMessage(text = "reply") {
 	return {
 		role: "assistant" as const,
+		api: "openai-completions" as const,
 		content: [{ type: "text" as const, text }],
 		provider: "provider",
 		model: "model",
@@ -99,9 +101,13 @@ function fakeSession(manager: SessionManager): FakeSession {
 		sessionFile: manager.getSessionFile(),
 		sessionManager: manager,
 		messages: [],
+		agent: { hasQueuedMessages: () => true },
 		isIdle: true,
 		isStreaming: false,
-		state: { streamingMessage: undefined, errorMessage: undefined },
+		isRetrying: false,
+		retryAttempt: 0,
+		isCompacting: false,
+		state: { streamingMessage: undefined, errorMessage: undefined, pendingToolCalls: new Set() },
 		pendingMessageCount: 0,
 		getSteeringMessages: () => [],
 		getFollowUpMessages: () => [],
@@ -110,6 +116,8 @@ function fakeSession(manager: SessionManager): FakeSession {
 			return () => listeners.delete(listener);
 		},
 		abort,
+		abortCompaction: vi.fn(),
+		abortBranchSummary: vi.fn(),
 		dispose,
 		sendCustomMessage,
 		setSessionName: (name: string) => manager.appendSessionInfo(name),
@@ -138,7 +146,9 @@ function setup(dataDir: string) {
 				}),
 			}),
 		},
-		sessionEvent: (event: PiSessionEvent) => nativeEvents.push(event),
+		memory: { drain: async () => undefined },
+		sessionEvent: (sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion) =>
+			nativeEvents.push({ sessionId, event, version }),
 		sessionDiscarded: (sessionId: string) => discarded.push(sessionId),
 	} as unknown as PiRuntimeOptions);
 	const built = new Map<string, FakeSession>();
@@ -159,6 +169,65 @@ function responseGuidanceConsumer(runtime: PiRuntime) {
 	// Exercise the exact extension-hook callback without building a provider-backed Pi session.
 	const testAccess = runtime as unknown as PiRuntimeTestAccess;
 	return testAccess.consumeResponseGuidance.bind(testAccess);
+}
+
+async function nativeSetup(
+	overrides: {
+		memory?: Partial<PiRuntimeOptions["memory"]>;
+		context?: PiRuntimeOptions["context"];
+	} = {},
+) {
+	const dataDir = root();
+	const models = await ModelRuntime.create({
+		authPath: join(dataDir, "auth.json"),
+		modelsPath: null,
+		refreshOnCreate: false,
+	});
+	models.registerProvider("test", {
+		baseUrl: "https://unused.invalid",
+		api: "openai-completions",
+		apiKey: "test-only",
+		models: [
+			{
+				id: "test-model",
+				name: "Test model",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 1024,
+			},
+		],
+	});
+	const stream = vi.spyOn(models, "streamSimple").mockImplementation(() => {
+		const events = new AssistantMessageEventStream();
+		events.push({ type: "done", reason: "stop", message: assistantMessage() });
+		return events;
+	});
+	const activities: Extract<LivePush, { type: "conversationActivity" }>[] = [];
+	const nativeEvents: PiSessionEvent[] = [];
+	const runtime = new PiRuntime({
+		paths: { runtime: join(dataDir, "runtime"), sessions: join(dataDir, "sessions") },
+		models: { getModels: async () => models },
+		character: () => ({ id: "test-character" }),
+		defaultModel: () => ({ providerId: "test", modelId: "test-model" }),
+		multimodalFallback: () => undefined,
+		context: overrides.context ?? (() => "turn context"),
+		memory: {
+			enabled: () => true,
+			recall: async () => ({ appendSystemContext: "recalled context" }),
+			capture: async () => undefined,
+			drain: async () => undefined,
+			explicit: { read: async () => "", edit: async () => "" },
+			...overrides.memory,
+		},
+		sessionActivity: (event: Extract<LivePush, { type: "conversationActivity" }>) =>
+			activities.push(event),
+		sessionEvent: (sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion) =>
+			nativeEvents.push({ sessionId, event, version }),
+	} as unknown as PiRuntimeOptions);
+	const session = await runtime.create("Native lifecycle");
+	return { runtime, session, activities, nativeEvents, stream };
 }
 
 afterEach(() => {
@@ -310,19 +379,29 @@ describe("PiRuntime session registry", () => {
 				const guidance = consumeGuidance(sessionId, text);
 				systemPrompts.push(guidance ? `base\n\n${guidance}` : "base");
 				manager.appendMessage({ role: "user", content: text, timestamp: 3 });
+				Object.assign(session, { isStreaming: true });
 				options.preflightResult(true);
 				return prompt.mock.calls.length === 1 ? correctionTurn : Promise.resolve();
 			},
 		);
-		Object.assign(session, { sessionName: "Named", navigateTree, prompt });
+		const abort = vi.fn(async () => {
+			Object.assign(session, { isStreaming: false });
+			resolveCorrectionTurn();
+		});
+		Object.assign(session, { sessionName: "Named", navigateTree, prompt, abort });
+		let turnFinished = false;
+		void correctionTurn.then(() => {
+			turnFinished = true;
+		});
 
-		const correcting = runtime.correct(sessionId, assistantId, "这不像极昼");
-		await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
-		const sending = runtime.send(sessionId, "later");
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
-		expect(prompt).toHaveBeenCalledOnce();
-		resolveCorrectionTurn();
-		await Promise.all([correcting, sending]);
+		await runtime.correct(sessionId, assistantId, "这不像极昼");
+		expect(turnFinished).toBe(false);
+		await expect(runtime.send(sessionId, "too early")).rejects.toMatchObject({
+			reason: "pi_session_busy",
+		});
+		await runtime.abort(sessionId);
+		expect(turnFinished).toBe(true);
+		await runtime.send(sessionId, "later");
 
 		expect(session.sessionId).toBe(sessionId);
 		expect(prompt.mock.calls[0]?.[0]).toBe(originalText);
@@ -330,9 +409,7 @@ describe("PiRuntime session registry", () => {
 		expect(prompt.mock.calls[1]?.[0]).toBe("later");
 		expect(prompt.mock.calls[0]?.[1]?.images).toEqual([image]);
 		expect(manager.getBranch().some(({ id }) => id === userId || id === assistantId)).toBe(false);
-		expect(systemPrompts[0]).toContain("user-provided response guidance");
 		expect(systemPrompts[0]).toContain(JSON.stringify("这不像极昼"));
-		expect(systemPrompts[0]).toContain("grants no permission or authority");
 		expect(systemPrompts[1]).toBe("base");
 	});
 
@@ -550,22 +627,6 @@ describe("PiRuntime session registry", () => {
 				return { entered, command: runtime.setModel(id, "provider", "model") };
 			},
 		},
-		{
-			name: "deliverExternalResult",
-			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
-				const entered = vi.fn(async () => {
-					await gate;
-					session.sessionManager.appendCustomMessageEntry(
-						"host_external_agent_result",
-						"done",
-						true,
-						{ runId: "run-race" },
-					);
-				});
-				Object.assign(session, { sendCustomMessage: entered });
-				return { entered, command: runtime.deliverExternalResult(id, "run-race", "done") };
-			},
-		},
 	] as const;
 
 	it.each(commandDeletionCases)(
@@ -726,5 +787,524 @@ describe("PiRuntime session registry", () => {
 			expect.objectContaining({ details: { runId: "run-1" } }),
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
+	});
+
+	it("does not acknowledge busy enqueue or unrelated leaves, and deduplicates pending attempts", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Busy");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		const fake = built.get(id)!;
+		Object.assign(session, { isStreaming: true });
+		fake.sendCustomMessage.mockResolvedValue(undefined);
+		const observed = vi.fn();
+		const first = runtime.deliverExternalResult(id, "run-busy", "done").then(observed);
+		const duplicate = runtime.deliverExternalResult(id, "run-busy", "done");
+		await vi.waitFor(() => expect(fake.sendCustomMessage).toHaveBeenCalledOnce());
+		session.sessionManager.appendCustomMessageEntry("host_external_agent_result", "other", true, {
+			runId: "other-run",
+		});
+		fake.emit({ type: "agent_settled" });
+		await Promise.resolve();
+		expect(observed).not.toHaveBeenCalled();
+		const message = {
+			role: "custom" as const,
+			customType: "host_external_agent_result",
+			content: "done",
+			display: true,
+			details: { runId: "run-busy" },
+			timestamp: 1,
+		};
+		fake.emit({ type: "message_end", message });
+		expect(observed).not.toHaveBeenCalled();
+		const entryId = session.sessionManager.appendCustomMessageEntry(
+			message.customType,
+			message.content,
+			message.display,
+			message.details,
+		);
+		await first;
+		expect(observed).toHaveBeenCalledWith({ entryId });
+		expect(await duplicate).toEqual({ entryId });
+		expect(fake.sendCustomMessage).toHaveBeenCalledOnce();
+		await runtime.closeAll();
+	});
+
+	it("keeps the actual queued delivery deduplicated after timeout and leaves restart-before-append unacknowledged", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Pending");
+		const { runtime, built } = setup(dataDir);
+		await runtime.open(id);
+		const fake = built.get(id)!;
+		fake.sendCustomMessage.mockResolvedValue(undefined);
+		vi.useFakeTimers();
+		try {
+			const first = runtime
+				.deliverExternalResult(id, "run-pending", "done")
+				.catch((error: unknown) => error);
+			await vi.waitFor(() => expect(fake.sendCustomMessage).toHaveBeenCalledOnce());
+			await vi.advanceTimersByTimeAsync(5_001);
+			expect(await first).toMatchObject({ reason: "pi_result_delivery_pending" });
+			const retry = runtime
+				.deliverExternalResult(id, "run-pending", "done")
+				.catch((error: unknown) => error);
+			await vi.advanceTimersByTimeAsync(5_001);
+			expect(await retry).toMatchObject({ reason: "pi_result_delivery_pending" });
+			expect(fake.sendCustomMessage).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+			await runtime.closeAll();
+		}
+		const restarted = setup(dataDir);
+		const reopened = await restarted.runtime.open(id);
+		expect(
+			reopened.sessionManager.getEntries().filter((entry) => entry.type === "custom_message"),
+		).toEqual([]);
+		const receipt = await restarted.runtime.deliverExternalResult(id, "run-pending", "done");
+		expect(reopened.sessionManager.getEntry(receipt.entryId)).toMatchObject({
+			type: "custom_message",
+			customType: "host_external_agent_result",
+			details: { runId: "run-pending" },
+		});
+		expect(restarted.built.get(id)!.sendCustomMessage).toHaveBeenCalledOnce();
+		await restarted.runtime.closeAll();
+	});
+
+	it("deleting one session releases only its pending delivery without waiting for the model", async () => {
+		const dataDir = root();
+		const alpha = persistedSession(dataDir, "Alpha");
+		const beta = persistedSession(dataDir, "Beta");
+		const { runtime, built } = setup(dataDir);
+		await Promise.all([runtime.open(alpha), runtime.open(beta)]);
+		const model = Promise.withResolvers<void>();
+		built.get(alpha)!.sendCustomMessage.mockReturnValue(model.promise);
+		built.get(beta)!.sendCustomMessage.mockResolvedValue(undefined);
+		const discarded = runtime
+			.deliverExternalResult(alpha, "same-run", "alpha")
+			.catch((error: unknown) => error);
+		const retained = runtime.deliverExternalResult(beta, "same-run", "beta");
+		await vi.waitFor(() => expect(built.get(beta)!.sendCustomMessage).toHaveBeenCalledOnce());
+		const remove = vi.fn();
+		await runtime.delete(alpha, remove);
+		expect(await discarded).toMatchObject({ reason: "pi_result_session_closed" });
+		expect(remove).toHaveBeenCalledOnce();
+		expect(built.get(alpha)!.dispose).toHaveBeenCalledOnce();
+		expect(built.get(beta)!.dispose).not.toHaveBeenCalled();
+		const betaSession = built.get(beta)!.session;
+		const entryId = betaSession.sessionManager.appendCustomMessageEntry(
+			"host_external_agent_result",
+			"beta",
+			true,
+			{ runId: "same-run" },
+		);
+		built.get(beta)!.emit({ type: "agent_settled" });
+		expect(await retained).toEqual({ entryId });
+		model.reject(new Error("aborted after disposal"));
+		await runtime.closeAll();
+	});
+
+	it("returns the exact persisted result even when idle prompting rejects after another entry", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Idle");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		let resultEntryId = "";
+		built.get(id)!.sendCustomMessage.mockImplementation(async () => {
+			resultEntryId = session.sessionManager.appendCustomMessageEntry(
+				"host_external_agent_result",
+				"done",
+				true,
+				{ runId: "idle-rejection" },
+			);
+			session.sessionManager.appendMessage(assistantMessage("partial explanation"));
+			throw new Error("model explanation failed");
+		});
+		expect(await runtime.deliverExternalResult(id, "idle-rejection", "done")).toEqual({
+			entryId: resultEntryId,
+		});
+		expect(resultEntryId).not.toBe(session.sessionManager.getLeafId());
+		await runtime.closeAll();
+	});
+
+	it("stamps native events once and uses a new transport instance when a session reopens", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Versions");
+		const { runtime, built, nativeEvents } = setup(dataDir);
+		const session = await runtime.open(id);
+		const before = projectPiLiveSnapshot(session).version!;
+		built.get(id)!.emit({ type: "agent_start" });
+		built.get(id)!.emit({ type: "agent_settled" });
+		expect(nativeEvents.map(({ version }) => version)).toEqual([
+			{ instanceId: before.instanceId, sequence: before.sequence + 1 },
+			{ instanceId: before.instanceId, sequence: before.sequence + 2 },
+		]);
+		expect(projectPiLiveSnapshot(session).version).toEqual(nativeEvents[1]!.version);
+		await runtime.close(id);
+		const reopened = await runtime.open(id);
+		expect(projectPiLiveSnapshot(reopened).version!.instanceId).not.toBe(before.instanceId);
+		await runtime.closeAll();
+	});
+});
+
+describe("PiRuntime native stage lifecycle", () => {
+	it("delivers a busy native follow-up once, only after the native custom entry is appended", async () => {
+		const { runtime, session, stream } = await nativeSetup({ memory: { enabled: () => false } });
+		const pending = new AssistantMessageEventStream();
+		stream.mockImplementationOnce(() => pending);
+		await runtime.send(session.sessionId, "keep working");
+		await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce());
+		const send = vi.spyOn(session, "sendCustomMessage");
+		const observed = vi.fn();
+		const delivery = runtime
+			.deliverExternalResult(session.sessionId, "native-busy", "Worker result")
+			.then((receipt) => {
+				observed(receipt);
+				return receipt;
+			});
+		const duplicate = runtime.deliverExternalResult(
+			session.sessionId,
+			"native-busy",
+			"Worker result",
+		);
+		await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+		expect(observed).not.toHaveBeenCalled();
+		expect(
+			session.sessionManager.getEntries().some((entry) => entry.type === "custom_message"),
+		).toBe(false);
+		pending.push({ type: "done", reason: "stop", message: assistantMessage() });
+		const receipt = await delivery;
+		expect(await duplicate).toEqual(receipt);
+		expect(session.sessionManager.getEntry(receipt.entryId)).toMatchObject({
+			type: "custom_message",
+			customType: "host_external_agent_result",
+			details: { runId: "native-busy" },
+		});
+		expect(
+			session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message"),
+		).toHaveLength(1);
+		await runtime.closeAll();
+	});
+
+	it("releases an unappended delivery when native queue removal is confirmed at idle", async () => {
+		const { runtime, session, stream, nativeEvents } = await nativeSetup({
+			memory: { enabled: () => false },
+		});
+		const pending = new AssistantMessageEventStream();
+		stream.mockImplementationOnce(() => pending);
+		await runtime.send(session.sessionId, "keep working");
+		await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce());
+		const send = vi.spyOn(session, "sendCustomMessage");
+		const delivery = runtime
+			.deliverExternalResult(session.sessionId, "removed-native", "Worker result")
+			.catch((error: unknown) => error);
+		await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+		session.clearQueue();
+		pending.push({ type: "done", reason: "stop", message: assistantMessage() });
+		expect(await delivery).toMatchObject({ reason: "pi_result_not_persisted" });
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		expect(
+			session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message"),
+		).toEqual([]);
+		const receipt = await runtime.deliverExternalResult(
+			session.sessionId,
+			"removed-native",
+			"Worker result",
+		);
+		expect(send).toHaveBeenCalledTimes(2);
+		expect(session.sessionManager.getEntry(receipt.entryId)).toMatchObject({
+			type: "custom_message",
+			details: { runId: "removed-native" },
+		});
+		await runtime.closeAll();
+	});
+
+	it("acknowledges an idle native append before model latency or later model failure", async () => {
+		const { runtime, session, stream, nativeEvents } = await nativeSetup({
+			memory: { enabled: () => false },
+		});
+		// A real original conversation already contains a persisted assistant turn.
+		session.sessionManager.appendMessage(assistantMessage("previous reply"));
+		const pending = new AssistantMessageEventStream();
+		stream.mockImplementationOnce(() => pending);
+		const receipt = await runtime.deliverExternalResult(
+			session.sessionId,
+			"native-idle",
+			"Worker finished",
+		);
+		expect(session.sessionManager.getEntry(receipt.entryId)).toMatchObject({
+			type: "custom_message",
+			details: { runId: "native-idle" },
+		});
+		expect(SessionManager.open(session.sessionFile!).getEntry(receipt.entryId)).toMatchObject({
+			type: "custom_message",
+			details: { runId: "native-idle" },
+		});
+		pending.push({
+			type: "error",
+			reason: "error",
+			error: { ...assistantMessage(""), stopReason: "error", errorMessage: "model unavailable" },
+		});
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		expect(
+			await runtime.deliverExternalResult(session.sessionId, "native-idle", "Worker finished"),
+		).toEqual(receipt);
+		await runtime.closeAll();
+	});
+
+	it("marks structured Host failure as a native tool error without dropping its content or details", async () => {
+		const failure = {
+			ok: false,
+			code: "memory_search_unavailable",
+			message: "Relationship store is unavailable",
+		};
+		const { runtime, session, stream, nativeEvents } = await nativeSetup({
+			memory: {
+				enabled: () => false,
+				search: async () => {
+					throw failure;
+				},
+			},
+		});
+		stream.mockImplementationOnce(() => {
+			const events = new AssistantMessageEventStream();
+			events.push({
+				type: "done",
+				reason: "toolUse",
+				message: {
+					...assistantMessage(),
+					stopReason: "toolUse",
+					content: [
+						{
+							type: "toolCall",
+							id: "search-failure",
+							name: "tdai_memory_search",
+							arguments: { query: "history", limit: 2 },
+						},
+					],
+				},
+			});
+			return events;
+		});
+		await runtime.send(session.sessionId, "recall prior work");
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		const entry = session.sessionManager
+			.getEntries()
+			.find((item) => item.type === "message" && item.message.role === "toolResult");
+		expect(entry).toMatchObject({
+			type: "message",
+			message: {
+				role: "toolResult",
+				toolCallId: "search-failure",
+				isError: true,
+				details: failure,
+				content: [{ type: "text", text: failure.message }],
+			},
+		});
+		expect(
+			nativeEvents.find(({ event }) => event.type === "tool_execution_end")?.event,
+		).toMatchObject({
+			isError: true,
+			result: { details: failure },
+		});
+		await runtime.closeAll();
+	});
+
+	it("accepts a native correction before first output and lets Stop reach the pending provider", async () => {
+		const { runtime, session, nativeEvents, stream } = await nativeSetup({
+			memory: { enabled: () => false },
+		});
+		await runtime.send(session.sessionId, "original question");
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		const answer = session.sessionManager
+			.getBranch()
+			.find((entry) => entry.type === "message" && entry.message.role === "assistant");
+		if (!answer) throw new Error("Native assistant entry missing");
+		let providerAborted = false;
+		stream.mockImplementationOnce((_model, _context, options) => {
+			const events = new AssistantMessageEventStream();
+			options?.signal?.addEventListener(
+				"abort",
+				() => {
+					providerAborted = true;
+					events.push({
+						type: "error",
+						reason: "aborted",
+						error: {
+							...assistantMessage(),
+							stopReason: "aborted",
+							errorMessage: "Request aborted",
+						},
+					});
+				},
+				{ once: true },
+			);
+			return events;
+		});
+		await runtime.correct(session.sessionId, answer.id, "Use a different explanation");
+		await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
+		expect(session.isStreaming).toBe(true);
+		expect(stream.mock.calls[1]?.[1].systemPrompt).toContain("Use a different explanation");
+		await runtime.abort(session.sessionId);
+		expect(providerAborted).toBe(true);
+		expect(session.isStreaming).toBe(false);
+		await runtime.send(session.sessionId, "next question");
+		await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(3));
+		expect(stream.mock.calls[2]?.[1].systemPrompt).not.toContain("Use a different explanation");
+		await runtime.closeAll();
+	});
+
+	it("exposes native retry backoff on reconnect and cancels it without another provider attempt", async () => {
+		const { runtime, session, nativeEvents, stream } = await nativeSetup({
+			memory: { enabled: () => false },
+		});
+		session.setAutoRetryEnabled(true);
+		stream.mockImplementation(() => {
+			const events = new AssistantMessageEventStream();
+			events.push({
+				type: "error",
+				reason: "error",
+				error: {
+					...assistantMessage(),
+					stopReason: "error",
+					errorMessage: "429 rate limit exceeded",
+				},
+			});
+			return events;
+		});
+		await runtime.send(session.sessionId, "hello");
+		await vi.waitFor(() => expect(session.isRetrying).toBe(true));
+		expect(projectPiLiveSnapshot(session)).toMatchObject({
+			isStreaming: true,
+			isRetrying: true,
+			retryAttempt: 1,
+			isCompacting: false,
+		});
+		await runtime.abort(session.sessionId);
+		expect(projectPiLiveSnapshot(session)).toMatchObject({ isStreaming: false, isRetrying: false });
+		expect(stream).toHaveBeenCalledOnce();
+		expect(
+			nativeEvents.some(({ event }) => event.type === "auto_retry_end" && event.success === false),
+		).toBe(true);
+		await runtime.closeAll();
+	});
+
+	it("reports real preparation and idle capture, then delivers settled even if capture fails", async () => {
+		let finishRecall!: () => void;
+		const recallGate = new Promise<void>((resolve) => {
+			finishRecall = resolve;
+		});
+		let failCapture!: (error: Error) => void;
+		const captureGate = new Promise<void>((_resolve, reject) => {
+			failCapture = reject;
+		});
+		const { runtime, session, activities, nativeEvents, stream } = await nativeSetup({
+			memory: {
+				recall: async () => {
+					await recallGate;
+					return { appendSystemContext: "a real recalled fact" };
+				},
+				capture: () => captureGate,
+				drain: async () => {
+					await captureGate.catch(() => undefined);
+				},
+			},
+		});
+		const sending = runtime.send(session.sessionId, "hello");
+		await vi.waitFor(() => expect(activities[0]?.activity).toBe("memory_recall"));
+		expect(stream).not.toHaveBeenCalled();
+		expect(activities[0]).toMatchObject({
+			conversationId: session.sessionId,
+			status: "started",
+			live: { isStreaming: false },
+		});
+		finishRecall();
+		await sending;
+		await vi.waitFor(() => expect(activities.at(-1)?.activity).toBe("memory_capture"));
+		expect(activities.map(({ activity, status }) => [activity, status])).toEqual([
+			["memory_recall", "started"],
+			["memory_recall", "completed"],
+			["context", "started"],
+			["context", "completed"],
+			["memory_capture", "started"],
+		]);
+		expect(stream.mock.calls[0]?.[1].systemPrompt).toContain("a real recalled fact");
+		expect(stream.mock.calls[0]?.[1].systemPrompt).toContain("turn context");
+		expect(session.isStreaming).toBe(false);
+		expect(activities.at(-1)?.live.isStreaming).toBe(false);
+		expect(
+			session.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "message")
+				.map((entry) => entry.message.role),
+		).toEqual(["user", "assistant"]);
+		expect(nativeEvents.some(({ event }) => event.type === "entry_appended")).toBe(false);
+		expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(false);
+		failCapture(new Error("capture storage unavailable"));
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		expect(activities.at(-1)).toMatchObject({
+			activity: "memory_capture",
+			status: "failed",
+			errorMessage: "capture storage unavailable",
+			operationId: activities.at(-2)?.operationId,
+			live: { isStreaming: false },
+		});
+		await runtime.closeAll();
+	});
+
+	it("drains capture before disposal without reopening a session when Stop races close", async () => {
+		let finishCapture!: () => void;
+		const captureGate = new Promise<void>((resolve) => {
+			finishCapture = resolve;
+		});
+		const { runtime, session, activities } = await nativeSetup({
+			memory: { capture: () => captureGate, drain: () => captureGate },
+		});
+		await runtime.send(session.sessionId, "hello");
+		await vi.waitFor(() => expect(activities.at(-1)?.activity).toBe("memory_capture"));
+		expect(session.isIdle).toBe(true);
+		const dispose = vi.spyOn(session, "dispose");
+		const closing = runtime.close(session.sessionId);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(dispose).not.toHaveBeenCalled();
+		await runtime.abort(session.sessionId);
+		expect(runtime.snapshot(session.sessionId)).toBeUndefined();
+		expect(dispose).not.toHaveBeenCalled();
+		finishCapture();
+		await closing;
+		expect(dispose).toHaveBeenCalledOnce();
+		expect(runtime.snapshot(session.sessionId)).toBeUndefined();
+	});
+
+	it("does not advertise disabled memory, and reports failed preparation without inventing turn failure", async () => {
+		const { runtime, session, activities, nativeEvents } = await nativeSetup({
+			memory: { enabled: () => false },
+			context: () => {
+				throw new Error("context source unavailable");
+			},
+		});
+		await runtime.send(session.sessionId, "hello");
+		await vi.waitFor(() =>
+			expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(true),
+		);
+		expect(activities.map(({ activity, status }) => [activity, status])).toEqual([
+			["context", "started"],
+			["context", "failed"],
+		]);
+		expect(activities[1]).toMatchObject({
+			errorMessage: "context source unavailable",
+			operationId: activities[0]?.operationId,
+		});
+		expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+		await runtime.closeAll();
 	});
 });

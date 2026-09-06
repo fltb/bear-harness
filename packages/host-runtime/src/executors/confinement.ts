@@ -179,6 +179,8 @@ function confinementPaths(spec: ConfinableProcessSpec): {
 		failInvalidPath();
 	}
 	const writableCandidates = uniquePaths([
+		// cwd is the Host-created private Run workspace, never a declared input.
+		spec.cwd,
 		...envPaths(spec.env, WRITABLE_ENVIRONMENT_PATHS),
 		...(spec.writablePaths ?? []),
 	]).map((path) => validatePath(path, true));
@@ -191,7 +193,6 @@ function confinementPaths(spec: ConfinableProcessSpec): {
 		(path) => allowedPath(validatePath(path, false)),
 	);
 	const readOnly = uniquePaths([
-		spec.cwd,
 		...runtimeArgumentPaths(spec.args),
 		...envPaths(spec.env, READ_ONLY_ENVIRONMENT_PATHS),
 		...(spec.readOnlyPaths ?? []),

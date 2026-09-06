@@ -63,7 +63,15 @@ function configureActiveConversation(client: CompanionClient): void {
 					conversationId: "conversation-1",
 					name: "Test conversation",
 					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
-					live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+					live: {
+						isStreaming: false,
+						isCompacting: false,
+						isRetrying: false,
+						retryAttempt: 0,
+						pendingToolCallIds: [],
+						steering: [],
+						followUp: [],
+					},
 				},
 			},
 		}),
@@ -368,7 +376,7 @@ describe("composer", () => {
 		expect(alerts[0]).toHaveTextContent("model unavailable");
 	});
 
-	it("keeps a failed pending message and allows an explicit retry", async () => {
+	it("keeps an uncertain local request separate from the transcript and allows explicit retry", async () => {
 		const { client } = createTestClient();
 		const messageSend = vi
 			.fn()
@@ -395,14 +403,16 @@ describe("composer", () => {
 		await user.type(composer, "稍后再试");
 		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 
-		await screen.findByText(zhCN.messages.sendFailed);
+		const submission = await screen.findByTestId("conversation-submission");
+		await waitFor(() => expect(submission).toHaveAttribute("data-state", "unknown"));
+		expect(submission).toHaveTextContent("稍后再试");
+		expect(screen.queryByTestId("timeline-message")).toBeNull();
 		expect(composer).toHaveValue("");
 		const retry = screen.getByRole("button", { name: zhCN.messages.retry });
 		expect(retry).toBeEnabled();
 		await user.click(retry);
-		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));
-		await waitFor(() =>
-			expect(screen.queryByText(zhCN.messages.sendFailed)).not.toBeInTheDocument(),
-		);
+		await waitFor(() => expect(submission).toHaveAttribute("data-state", "accepted"));
+		expect(submission).toHaveTextContent("稍后再试");
+		expect(screen.queryByTestId("timeline-message")).toBeNull();
 	});
 });

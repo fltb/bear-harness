@@ -34,6 +34,9 @@ function piSnapshot(sessionId: string, name = sessionId) {
 			getLeafId: () => `${sessionId}-user`,
 		},
 		isStreaming: false,
+		isRetrying: false,
+		retryAttempt: 0,
+		isCompacting: false,
 		state: {
 			streamingMessage: undefined,
 			errorMessage: undefined,

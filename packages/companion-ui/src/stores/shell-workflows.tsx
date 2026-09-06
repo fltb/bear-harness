@@ -63,10 +63,15 @@ export interface ShellWorkflowStore {
 	readonly queueOpen: Accessor<boolean>;
 	toggleQueue(): void;
 	closeQueue(): void;
+	readonly selectedTaskId: Accessor<string | null>;
+	openTask(runId: string): void;
+	closeTask(): void;
 	readonly activeRuns: Accessor<RunInfo[]>;
 	readonly runGroups: Accessor<Readonly<Record<string, RunInfo[]>>>;
 	readonly selectedArtifact: Accessor<SelectedArtifact | undefined>;
 	selectArtifact(runId: string, artifactId: string): void;
+	openRunArtifact(run: RunInfo, artifactId: string): Promise<void>;
+	requestRunAgain(run: RunInfo, instruction: string): Promise<void>;
 	closeArtifact(): void;
 	permissionsForRun(runId: string): Accessor<RunPermissionRequest[]>;
 	runsForMessage(messageId: string): Accessor<RunInfo[]>;
@@ -128,6 +133,7 @@ export function createShellWorkflowStore(input: {
 }): ShellWorkflowStore {
 	const { store, currentLocale, translate } = input;
 	const character = createMemo(() => store.character);
+	const characterId = createMemo(() => character()?.id);
 	const activeCharacterRuntime = createMemo(() => store.companionState?.state.display);
 	const scene = createMemo(() => {
 		const identity = character();
@@ -199,12 +205,26 @@ export function createShellWorkflowStore(input: {
 	const [queueOpen, setQueueOpen] = createSignal(false);
 	const toggleQueue = () => setQueueOpen((open) => !open);
 	const closeQueue = () => setQueueOpen(false);
+	// Task selection belongs to the character, not whichever conversation is visible.
+	const taskSelection = createMemo(() => {
+		const scopeId = characterId();
+		const [selected, setSelected] = createSignal<string | null>(null);
+		return { characterId: scopeId, selected, setSelected };
+	});
+	const selectedTaskId = () => taskSelection().selected();
+	const openTask = (runId: string) => {
+		taskSelection().setSelected(runId);
+		setQueueOpen(true);
+	};
+	const closeTask = () => taskSelection().setSelected(null);
 
 	const activeRuns = createMemo(() =>
 		(store.runs ?? []).filter(
 			(run) =>
-				run.conversationId === store.activeConversationId &&
-				(run.status === "enqueued" || run.status === "running" || run.status === "needs_user"),
+				run.status === "enqueued" ||
+				run.status === "running" ||
+				run.status === "needs_user" ||
+				run.status === "interrupted",
 		),
 	);
 	const runGroups = createMemo(() => {
@@ -216,23 +236,57 @@ export function createShellWorkflowStore(input: {
 		}
 		return groups;
 	});
-	const [artifactSelection, setArtifactSelection] = createSignal<{
-		runId: string;
-		artifactId: string;
-	}>();
+	// Recreate only presentation selection when its conversation changes.
+	const artifactSelection = createMemo(() => {
+		const conversationId = store.activeConversationId;
+		const scopeId = characterId();
+		const [selected, setSelected] = createSignal<{
+			runId: string;
+			artifactId: string;
+			run?: RunInfo;
+		}>();
+		return { characterId: scopeId, conversationId, selected, setSelected };
+	});
 	const selectedArtifact = createMemo<SelectedArtifact | undefined>(() => {
-		const selection = artifactSelection();
+		const scope = artifactSelection();
+		const selection = scope.selected();
 		if (!selection) return undefined;
-		const run = (store.runs ?? []).find(
-			(candidate) =>
-				candidate.id === selection.runId && candidate.conversationId === store.activeConversationId,
-		);
+		const run =
+			(store.runs ?? []).find(
+				(candidate) =>
+					candidate.id === selection.runId && candidate.conversationId === scope.conversationId,
+			) ?? (selection.run?.conversationId === scope.conversationId ? selection.run : undefined);
 		const artifact = run?.artifacts.find((candidate) => candidate.id === selection.artifactId);
 		return run && artifact ? { run, artifact } : undefined;
 	});
-	const selectArtifact = (runId: string, artifactId: string) =>
-		setArtifactSelection({ runId, artifactId });
-	const closeArtifact = () => setArtifactSelection(undefined);
+	let artifactNavigation = 0;
+	const selectArtifact = (runId: string, artifactId: string) => {
+		artifactNavigation++;
+		artifactSelection().setSelected({ runId, artifactId });
+	};
+	const closeArtifact = () => {
+		artifactNavigation++;
+		artifactSelection().setSelected(undefined);
+	};
+	const navigateToRun = async (run: RunInfo) => {
+		const characterId = character()?.id;
+		if (store.activeConversationId !== run.conversationId)
+			await store.selectConversation(run.conversationId);
+		if (character()?.id !== characterId || store.activeConversationId !== run.conversationId)
+			throw new Error("run_conversation_changed");
+	};
+	const openRunArtifact = async (run: RunInfo, artifactId: string) => {
+		if (!run.artifacts.some((artifact) => artifact.id === artifactId))
+			throw new Error("run_artifact_not_found");
+		const navigation = ++artifactNavigation;
+		await navigateToRun(run);
+		if (navigation !== artifactNavigation) return;
+		artifactSelection().setSelected({ runId: run.id, artifactId, run });
+	};
+	const requestRunAgain = async (run: RunInfo, instruction: string) => {
+		await navigateToRun(run);
+		await store.sendMessage(instruction);
+	};
 	const permissionGroups = createMemo(() => {
 		const groups: Record<string, RunPermissionRequest[]> = {};
 		for (const permission of store.run?.pendingPermissions?.() ?? []) {
@@ -292,6 +346,7 @@ export function createShellWorkflowStore(input: {
 
 	const runPermissionAction = (id: string, action: () => Promise<unknown>) => {
 		const state = getPermissionState(id);
+		if (state.busy()) return;
 		state.setBusy(true);
 		state.setError(null);
 		const before = store.errorMetadata;
@@ -306,6 +361,7 @@ export function createShellWorkflowStore(input: {
 	};
 	const runRunAction = async (id: string, action: () => Promise<unknown>): Promise<boolean> => {
 		const state = getRunState(id);
+		if (state.busy()) return false;
 		state.setBusy(true);
 		state.setError(null);
 		const before = store.errorMetadata;
@@ -347,10 +403,15 @@ export function createShellWorkflowStore(input: {
 		queueOpen,
 		toggleQueue,
 		closeQueue,
+		selectedTaskId,
+		openTask,
+		closeTask,
 		activeRuns,
 		runGroups,
 		selectedArtifact,
 		selectArtifact,
+		openRunArtifact,
+		requestRunAgain,
 		closeArtifact,
 		permissionsForRun,
 		runsForMessage,

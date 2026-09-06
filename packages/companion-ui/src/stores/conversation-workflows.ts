@@ -1,10 +1,9 @@
-import { createMemo } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
 
 interface State {
 	composerText: string;
-	modelBusy: boolean;
 	query: string;
 	editingId?: string;
 	editingTitle: string;
@@ -22,10 +21,9 @@ export function useConversationWorkflow(store: CompanionStore) {
 }
 
 function createWorkflow(store: CompanionStore) {
-	let submitting = false;
+	const [modelBusySessions, setModelBusySessions] = createSignal<ReadonlySet<string>>(new Set());
 	const [state, setState] = createStore<State>({
 		composerText: "",
-		modelBusy: false,
 		query: "",
 		editingTitle: "",
 		renameRequired: false,
@@ -72,7 +70,7 @@ function createWorkflow(store: CompanionStore) {
 				`${state.composerText.trimEnd()}${state.composerText ? "\n\n" : ""}${references}`,
 			);
 		},
-		modelBusy: () => state.modelBusy,
+		modelBusy: () => modelBusySessions().has(store.activeConversationId ?? ""),
 		query: () => state.query,
 		setQuery,
 		visibleConversations: () => store.conversations,
@@ -112,30 +110,40 @@ function createWorkflow(store: CompanionStore) {
 		models,
 		selectedModel,
 		modelSelected: () => selectedModel() !== null,
-		streaming: () => store.activePiLiveState?.isStreaming === true,
 		refreshModels: (id: string) => void store.model.list(id),
 		selectModel: async (model: ConfiguredModel | null) => {
 			const id = store.activeConversationId;
-			if (!model || !id) return;
-			setState("modelBusy", true);
+			if (!model || !id || modelBusySessions().has(id)) return;
+			setModelBusySessions((current) => new Set(current).add(id));
 			try {
 				await store.model.select(id, model.providerId, model.modelId);
 			} catch {
 				// The store exposes the failed operation once; the composer must not mirror it.
 			} finally {
-				setState("modelBusy", false);
+				setModelBusySessions((current) => {
+					const next = new Set(current);
+					next.delete(id);
+					return next;
+				});
 			}
 		},
 		dispatchMessage: async () => {
 			const message = state.composerText.trim();
-			if (!message || submitting) return;
-			submitting = true;
-			setState("composerText", "");
+			if (!message || store.conversationMutationBusy) return;
+			const conversationId = store.activeConversationId;
+			const previousSubmission = store.activeSubmission?.id;
 			try {
-				await store.sendMessage(message);
+				const sending = store.sendMessage(message);
+				// Clear only after the store staged this request. A synchronous
+				// pre-dispatch rejection must leave the unsent form draft untouched.
+				if (
+					store.activeSubmission?.id !== previousSubmission &&
+					store.activeSubmission?.conversationId === conversationId
+				)
+					setState("composerText", "");
+				await sending;
 			} catch {
-			} finally {
-				submitting = false;
+				// Dispatched request failures remain available in submission feedback.
 			}
 		},
 	};

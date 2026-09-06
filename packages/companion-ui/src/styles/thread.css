@@ -2,6 +2,16 @@
 /* Thread + composer                                                    */
 /* ------------------------------------------------------------------ */
 
+/* Keep scrolled native notices behind the sticky conversation header. */
+.thread-head {
+	background: var(--surface-panel);
+}
+
+.thread-head .scene-title {
+	@apply rounded-lg px-2 py-1;
+	background: var(--surface-panel);
+}
+
 .thread {
 	@apply flex min-w-0 flex-col gap-3 rounded-t-2xl border-x px-5 pb-5 pt-3;
 	border-color: color-mix(in srgb, var(--sys-border) 55%, transparent);
@@ -462,8 +472,7 @@
 	@apply col-span-1;
 }
 
-.artifact-preview-backdrop,
-.media-preview-backdrop {
+.artifact-preview-backdrop {
 	@apply fixed inset-0 z-50 hidden border-0 p-0;
 	background: var(--surface-overlay);
 }
@@ -604,4 +613,130 @@
 .attachment-preview-metadata dd {
 	@apply col-span-2 m-0 break-all;
 	color: var(--text-strong);
+}
+
+/* Current work stays beside the conversation; result/media surfaces remain independent. */
+.queue-pop.task-workspace {
+	@apply w-(--content-form) overflow-auto overscroll-contain p-4;
+}
+
+.task-panel,
+.task-details,
+.task-history,
+.task-controls,
+.task-evidence {
+	@apply grid min-w-0 gap-3;
+}
+
+.task-panel-heading,
+.task-pagination {
+	@apply flex items-center justify-between gap-3;
+}
+
+.task-panel-heading h2,
+.task-details h4 {
+	@apply m-0 text-sm font-semibold;
+}
+
+.task-panel .task-scope,
+.task-origin,
+.task-notice,
+.task-metadata dt,
+.permission-scope {
+	@apply text-xs leading-relaxed;
+	color: var(--text-soft);
+	overflow-wrap: anywhere;
+}
+
+.task-panel .task-scope {
+	@apply m-0 mb-2;
+}
+
+.queue-pop.task-workspace .task-row {
+	@apply rounded-none px-0 py-3 bg-transparent;
+	border-width: 0 0 var(--stroke-subtle);
+}
+
+.task-row h3,
+.task-metadata dd {
+	overflow-wrap: anywhere;
+}
+
+.task-panel-heading button,
+.task-inspect,
+.task-pagination button,
+.task-details button {
+	@apply min-h-(--touch-target) rounded-(--radius-control) px-3 py-2 text-xs;
+	border: var(--stroke-subtle) solid var(--line-soft);
+	background: var(--surface-control);
+	color: var(--text-strong);
+}
+
+.task-inspect:hover,
+.task-details button:hover,
+.task-panel-heading button:hover {
+	border-color: var(--line-strong);
+}
+
+.task-metadata {
+	@apply m-0 grid grid-cols-3 gap-x-3 gap-y-2 text-xs;
+}
+
+.task-metadata dd {
+	@apply col-span-2 m-0;
+}
+
+.task-instruction {
+	@apply block w-full min-h-22 resize-y rounded-(--radius-control) p-3;
+	border: var(--stroke-subtle) solid var(--line-soft);
+	background: var(--surface-control);
+	color: var(--text-strong);
+}
+
+.task-disclosure,
+.native-tool-disclosure {
+	border-top: var(--stroke-subtle) solid var(--line-soft);
+	@apply pt-2;
+}
+
+.task-disclosure summary,
+.native-tool-disclosure summary {
+	@apply min-h-(--touch-target) cursor-pointer py-2 text-xs leading-relaxed;
+	overflow-wrap: anywhere;
+}
+
+.task-disclosure summary:focus-visible,
+.native-tool-disclosure summary:focus-visible,
+.task-workspace:focus-visible {
+	outline: var(--stroke-focus) solid var(--focus-ring);
+	outline-offset: var(--space-1);
+}
+
+.task-details pre,
+.native-tool-disclosure pre,
+.native-filtered-source pre,
+.native-content-fallback pre,
+.native-session-notice pre {
+	@apply max-w-full overflow-auto whitespace-pre-wrap rounded-(--radius-control) p-3 text-xs leading-relaxed;
+	overflow-wrap: anywhere;
+	background: var(--surface-control);
+}
+
+.work-actions .permission-option {
+	@apply flex flex-col items-start gap-1 py-2 text-left;
+}
+
+.permission-scope {
+	@apply block;
+}
+
+.native-message-image {
+	@apply max-h-128 max-w-full object-contain;
+}
+
+.native-session-notice {
+	@apply px-3 py-2 text-xs leading-relaxed;
+	border-inline-start: var(--stroke-focus) solid var(--line-soft);
+	color: var(--text-soft);
+	background: var(--surface-subtle);
 }

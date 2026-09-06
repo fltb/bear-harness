@@ -216,52 +216,52 @@ media:
   - id: continuity_light
     kind: image
     label: 极昼的来处
-    description: 一张区分角色资料、当前会话与当前极昼经历的示意图。
-    use_when: 用户询问极昼的连续性并明确想看图示时
+    description: 极光映照窗外雪山，书桌上的提灯照亮一本系绳旧册的场景 CG；不是连续性示意图或可读档案。
+    use_when: 用户聊到极昼的来处、旧站往事，并希望看看相关场景时；不能用这幅画证明具体经历。
     asset: assets/cg-continuity-light.webp
   - id: damaged_signal
     kind: animation
     label: 残缺报码
-    description: 对一张受潮人工抄报码的视觉整理，明确区分可读文字与缺损区。
-    use_when: 用户实际查看《未送达的回报》第一章原件时
+    description: 极昼站在旧设备与书架之间，手边控制台亮着波形，窗外可见极光与雪地的动态 CG；不是报码原件。
+    use_when: 用户进入《未送达的回报》并希望看看信号室的氛围时；报码文字与缺损信息仍以剧情正文为准。
     asset: assets/cg-damaged-signal-animated.webp
     poster: assets/cg-damaged-signal.png
     loop: true
   - id: storm_relay_map
     kind: image
-    label: 转发台登记
-    description: 将一条转发登记中的动作、目标与回执栏分开显示的简图。
-    use_when: 用户选择查看转发台登记页时
+    label: 转发台灯下
+    description: 极昼在温暖灯光下查看地图桌，蓝色与琥珀色线路穿过桌面，窗外是雪山与站房的场景 CG；不是登记表或可核验回执。
+    use_when: 用户探索转发台并希望看看场景时；不能从画面推断登记动作、目的地或签收结论。
     asset: assets/cg-storm-relay-map.webp
   - id: snow_route
     kind: image
-    label: 北门取件记录
-    description: 将当班外出登记与纸面已经记录的路线分开显示的简图。
-    use_when: 用户选择查看旧站当班员的外出记录时
+    label: 雪夜门前
+    description: 极昼站在亮着暖光的门口，脚印和白色虚线路径穿过积雪，远处是山峦与极光的场景 CG；不是实际外出记录。
+    use_when: 用户聊到旧站的雪夜路线并希望看看场景时；不能把画中的路线当作已核实的行程。
     asset: assets/cg-snow-route.webp
   - id: two_handoffs
     kind: image
     label: 两本值班簿
-    description: 并列展示两份不同来源的原始值班记录与各自签收栏。
-    use_when: 用户正在比较旧站与沿岸灯塔的原始记录时
+    description: 极昼坐在摊开的册页、时钟与旧无线电设备旁，窗外可见灯塔的场景 CG；册页不是可供逐字核验的原始记录。
+    use_when: 用户比较旧站与沿岸灯塔的交接线索，并希望看看相关场景时；事实比较仍以剧情中的文字记录为准。
     asset: assets/cg-two-handoffs.webp
   - id: last_shift_desk
     kind: image
-    label: 重复目录清点页
-    description: 展示关站清点页、目录栏和未完成签字栏的档案桌面。
-    use_when: 用户实际查看重复目录成因时
+    label: 最后一班的书桌
+    description: 极昼身前的书桌摆着档案、册页和旧仪器，窗外雪地上方亮着极光的场景 CG；不是可读的清点页或签字栏。
+    use_when: 用户探索关站清点的往事并希望看看档案桌时；不能据此补写目录内容或签字结论。
     asset: assets/cg-last-shift-desk.webp
   - id: future_beacon_cg
     kind: image
-    label: 三种分类草案
-    description: 将当前可选档案处理方式并列展示的索引卡草图。
-    use_when: 用户到达处理决定并要求比较不同结果时
+    label: 极光下的灯火
+    description: 极昼坐在放有成排灯具与旧仪器的木桌旁，窗外是极光和冰雪的场景 CG；不是不同处理方案的对照图。
+    use_when: 用户讨论旧站档案的后续去向，并希望看看灯火与旧站的场景时；方案与后果须用文字明确说明。
     asset: assets/cg-future-beacon.webp
   - id: returned_lamp
     kind: image
-    label: 待核索引
-    description: 一张完成当前处理后仍保留待核栏的索引卡。
-    use_when: 用户选择继续追踪并查看最终登记结果时
+    label: 灯塔与归来的灯光
+    description: 极昼坐在书籍、旧无线电和暖灯围绕的桌旁，窗外可见雪岸与灯塔的场景 CG；不是登记完成凭据。
+    use_when: 用户结束当前探索或选择继续追踪，并希望看看归来后的场景时；画面不代表线索已经核实。
     asset: assets/cg-returned-lamp.webp
 scenes:
   - id: study

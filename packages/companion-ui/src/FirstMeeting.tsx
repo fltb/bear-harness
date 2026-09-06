@@ -83,6 +83,19 @@ export function FirstMeeting() {
 	};
 	return (
 		<>
+			<Show
+				when={
+					store.setupLoadError &&
+					!workflow.modelRequired() &&
+					!workflow.roleModelRequired() &&
+					!workflow.memorySetupRequired() &&
+					!workflow.conversationVisible()
+				}
+			>
+				<p class="intro-error" role="alert">
+					{store.setupLoadError}
+				</p>
+			</Show>
 			<Show when={workflow.modelRequired() || workflow.roleModelRequired()}>
 				<Dialog open={workflow.modelRequired() || workflow.roleModelRequired()}>
 					<Dialog.Content class="intro model-setup" aria-label={t("modelSetup.dialogLabel")}>
@@ -167,9 +180,9 @@ export function FirstMeeting() {
 							<Show when={workflow.setupBusy()}>
 								<p class="memory-note">{t("modelSetup.connecting")}</p>
 							</Show>
-							<Show when={workflow.setupError()}>
+							<Show when={workflow.setupError() ?? store.setupLoadError}>
 								<p class="intro-error" role="alert">
-									{workflow.setupError()}
+									{workflow.setupError() ?? store.setupLoadError}
 								</p>
 							</Show>
 						</article>
@@ -200,9 +213,9 @@ export function FirstMeeting() {
 									{t("messages.continue")}
 								</Button>
 							</div>
-							<Show when={workflow.setupError()}>
+							<Show when={workflow.setupError() ?? store.setupLoadError}>
 								<p class="intro-error" role="alert">
-									{workflow.setupError()}
+									{workflow.setupError() ?? store.setupLoadError}
 								</p>
 							</Show>
 						</article>

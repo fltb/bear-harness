@@ -44,7 +44,6 @@ describe("document_read", () => {
 			path: "brief.docx",
 		});
 		const delegated = await tools.host_delegate?.execute("relative-delegate", {
-			agent: "codex",
 			instruction: "Read it",
 			inputPaths: ["brief.docx"],
 		});
@@ -57,24 +56,117 @@ describe("document_read", () => {
 		expect(delegate).not.toHaveBeenCalled();
 	});
 
-	it("delegates user-supplied paths using the current Pi identifiers", async () => {
-		const delegate = vi.fn().mockResolvedValue({ runId: "run-1", status: "running" });
+	it("returns the accepted Pi Run identity in model-visible content", async () => {
+		const delegate = vi.fn().mockResolvedValue({ accepted: true, runId: "run-1", executor: "pi" });
 		const tools = registerHostTools({
 			sessionId: () => "session-1",
 			entryId: () => "entry-1",
 			delegate,
 		} as never);
-		await tools.host_delegate?.execute("call-3", {
-			agent: "codex",
+		const result = await tools.host_delegate?.execute("call-3", {
 			instruction: "Summarize the workbook",
 			inputPaths: ["/tmp/data.xlsx"],
 		});
 		expect(delegate).toHaveBeenCalledWith({
 			conversationId: "session-1",
 			triggerEntryId: "entry-1",
-			agent: "codex",
+			toolCallId: "call-3",
 			instruction: "Summarize the workbook",
 			inputPaths: ["/tmp/data.xlsx"],
+		});
+		const text = result?.content[0];
+		expect(text?.type).toBe("text");
+		expect(JSON.parse(text?.type === "text" ? text.text : "")).toEqual({
+			accepted: true,
+			runId: "run-1",
+			executor: "pi",
+		});
+		expect(result?.details).toMatchObject({
+			ok: true,
+			data: { accepted: true, runId: "run-1", executor: "pi" },
+		});
+	});
+
+	it("rejects model-selected executors and model-supplied admission identities", async () => {
+		const delegate = vi.fn();
+		const tools = registerHostTools({ delegate } as never);
+		for (const extra of [
+			{ agent: "codex" },
+			{ toolCallId: "forged" },
+			{ conversationId: "other" },
+		]) {
+			const result = await tools.host_delegate?.execute("native-call", {
+				instruction: "Read the file",
+				...extra,
+			});
+			expect(result?.details).toMatchObject({ ok: false, code: "host_tool_arguments_invalid" });
+		}
+		expect(delegate).not.toHaveBeenCalled();
+	});
+
+	it("preserves plain Host admission errors without object stringification", async () => {
+		const tools = registerHostTools({
+			sessionId: () => "session-1",
+			entryId: () => "entry-1",
+			delegate: async () => {
+				throw {
+					kind: "validation_failed",
+					reason: "input_missing",
+					message: "The input file is missing.",
+				};
+			},
+		} as never);
+		const result = await tools.host_delegate?.execute("native-call", { instruction: "Read it" });
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "The input file is missing." }],
+			details: { ok: false, code: "input_missing", message: "The input file is missing." },
+		});
+	});
+});
+
+describe("conversation-owned Run tools", () => {
+	it("requires exact control targets and excludes model permission approvals", async () => {
+		const runControl = vi.fn();
+		const tools = registerHostTools({ runControl } as never);
+		for (const args of [
+			{ action: "cancel" },
+			{ action: "respondPermission", runId: "run-1", optionId: "allow" },
+			{ action: "steer", runId: "run-1" },
+			{ action: "cancel", runId: "run-1", conversationId: "other" },
+		]) {
+			const result = await tools.host_run_control?.execute("control", args);
+			expect(result?.details).toMatchObject({ ok: false, code: "host_tool_arguments_invalid" });
+		}
+		expect(runControl).not.toHaveBeenCalled();
+	});
+
+	it("preserves ownership denials from both Run callbacks", async () => {
+		const denied = {
+			reason: "run_conversation_mismatch",
+			message: "This Run belongs to another conversation.",
+		};
+		const runRead = vi.fn().mockRejectedValue(denied);
+		const runControl = vi.fn().mockRejectedValue(denied);
+		const tools = registerHostTools({
+			sessionId: () => "invoking-session",
+			runRead,
+			runControl,
+		} as never);
+		const read = await tools.host_run_read?.execute("read", { runId: "foreign-run" });
+		const control = await tools.host_run_control?.execute("cancel", {
+			action: "cancel",
+			runId: "foreign-run",
+		});
+		for (const result of [read, control]) {
+			expect(result).toMatchObject({
+				content: [{ type: "text", text: denied.message }],
+				details: { ok: false, code: denied.reason, message: denied.message },
+			});
+		}
+		expect(runRead).toHaveBeenCalledWith("invoking-session", "foreign-run");
+		expect(runControl).toHaveBeenCalledWith("invoking-session", {
+			action: "cancel",
+			runId: "foreign-run",
 		});
 	});
 });

@@ -13,10 +13,10 @@ const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
 const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
 const dataScope = `${process.pid}-${randomUUID()}`;
-// Keep mutable Run roots outside the repository. The source ACP bootstrap lives
-// at the repository root, which the native sandbox mounts read-only so its
-// package imports remain available. Nesting outputs beneath that same root
-// would correctly fail the read/write overlap check before the agent starts.
+// The root shim imports the built production Pi ACP worker. The dev supervisor
+// builds host-runtime first; authored provider responses still execute real native
+// filesystem tools. Keep mutable Run roots outside the read-only repository mount
+// so sandbox read/write overlap checks remain intact.
 const dataDirectory = resolve(realpathSync.native(tmpdir()), `bear-harness-web-dev-${dataScope}`);
 const piWorkerPath = realpathSync.native(
 	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
@@ -72,7 +72,7 @@ export default defineConfig({
 			},
 			url: baseURL,
 			reuseExistingServer: false,
-			timeout: 30_000,
+			timeout: 120_000,
 			gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 		},
 		{

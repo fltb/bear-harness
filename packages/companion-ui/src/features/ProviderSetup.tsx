@@ -361,7 +361,11 @@ export function ProviderSetup(props: ProviderSetupProps) {
 	};
 
 	const renderProviderEditor = (provider: ProviderInfo, isNew: boolean) => (
-		<div class="provider-setup-editor" data-provider-editor={provider.id}>
+		<section
+			class="provider-setup-editor"
+			data-provider-editor={provider.id}
+			aria-label={provider.name}
+		>
 			<Show when={supportsAuth(provider, "oauth")}>
 				<div class="oauth-login">
 					<Show
@@ -596,7 +600,7 @@ export function ProviderSetup(props: ProviderSetupProps) {
 					{t("settings.connected")}
 				</p>
 			</Show>
-		</div>
+		</section>
 	);
 	const renderCandidateSection = (embeddedEditor: boolean) => (
 		<div class="provider-candidate-section">

@@ -44,7 +44,8 @@ describe("run-owned Artifact RPC", () => {
 		wireHostHandlers(dispatcher, context);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		await context.externalAgentRuns.close();
 		database.close();
 		rmSync(root, { recursive: true, force: true });
 	});
@@ -126,19 +127,6 @@ describe("run-owned Artifact RPC", () => {
 			.set({ summary: "Read /Users/private/source with token=must-not-cross-wire" })
 			.where(eq(runs.id, first.runId))
 			.run();
-		context.externalAgentRuns = new ExternalAgentRunService(
-			database.orm,
-			{
-				validateProfile: vi.fn(),
-				close: vi.fn(),
-				cancel: vi.fn(),
-				stop: vi.fn(),
-			} as never,
-			store,
-			join(root, "runs"),
-			async () => "pi-default",
-			async () => undefined,
-		);
 
 		const response = await dispatcher.dispatch("run.list", {});
 		if (!response.ok) throw new Error("expected successful Run projection");
@@ -158,6 +146,66 @@ describe("run-owned Artifact RPC", () => {
 		expect(JSON.stringify(projected)).not.toContain("must-not-cross-wire");
 		expect(JSON.stringify(projected)).not.toContain("must-not-cross-run");
 		expect(JSON.stringify(projected)).not.toContain("/Users/private");
+	});
+
+	it("reads an owned historical Run even when it is outside the current list page", async () => {
+		database.orm
+			.update(runs)
+			.set({
+				status: "completed",
+				createdAt: "2025-01-01T00:00:00.000Z",
+				completedAt: "2025-01-01T00:01:00.000Z",
+			})
+			.where(eq(runs.id, first.runId))
+			.run();
+		database.orm
+			.update(runs)
+			.set({
+				status: "completed",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				completedAt: "2026-01-01T00:01:00.000Z",
+			})
+			.where(eq(runs.id, second.runId))
+			.run();
+		const page = await dispatcher.dispatch("run.list", { scope: "history", limit: 1 });
+		expect(page).toMatchObject({
+			ok: true,
+			data: { runs: [{ id: second.runId }], nextCursor: expect.any(String) },
+		});
+		expect(await dispatcher.dispatch("run.get", { runId: first.runId })).toMatchObject({
+			ok: true,
+			data: { run: { id: first.runId, status: "completed" }, instruction: "test" },
+		});
+	});
+
+	it("rejects another character's Run reads and controls before executing them", async () => {
+		vi.mocked(context.characterLoader.getActiveCharacterId).mockReturnValue("other");
+		expect(
+			await dispatcher.dispatch("run.list", { conversationId: first.conversationId }),
+		).toMatchObject({ ok: false, error: { kind: "not_found" } });
+		for (const channel of [
+			"run.get",
+			"run.steer",
+			"run.interrupt",
+			"run.resume",
+			"run.cancel",
+			"run.retryDelivery",
+			"run.respondPermission",
+		] as const) {
+			const request =
+				channel === "run.steer"
+					? { runId: first.runId, instruction: "change direction" }
+					: channel === "run.respondPermission"
+						? { runId: first.runId, requestId: "request", optionId: "allow" }
+						: { runId: first.runId };
+			expect(await dispatcher.dispatch(channel, request)).toMatchObject({
+				ok: false,
+				error: { kind: "not_found" },
+			});
+		}
+		expect(database.orm.select().from(runs).where(eq(runs.id, first.runId)).get()?.status).toBe(
+			"enqueued",
+		);
 	});
 
 	it("rejects cross-conversation and cross-run ownership before presentation", async () => {
@@ -344,7 +392,19 @@ describe("run-owned Artifact RPC", () => {
 			appSettings: {} as never,
 			memoryEmbedding: {} as never,
 			memoryScope: { installationId: "install", userId: "user" },
-			externalAgentRuns: {} as never,
+			externalAgentRuns: new ExternalAgentRunService(
+				database.orm,
+				{
+					validateProfile: vi.fn(),
+					runtime: () => ({ controller: "unknown", actions: [] }),
+					close: vi.fn(),
+					cancel: vi.fn(),
+					stop: vi.fn(),
+				} as never,
+				store,
+				join(root, "runs"),
+				async () => undefined,
+			),
 			externalAgents: {} as never,
 			artifacts: store,
 			canon: { syncPackage: vi.fn() } as never,

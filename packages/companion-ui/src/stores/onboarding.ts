@@ -68,7 +68,12 @@ export function createOnboardingStore(
 		},
 		get: hostRequest,
 		resync: async () => {
-			commit(await refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request }));
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.onboarding,
+				exact: true,
+				refetchType: "none",
+			});
+			await queryClient.fetchQuery({ queryKey: queryKeys.onboarding, queryFn: request });
 		},
 		submit: async (stepId, answer) => {
 			try {

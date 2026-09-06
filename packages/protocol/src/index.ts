@@ -177,6 +177,7 @@ export type PiMessageChoices = z.infer<typeof schema.PiMessageChoices>;
 export type PiSessionEntry = SessionEntry;
 export type PiAgentMessage = AgentMessage;
 export type PiAgentSessionEvent = AgentSessionEvent;
+export type PiProjectionVersion = z.infer<typeof schema.PiProjectionVersion>;
 export type PiLiveSnapshot = z.infer<typeof schema.PiLiveSnapshot>;
 export type ConversationHistoryRequest = z.infer<typeof schema.ConversationHistoryRequest>;
 export type ConversationHistoryResponse = z.infer<typeof schema.ConversationHistoryResponse>;
@@ -356,25 +357,31 @@ export type ExternalAgentStatusResponse = z.infer<typeof schema.ExternalAgentSta
 export type RunSteerRequest = z.infer<typeof schema.RunSteerRequest>;
 export type RunCancelRequest = z.infer<typeof schema.RunCancelRequest>;
 export type RunRespondPermissionRequest = z.infer<typeof schema.RunRespondPermissionRequest>;
-export type RunSteerResponse = z.infer<typeof schema.EmptyResponse>;
+export type RunSteerResponse = z.infer<typeof schema.RunSteerResponse>;
 export type RunInterruptRequest = z.infer<typeof schema.RunInterruptRequest>;
 export type RunInterruptResponse = z.infer<typeof schema.RunResponse>;
 export type RunResumeRequest = z.infer<typeof schema.RunResumeRequest>;
 export type RunResumeResponse = z.infer<typeof schema.RunResponse>;
 export type RunCancelResponse = z.infer<typeof schema.RunResponse>;
 export type RunRespondPermissionResponse = z.infer<typeof schema.RunResponse>;
+export type RunRetryDeliveryRequest = z.infer<typeof schema.RunRetryDeliveryRequest>;
+export type RunRetryDeliveryResponse = z.infer<typeof schema.RunRetryDeliveryResponse>;
 
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
 export type RunStatus = z.infer<typeof schema.RunStatus>;
+export type ExecutorRecovery = z.infer<typeof schema.ExecutorRecovery>;
+export type RunAction = z.infer<typeof schema.RunAction>;
 export type ArtifactStatus = z.infer<typeof schema.ArtifactStatus>;
 export type RunEvidenceSummary = z.infer<typeof schema.RunEvidenceSummary>;
 export type RunPermission = z.infer<typeof schema.RunPermission>;
 export type Run = z.infer<typeof schema.Run>;
 export type RunListRequest = z.infer<typeof schema.RunListRequest>;
 export type RunListResponse = z.infer<typeof schema.RunListResponse>;
+export type RunGetRequest = z.infer<typeof schema.RunGetRequest>;
+export type RunGetResponse = z.infer<typeof schema.RunGetResponse>;
 export type RunResponse = z.infer<typeof schema.RunResponse>;
 export type ArtifactSummary = z.infer<typeof schema.ArtifactSummary>;
 export type ArtifactIdentity = z.infer<typeof schema.ArtifactIdentity>;

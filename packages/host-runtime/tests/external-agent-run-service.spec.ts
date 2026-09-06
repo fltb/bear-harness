@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { RunAction } from "@bear-harness/protocol";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
-import type { ExecutorLaunchRequest } from "../src/executors/router.js";
+import type { ExecutorLaunchRequest, ExecutorRecovery } from "../src/executors/router.js";
 import { ExternalAgentRunService, type RunStatus } from "../src/external-agents/run-service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import { conversations, runs } from "../src/storage/schema.js";
@@ -25,6 +26,10 @@ function setup(
 	options: {
 		launch?: (request: ExecutorLaunchRequest) => Promise<void>;
 		interrupt?: () => Promise<void>;
+		cancel?: () => Promise<void>;
+		close?: () => Promise<void>;
+		resolvePiModel?: ConstructorParameters<typeof ExternalAgentRunService>[4];
+		onTerminal?: ConstructorParameters<typeof ExternalAgentRunService>[5];
 	} = {},
 ) {
 	const root = mkdtempSync(join(tmpdir(), "bear-run-restart-"));
@@ -36,7 +41,17 @@ function setup(
 	const publish = vi.fn();
 	const interrupt = vi.fn(async () => options.interrupt?.());
 	const resume = vi.fn(async () => undefined);
-	const recover = vi.fn(async (_run: ExecutorLaunchRequest["run"]) => "confirmed_lost" as const);
+	const recover = vi.fn(
+		async (_run: ExecutorLaunchRequest["run"]): Promise<ExecutorRecovery> => "confirmed_lost",
+	);
+	const runtime = vi.fn(
+		(
+			_run: ExecutorLaunchRequest["run"],
+		): { controller: ExecutorRecovery; actions: RunAction[] } => ({
+			controller: "attached",
+			actions: ["steer", "interrupt", "resume", "cancel", "respondPermission"],
+		}),
+	);
 	const launch = vi.fn(
 		async (
 			run: ExecutorLaunchRequest["run"],
@@ -47,42 +62,47 @@ function setup(
 				run,
 				task,
 				emit,
-				profile: { id: run.executorProfile, type: "codex", capabilities: {} },
+				profile: { id: run.executorProfile, type: "pi", capabilities: {} },
 			}),
 	);
 	const validateProfile = vi.fn();
-	const controllerClose = vi.fn(async () => undefined);
-	const cancel = vi.fn(async () => undefined);
+	const controllerClose = vi.fn(async () => options.close?.());
+	const cancel = vi.fn(async () => options.cancel?.());
 	const stop = vi.fn(async () => undefined);
 	const runRoot = join(root, "runs");
-	const service = new ExternalAgentRunService(
-		database.orm,
-		{
-			interrupt,
-			resume,
-			recover,
-			launch,
-			validateProfile,
-			close: controllerClose,
-			cancel,
-			stop,
-		} as never,
-		new ArtifactStore(database.orm, join(root, "artifacts")),
-		runRoot,
-		async () => "pi-default",
-		async () => undefined,
-		undefined,
-		15_000,
-	);
+	const createService = () =>
+		new ExternalAgentRunService(
+			database.orm,
+			{
+				interrupt,
+				resume,
+				recover,
+				runtime,
+				steer: vi.fn(async () => ({ outcome: "injected" })),
+				launch,
+				validateProfile,
+				close: controllerClose,
+				cancel,
+				stop,
+			} as never,
+			new ArtifactStore(database.orm, join(root, "artifacts")),
+			runRoot,
+			options.resolvePiModel ?? (async () => ({ providerId: "test", modelId: "test" })),
+			options.onTerminal,
+			15_000,
+		);
+	const service = createService();
 	service.subscribeChanges(publish);
 	return {
 		database,
 		service,
+		createService,
 		runRoot,
 		publish,
 		interrupt,
 		resume,
 		recover,
+		runtime,
 		launch,
 		controllerClose,
 		cancel,
@@ -111,13 +131,21 @@ function seedRun(
 		.run();
 }
 
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("ExternalAgentRunService restart recovery", () => {
 	it("queries recovery before marking confirmed orphaned runs as forced termination", async () => {
-		const { database, service, runRoot, recover, emit } = setup();
+		const { database, service, runRoot, recover } = setup();
 		try {
 			for (const status of ["enqueued", "running", "needs_user", "interrupted"] as const) {
 				seedRun(database, status, status);
@@ -251,7 +279,7 @@ describe("ExternalAgentRunService restart recovery", () => {
 			const delegated = await service.delegate({
 				conversationId: "conversation-1",
 				triggerEntryId: "entry-race",
-				agent: "codex",
+				toolCallId: "tool-race",
 				inputPaths: [],
 				instruction: "Exercise terminal ordering.",
 			});
@@ -283,7 +311,7 @@ describe("ExternalAgentRunService restart recovery", () => {
 				service.delegate({
 					conversationId: "conversation-1",
 					triggerEntryId: "entry-blocked",
-					agent: "codex",
+					toolCallId: "tool-blocked",
 					inputPaths: [],
 					instruction: "This run must wait for an executor slot.",
 				}),
@@ -314,12 +342,12 @@ describe("ExternalAgentRunService restart recovery", () => {
 			const delegated = await service.delegate({
 				conversationId: "conversation-1",
 				triggerEntryId: "entry-allowed",
-				agent: "codex",
+				toolCallId: "tool-allowed",
 				inputPaths: [],
 				instruction: "Use the available executor slot.",
 			});
 
-			expect(delegated.status).toBe("enqueued");
+			expect(delegated).toEqual({ accepted: true, runId: delegated.runId, executor: "pi" });
 			expect(service.list()).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({
@@ -338,7 +366,8 @@ describe("ExternalAgentRunService restart recovery", () => {
 	});
 
 	it("stops conversation-owned controllers and workspaces before deletion", async () => {
-		const { cancel, database, runRoot, service, stop } = setup();
+		const { cancel, database, runRoot, service, stop, recover } = setup();
+		recover.mockResolvedValue("attached");
 		try {
 			seedRun(database, "running", "running");
 			seedRun(database, "completed", "completed", "2026-08-31T00:00:00.000Z");
@@ -374,7 +403,7 @@ describe("ExternalAgentRunService output capture", () => {
 			const delegated = await fixture.service.delegate({
 				conversationId: "conversation-1",
 				triggerEntryId: "entry-safe-failure",
-				agent: "codex",
+				toolCallId: "tool-safe-failure",
 				inputPaths: [],
 				instruction: "Fail without persisting worker diagnostics.",
 			});
@@ -408,7 +437,7 @@ describe("ExternalAgentRunService output capture", () => {
 			const delegated = await fixture.service.delegate({
 				conversationId: "conversation-1",
 				triggerEntryId: "entry-output",
-				agent: "codex",
+				toolCallId: "tool-output",
 				inputPaths: [],
 				instruction: "Create output",
 			});
@@ -453,7 +482,7 @@ describe("ExternalAgentRunService output capture", () => {
 				await fixture.service.delegate({
 					conversationId: "conversation-1",
 					triggerEntryId: `entry-${kind}`,
-					agent: "codex",
+					toolCallId: `tool-${kind}`,
 					inputPaths: [],
 					instruction: "Create oversized output",
 				});
@@ -487,7 +516,7 @@ describe("ExternalAgentRunService output capture", () => {
 			await fixture.service.delegate({
 				conversationId: "conversation-1",
 				triggerEntryId: "entry-escape",
-				agent: "codex",
+				toolCallId: "tool-escape",
 				inputPaths: [],
 				instruction: "Replace output root",
 			});
@@ -498,6 +527,407 @@ describe("ExternalAgentRunService output capture", () => {
 				});
 			});
 			expect(fixture.service.list()[0]?.artifacts).toEqual([]);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+});
+
+describe("ExternalAgentRunService admission and inspectable results", () => {
+	const params = {
+		conversationId: "conversation-1",
+		triggerEntryId: "entry-admission",
+		toolCallId: "tool-admission",
+		instruction: "Perform the delegated work.",
+		inputPaths: [],
+	};
+
+	it("deduplicates simultaneous native tool calls and retains the admitted ID after startup failure", async () => {
+		const fixture = setup({
+			launch: async () => {
+				throw new Error("private startup diagnostics");
+			},
+		});
+		try {
+			const [first, second] = await Promise.all([
+				fixture.service.delegate(params),
+				fixture.service.delegate(params),
+			]);
+			expect(first).toEqual({ accepted: true, runId: second.runId, executor: "pi" });
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(first.runId).run.status).toBe("failed"),
+			);
+			expect(await fixture.service.delegate(params)).toEqual(first);
+			expect(fixture.launch).toHaveBeenCalledOnce();
+			expect(fixture.service.getDetail(first.runId)).toMatchObject({
+				run: { executorProfile: "pi-default", status: "failed" },
+				evidence: [expect.objectContaining({ kind: "executor.launch_failed" })],
+			});
+			expect(JSON.stringify(fixture.service.getDetail(first.runId))).not.toContain(
+				"private startup diagnostics",
+			);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("cancels an accepted but not yet launched worker without creating an executor", async () => {
+		const fixture = setup();
+		try {
+			const receipt = await fixture.service.delegate(params);
+			expect(await fixture.service.cancelRun(receipt.runId)).toMatchObject({ status: "cancelled" });
+			expect(fixture.launch).not.toHaveBeenCalled();
+			expect(fixture.cancel).not.toHaveBeenCalled();
+			expect(fixture.service.getDetail(receipt.runId).run.actions).toEqual([]);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("deletes an admitted conversation before any worker launch can begin", async () => {
+		const fixture = setup();
+		try {
+			const receipt = await fixture.service.delegate(params);
+			await fixture.service.prepareConversationDeletion("conversation-1");
+			expect(fixture.launch).not.toHaveBeenCalled();
+			expect(fixture.service.getDetail(receipt.runId).run.status).toBe("cancelled");
+			expect(existsSync(join(fixture.runRoot, receipt.runId))).toBe(false);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("waits for an already executing control before close returns", async () => {
+		let finishInterrupt!: () => void;
+		const interrupted = new Promise<void>((resolve) => {
+			finishInterrupt = resolve;
+		});
+		const fixture = setup({ interrupt: () => interrupted });
+		try {
+			seedRun(fixture.database, "controlled", "running");
+			fixture.recover.mockResolvedValue("attached");
+			const control = fixture.service.interruptRun("controlled");
+			await vi.waitFor(() => expect(fixture.interrupt).toHaveBeenCalledOnce());
+			let closed = false;
+			const closing = fixture.service.close().then(() => {
+				closed = true;
+			});
+			await vi.waitFor(() => expect(fixture.controllerClose).toHaveBeenCalledOnce());
+			expect(closed).toBe(false);
+			finishInterrupt();
+			await control;
+			await closing;
+			expect(fixture.service.getDetail("controlled").run.status).toBe("forced_termination");
+		} finally {
+			finishInterrupt();
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("prevents admission after deletion starts while its model prerequisite is pending", async () => {
+		let release!: (route: { providerId: string; modelId: string }) => void;
+		const route = new Promise<{ providerId: string; modelId: string }>((resolve) => {
+			release = resolve;
+		});
+		const fixture = setup({ resolvePiModel: () => route });
+		try {
+			const admission = fixture.service.delegate(params);
+			const rejection = expect(admission).rejects.toMatchObject({
+				reason: "conversation_deleting",
+			});
+			const deletion = fixture.service.prepareConversationDeletion("conversation-1");
+			release({ providerId: "test", modelId: "test" });
+			await rejection;
+			await deletion;
+			expect(fixture.service.list()).toEqual([]);
+			expect(fixture.launch).not.toHaveBeenCalled();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it.each(["cancel", "delete", "close"] as const)(
+		"drains an owned unknown handshake before confirming %s",
+		async (operation) => {
+			const launchEntered = deferred();
+			const nativeRelease = deferred();
+			const launchDrain = deferred();
+			const stopEntered = deferred();
+			let outputDirectory = "";
+			const releaseController = async () => {
+				stopEntered.resolve();
+				await nativeRelease.promise;
+			};
+			const fixture = setup({
+				launch: async ({ task }) => {
+					outputDirectory = task.outputDirectory;
+					launchEntered.resolve();
+					await nativeRelease.promise;
+					await launchDrain.promise;
+					// Startup must still own its workspace until its actual operation drains.
+					writeFileSync(join(outputDirectory, "shutdown.txt"), "startup drained");
+					throw new Error("ACP handshake stopped");
+				},
+				cancel: releaseController,
+				close: releaseController,
+			});
+			fixture.runtime.mockReturnValue({ controller: "unknown", actions: [] });
+			fixture.recover.mockResolvedValue("unknown");
+			try {
+				fixture.database.orm
+					.insert(conversations)
+					.values({ id: "conversation-2", companionId: "bear" })
+					.run();
+				seedRun(fixture.database, "historical-unknown", "interrupted");
+				fixture.database.orm
+					.update(runs)
+					.set({ conversationId: "conversation-2" })
+					.where(eq(runs.id, "historical-unknown"))
+					.run();
+				const historicalRoot = join(fixture.runRoot, "historical-unknown");
+				mkdirSync(historicalRoot);
+				const receipt = await fixture.service.delegate(params);
+				await launchEntered.promise;
+				expect(fixture.service.getDetail(receipt.runId).run).toMatchObject({
+					status: "enqueued",
+					controller: "unknown",
+					actions: ["cancel"],
+				});
+				await expect(
+					fixture.service.delegate({ ...params, toolCallId: "over-capacity" }),
+				).rejects.toMatchObject({ reason: "max_concurrent_runs" });
+				let settled = false;
+				const pending = (
+					operation === "cancel"
+						? fixture.service.cancelRun(receipt.runId)
+						: operation === "delete"
+							? fixture.service.prepareConversationDeletion("conversation-1")
+							: fixture.service.close()
+				).then(() => {
+					settled = true;
+				});
+				await Promise.race([stopEntered.promise, pending]);
+				expect(settled).toBe(false);
+				expect(fixture.service.getDetail(receipt.runId).run.completedAt).toBeUndefined();
+				expect(existsSync(outputDirectory)).toBe(true);
+				nativeRelease.resolve();
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				expect(settled).toBe(false);
+				expect(fixture.service.getDetail(receipt.runId).run.completedAt).toBeUndefined();
+				expect(existsSync(outputDirectory)).toBe(true);
+				launchDrain.resolve();
+				await pending;
+				expect(fixture.service.getDetail(receipt.runId).run).toMatchObject({
+					status: operation === "close" ? "forced_termination" : "cancelled",
+					completedAt: expect.any(String),
+				});
+				expect(existsSync(outputDirectory)).toBe(operation === "cancel");
+				expect(fixture.service.getDetail("historical-unknown").run).toMatchObject({
+					status: "interrupted",
+					controller: "unknown",
+					actions: [],
+				});
+				expect(fixture.service.getDetail("historical-unknown").run.completedAt).toBeUndefined();
+				expect(existsSync(historicalRoot)).toBe(true);
+				const admissionService = operation === "close" ? fixture.createService() : fixture.service;
+				try {
+					if (operation === "close") await admissionService.recoverUnfinishedRuns();
+					const next = await admissionService.delegate({
+						...params,
+						conversationId: "conversation-2",
+						toolCallId: "replacement",
+					});
+					expect(await admissionService.cancelRun(next.runId)).toMatchObject({
+						status: "cancelled",
+					});
+				} finally {
+					if (operation === "close") await admissionService.close();
+				}
+			} finally {
+				nativeRelease.resolve();
+				launchDrain.resolve();
+				await fixture.service.close();
+				fixture.database.close();
+			}
+		},
+	);
+
+	it("does not settle an owned startup when controller close cannot confirm release", async () => {
+		const launchEntered = deferred();
+		const startup = deferred();
+		const fixture = setup({
+			launch: async () => {
+				launchEntered.resolve();
+				await startup.promise;
+			},
+			close: async () => {
+				startup.resolve();
+				throw new Error("native release unconfirmed");
+			},
+		});
+		fixture.runtime.mockReturnValue({ controller: "unknown", actions: [] });
+		fixture.recover.mockResolvedValue("unknown");
+		try {
+			const receipt = await fixture.service.delegate(params);
+			await launchEntered.promise;
+			await expect(fixture.service.close()).rejects.toThrow("native release unconfirmed");
+			expect(fixture.service.getDetail(receipt.runId).run).toMatchObject({
+				status: "enqueued",
+				controller: "unknown",
+				actions: [],
+			});
+			expect(fixture.service.getDetail(receipt.runId).run.completedAt).toBeUndefined();
+			expect(existsSync(join(fixture.runRoot, receipt.runId))).toBe(true);
+		} finally {
+			startup.resolve();
+			await fixture.service.close().catch(() => undefined);
+			fixture.database.close();
+		}
+	});
+
+	it("lists old unfinished work separately from cursor-paginated terminal history", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "old-unfinished", "interrupted");
+			fixture.database.orm
+				.update(runs)
+				.set({ createdAt: "2020-01-01T00:00:00.000Z" })
+				.where(eq(runs.id, "old-unfinished"))
+				.run();
+			for (let index = 0; index < 25; index++)
+				seedRun(
+					fixture.database,
+					`history-${index.toString().padStart(2, "0")}`,
+					"completed",
+					"2026-08-31T00:00:00.000Z",
+				);
+			const first = fixture.service.listPage("bear", { limit: 10 });
+			expect(first.runs.filter((run) => !run.completedAt).map((run) => run.id)).toEqual([
+				"old-unfinished",
+			]);
+			expect(first.nextCursor).toBeDefined();
+			const second = fixture.service.listPage("bear", {
+				scope: "history",
+				cursor: first.nextCursor,
+				limit: 10,
+			});
+			expect(second.runs.some((run) => first.runs.some((previous) => previous.id === run.id))).toBe(
+				false,
+			);
+			const third = fixture.service.listPage("bear", {
+				scope: "history",
+				cursor: second.nextCursor,
+				limit: 10,
+			});
+			expect(third.runs).toHaveLength(5);
+			expect(third.nextCursor).toBeUndefined();
+			expect(
+				fixture.service.listPage("bear", { scope: "unfinished" }).runs.map((run) => run.id),
+			).toEqual(["old-unfinished"]);
+			expect(fixture.service.listPage("other-character").runs).toEqual([]);
+			expect(() =>
+				fixture.service.assertConversationRun("other-conversation", "old-unfinished"),
+			).toThrow();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("rejects controls and deletion when controller ownership is unknown", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "unknown", "running");
+			fixture.runtime.mockReturnValue({ controller: "unknown", actions: [] });
+			fixture.recover.mockResolvedValue("unknown");
+			expect(fixture.service.getDetail("unknown").run).toMatchObject({
+				controller: "unknown",
+				actions: [],
+			});
+			await expect(fixture.service.cancelRun("unknown")).rejects.toMatchObject({
+				reason: "run_cancel_unavailable",
+			});
+			await expect(
+				fixture.service.prepareConversationDeletion("conversation-1"),
+			).rejects.toMatchObject({ reason: "run_controller_unknown" });
+			expect(fixture.service.getDetail("unknown").run).toMatchObject({ status: "running" });
+			expect(fixture.cancel).not.toHaveBeenCalled();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("retains useful bounded evidence while redacting secrets and local paths", async () => {
+		const cyclic: Record<string, unknown> = {
+			toolName: "read",
+			text: "Observed a real result",
+			password: "private-password",
+			path: "/data/private/file.txt",
+		};
+		cyclic.self = cyclic;
+		const fixture = setup({
+			launch: async ({ emit }) => {
+				emit({ type: "started" });
+				emit({ type: "evidence", kind: "tool.result", data: cyclic });
+				emit({ type: "completed" });
+			},
+		});
+		try {
+			const receipt = await fixture.service.delegate(params);
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(receipt.runId).run.status).toBe("completed"),
+			);
+			const detail = fixture.service.getDetail(receipt.runId);
+			expect(detail.evidence).toEqual([
+				expect.objectContaining({
+					kind: "tool.result",
+					data: expect.objectContaining({ toolName: "read", text: "Observed a real result" }),
+				}),
+			]);
+			expect(JSON.stringify(detail)).not.toContain("private-password");
+			expect(JSON.stringify(detail)).not.toContain("/data/private/file.txt");
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("keeps captured artifacts available while native result delivery remains unconfirmed", async () => {
+		let confirmed = false;
+		const fixture = setup({
+			launch: async ({ task, emit }) => {
+				writeFileSync(join(task.outputDirectory, "result.txt"), "independent artifact");
+				emit({ type: "started" });
+				emit({ type: "completed", summary: "The artifact is ready." });
+			},
+			onTerminal: async () => ({ resultReported: confirmed }),
+		});
+		try {
+			const receipt = await fixture.service.delegate(params);
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(receipt.runId).run.status).toBe("completed"),
+			);
+			await fixture.service.reconcilePending();
+			const pending = fixture.service.getDetail(receipt.runId).run;
+			expect(pending.resultReportedAt).toBeUndefined();
+			expect(pending.artifacts.map((artifact) => artifact.name)).toEqual(["result.txt"]);
+			expect(pending.actions).toEqual(["retryDelivery"]);
+			await expect(fixture.service.retryDelivery(receipt.runId)).rejects.toMatchObject({
+				reason: "run_result_delivery_pending",
+			});
+			confirmed = true;
+			await fixture.service.retryDelivery(receipt.runId);
+			const delivered = fixture.service.getDetail(receipt.runId).run;
+			expect(delivered.resultReportedAt).toEqual(expect.any(String));
+			expect(delivered.artifacts).toEqual(pending.artifacts);
+			expect(delivered.actions).toEqual([]);
 		} finally {
 			await fixture.service.close();
 			fixture.database.close();

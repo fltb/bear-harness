@@ -8,7 +8,7 @@
  * - Filter expressions for scalar field queries
  * - Time fields stored as uint64 epoch ms (ISO ↔ epoch conversion internal)
  *
- * All methods are fault-tolerant: return empty/false on error, never throw.
+ * Retrieval failures reject; successful queries with no matches return empty results.
  */
 
 import type { MemoryRecord } from "../record/l1-writer.js";
@@ -171,6 +171,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 
 	/** Promise that resolves when async init completes. */
 	private _initPromise: Promise<void> | undefined;
+	private _initError: unknown;
 
 	constructor(config: TcvdbMemoryStoreConfig) {
 		const modelName = config.embeddingModel.trim().toLowerCase();
@@ -228,8 +229,12 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				`${TAG} Async init failed: ${err instanceof Error ? err.message : String(err)}`,
 			);
 			this.degraded = true;
+			this._initError = err;
 		}
-		return { needsReindex: false };
+		return {
+			needsReindex: false,
+			...(this.degraded ? { reason: "TCVDB initialization failed" } : {}),
+		};
 	}
 
 	/**
@@ -239,6 +244,15 @@ export class TcvdbMemoryStore implements IMemoryStore {
 	private async _ensureInit(): Promise<void> {
 		if (this._initPromise) {
 			await this._initPromise;
+		}
+	}
+
+	private async _ensureReadable(): Promise<void> {
+		await this._ensureInit();
+		if (!this._initPromise || this.degraded) {
+			throw Object.assign(new Error("TCVDB memory retrieval is unavailable", { cause: this._initError }), {
+				code: "memory_search_unavailable",
+			});
 		}
 	}
 
@@ -423,6 +437,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			}
 			this.logger?.error(`${TAG} Init failed: ${err instanceof Error ? err.message : String(err)}`);
 			this.degraded = true;
+			this._initError = err;
 		}
 	}
 
@@ -670,22 +685,20 @@ export class TcvdbMemoryStore implements IMemoryStore {
 	// ── L1 Read Operations ───────────────────────────────────
 
 	async countL1(): Promise<number> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return 0;
 			return await this.client.count(this.l1Collection);
 		} catch (err) {
 			this.logger?.warn(
 				`${TAG} [L1-count] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return 0;
+			throw Object.assign(new Error("TCVDB L1 count failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
 	async queryL1Records(filter?: L1QueryFilter): Promise<L1RecordRow[]> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			// Build TCVDB filter expression from L1QueryFilter
 			const conditions: string[] = [];
@@ -724,16 +737,15 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L1-query] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L1 query failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
 	async getAllL1Texts(): Promise<
 		Array<{ record_id: string; content: string; updated_time: string }>
 	> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			const docs = await this._queryAllDocs(this.l1Collection, undefined, [
 				"id",
@@ -750,7 +762,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L1-getAllTexts] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L1 enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -765,9 +777,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		if (queryText) {
 			return this.searchL1HybridAsync({ queryText, topK });
 		}
-		// No queryText and TCVDB can't use client embeddings directly via embeddingItems
-		// Return empty — callers should pass queryText for TCVDB
-		return [];
+		throw Object.assign(new Error("TCVDB vector retrieval requires query text for server-side embedding"), {
+			code: "memory_search_unavailable",
+		});
 	}
 
 	async searchL1Fts(ftsQuery: string, limit?: number): Promise<L1FtsResult[]> {
@@ -801,9 +813,8 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		const { queryText, topK = 10 } = params;
 		if (!queryText) return [];
 
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			// Build search params
 			const searchParams: Record<string, unknown> = {
@@ -858,7 +869,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L1-hybridSearch] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L1 search failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1027,15 +1038,14 @@ export class TcvdbMemoryStore implements IMemoryStore {
 	// ── L0 Read Operations ───────────────────────────────────
 
 	async countL0(): Promise<number> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return 0;
 			return await this.client.count(this.l0Collection);
 		} catch (err) {
 			this.logger?.warn(
 				`${TAG} [L0-count] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return 0;
+			throw Object.assign(new Error("TCVDB L0 count failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1044,9 +1054,8 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		afterRecordedAtMs?: number,
 		limit = 50,
 	): Promise<L0QueryRow[]> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			const conditions: string[] = [`session_key = "${sessionKey}"`];
 			if (afterRecordedAtMs && afterRecordedAtMs > 0) {
@@ -1078,7 +1087,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L0-queryForL1] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L0 query failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1131,16 +1140,15 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L0-queryGrouped] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw err;
 		}
 	}
 
 	async getAllL0Texts(): Promise<
 		Array<{ record_id: string; message_text: string; recorded_at: string }>
 	> {
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			const docs = await this._queryAllDocs(this.l0Collection, undefined, [
 				"id",
@@ -1157,7 +1165,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L0-getAllTexts] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L0 enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1172,7 +1180,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		if (queryText) {
 			return this.searchL0HybridAsync({ queryText, topK });
 		}
-		return [];
+		throw Object.assign(new Error("TCVDB vector retrieval requires query text for server-side embedding"), {
+			code: "memory_search_unavailable",
+		});
 	}
 
 	async searchL0Fts(ftsQuery: string, limit?: number): Promise<L0FtsResult[]> {
@@ -1191,9 +1201,8 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		const { queryText, topK = 10 } = params;
 		if (!queryText) return [];
 
+		await this._ensureReadable();
 		try {
-			await this._ensureInit();
-			if (this.degraded) return [];
 
 			const searchParams: Record<string, unknown> = {
 				limit: topK,
@@ -1243,7 +1252,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			this.logger?.warn(
 				`${TAG} [L0-hybridSearch] FAILED: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			return [];
+			throw Object.assign(new Error("TCVDB L0 search failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 

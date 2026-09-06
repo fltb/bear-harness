@@ -157,14 +157,16 @@ export class CanonHubService {
 		if (!normalized) return [];
 		const limit = Math.min(options.limit ?? 8, 30);
 		const aliases = this.matchAliases(companionId, normalized);
+		const routedChunkIds = this.routedChunkIds(companionId, normalized, aliases, options.moduleId);
+		if (options.moduleId && routedChunkIds.size === 0) return [];
 		const queryTerms = normalized.split(/[\s，。！？；、,.!?;:：]+/).filter(Boolean);
 		const terms = [
 			...new Set([...queryTerms, ...aliases].filter((term) => term.length >= 3)),
 		].slice(0, 8);
-		if (terms.length === 0)
+		if (terms.length === 0 && !options.moduleId)
 			return this.exactSearch(companionId, [...new Set([...queryTerms, ...aliases])], limit);
+		if (terms.length === 0) terms.push(...queryTerms);
 		const ftsQuery = terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-		const routedChunkIds = this.routedChunkIds(companionId, normalized, aliases, options.moduleId);
 		const rows = this.db.all<{
 			id: string;
 			sourceId: string;
@@ -186,6 +188,7 @@ export class CanonHubService {
 			JOIN canon_chunks c ON c.rowid = canon_chunks_fts.rowid
 			JOIN canon_sources s ON s.id = c.source_id
 			WHERE canon_chunks_fts MATCH ${ftsQuery} AND s.companion_id = ${companionId}
+				AND ${routedChunkIds.size ? inArray(sql`c.id`, [...routedChunkIds]) : sql`1 = 1`}
 			ORDER BY bm25(canon_chunks_fts), c.source_id, c.ordinal
 			LIMIT ${Math.max(limit * 3, 12)}
 		`);

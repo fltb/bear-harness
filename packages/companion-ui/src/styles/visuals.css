@@ -32,11 +32,13 @@
 }
 
 .scene-backdrop {
-	@apply absolute inset-0 overflow-hidden;
+	/* Clip without a scroll container so the image sticks to the document viewport. */
+	@apply absolute inset-0 overflow-clip;
 }
 
 .scene-backdrop img {
-	@apply h-full w-full object-cover;
+	/* Scene fill follows the viewport, never the length of the conversation. */
+	@apply sticky top-0 block h-dvh w-full object-cover;
 }
 
 .presence-stage {

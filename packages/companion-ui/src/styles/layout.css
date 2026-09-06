@@ -37,7 +37,17 @@
 .thread-head {
 	@apply sticky top-0 z-30 min-w-0 px-4;
 	grid-area: header;
-	background: var(--surface-canvas);
+}
+
+/* The queue cannot escape its sticky header's stacking context. Keep the
+ * open task surface above the composer, below result and modal layers. */
+.thread-head:has(.task-workspace) {
+	@apply z-40;
+}
+
+.queue-pop.task-workspace {
+	max-inline-size: calc(100vw - var(--space-8));
+	max-block-size: calc(100dvh - var(--space-12) * 2);
 }
 
 .conversation-state-overlay {
@@ -59,7 +69,9 @@
 }
 
 .composer {
-	@apply sticky bottom-0 z-30 m-4 mt-2;
+	/* Keep the bottom inset constant; reserve spacing above, not in a
+	 * bottom margin that would clamp the sticky box at the document end. */
+	@apply sticky bottom-4 z-30 m-0 mt-6;
 	grid-area: composer;
 	grid-template-columns: auto minmax(0, 1fr) auto;
 }
@@ -69,41 +81,34 @@
 	@apply hidden;
 }
 
+/* Allocate available main width once: 40% stage, 60% conversation.
+ * Narrow mains preserve up to 480px for conversation before shrinking it. */
+.app[data-layout="window"] .main,
+.app[data-layout="fullscreen"] .main {
+	@apply px-6;
+	grid-template-areas:
+		"stage header"
+		"stage thread"
+		"stage composer";
+	grid-template-columns: minmax(0, 2fr) minmax(min(480px, 100%), 3fr);
+}
+
 /* Window template: 1280 x 800 canonical viewport. */
 .app[data-layout="window"] .shell {
 	grid-template-columns: clamp(248px, 22cqw, 288px) minmax(0, 1fr);
 }
 
 .app[data-layout="window"] .main {
-	grid-template:
-		"stage header" 56px
-		"stage thread" minmax(min-content, 1fr)
-		"stage composer" auto
-		/ minmax(280px, 0.72fr) minmax(560px, 1fr);
+	grid-template-rows: 56px minmax(min-content, 1fr) auto;
 }
 
 .app[data-layout="window"] .presence-stage {
-	@apply mb-8 max-h-2/3 w-3/4;
-}
-
-.app[data-layout="window"] .main:has(.agent-result-panel) {
-	grid-template:
-		"stage header result" 56px
-		"stage thread result" minmax(min-content, 1fr)
-		"stage composer result" auto
-		/ minmax(150px, 200px) minmax(340px, 0.82fr) minmax(420px, 1.18fr);
-}
-
-.app[data-layout="window"] .main:has(.agent-result-panel) .presence-stage {
-	@apply mb-8 max-h-1/2 w-3/5 opacity-100;
+	@apply bottom-8 w-3/4;
+	max-block-size: calc(100dvh * 2 / 3);
 }
 
 .app[data-layout="window"] .thread {
-	@apply px-0;
-}
-
-.app[data-layout="window"] .main:has(.agent-result-panel) .thread {
-	@apply mx-4 px-0;
+	@apply mx-0 px-0;
 }
 
 /* Fullscreen template: 1920 x 1080 canonical viewport. */
@@ -112,11 +117,7 @@
 }
 
 .app[data-layout="fullscreen"] .main {
-	grid-template:
-		"stage header rail" 64px
-		"stage thread rail" minmax(min-content, 1fr)
-		"stage composer rail" auto
-		/ minmax(420px, 600px) minmax(640px, 760px) minmax(120px, 1fr);
+	grid-template-rows: 64px minmax(min-content, 1fr) auto;
 }
 
 .app[data-layout="fullscreen"] .thread-head {
@@ -124,31 +125,16 @@
 }
 
 .app[data-layout="fullscreen"] .thread {
-	@apply px-0;
-}
-
-.app[data-layout="fullscreen"] .main:has(.agent-result-panel) .thread {
-	@apply mx-6 px-0;
+	@apply mx-0 px-0;
 }
 
 .app[data-layout="fullscreen"] .composer {
-	@apply m-6 mt-3;
+	@apply bottom-6 m-0 mt-9;
 }
 
 .app[data-layout="fullscreen"] .presence-stage {
-	@apply mb-10 max-h-2/3 w-3/4;
-}
-
-.app[data-layout="fullscreen"] .main:has(.agent-result-panel) {
-	grid-template:
-		"stage header result" 64px
-		"stage thread result" minmax(min-content, 1fr)
-		"stage composer result" auto
-		/ minmax(240px, 320px) minmax(520px, 680px) minmax(640px, 1fr);
-}
-
-.app[data-layout="fullscreen"] .main:has(.agent-result-panel) .presence-stage {
-	@apply mb-10 max-h-1/2 w-3/5 opacity-100;
+	@apply bottom-10 w-3/4;
+	max-block-size: calc(100dvh * 2 / 3);
 }
 
 /* Mobile template: phone, tablet portrait, and narrow desktop windows. */
@@ -200,7 +186,7 @@
 }
 
 .app[data-layout="mobile"] .composer {
-	@apply m-3 mt-2;
+	@apply bottom-3 mx-3 mb-0 mt-5;
 	max-block-size: 40dvh;
 }
 
@@ -212,9 +198,9 @@
 	@apply fixed bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
 }
 
-.app[data-layout="mobile"] .pi-timeline-message,
-.app[data-layout="mobile"] .streaming-message {
-	@apply max-w-message-mobile;
+.app[data-layout="mobile"] .msg.user,
+.app[data-layout="mobile"] .bear-msg {
+	max-inline-size: 100%;
 }
 
 .app[data-layout="mobile"] .agent-result-panel,
@@ -284,6 +270,13 @@
 	@apply min-h-11;
 }
 
+.app[data-layout="mobile"] .queue-pop.task-workspace {
+	@apply fixed inset-x-3 bottom-3 top-12 m-0 w-auto;
+	max-inline-size: none;
+	max-block-size: none;
+	z-index: var(--layer-top-overlay);
+}
+
 .app[data-layout="mobile"] .search-trigger kbd {
 	@apply hidden;
 }
@@ -303,82 +296,7 @@
 	background: var(--surface-control);
 }
 
-/*
- * The single-column conversation narrows progressively without changing the
- * stage allocation or any result-preview template.
- */
-@media (min-width: 768px) {
-	.app .main:not(:has(.agent-result-panel)) > .thread-head,
-	.app .main:not(:has(.agent-result-panel)) > .thread,
-	.app .main:not(:has(.agent-result-panel)) > .composer,
-	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
-		@apply ml-4 mr-4;
-	}
-
-	.app .pi-timeline-message,
-	.app .streaming-message {
-		@apply max-w-message-tablet;
-	}
-}
-
-@media (min-width: 1200px) and (max-width: 1359px) {
-	.app .main:not(:has(.agent-result-panel)) > .thread-head,
-	.app .main:not(:has(.agent-result-panel)) > .thread,
-	.app .main:not(:has(.agent-result-panel)) > .composer,
-	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
-		@apply ml-4 mr-conversation-right-small;
-	}
-
-	.app .pi-timeline-message,
-	.app .streaming-message {
-		@apply max-w-message-desktop;
-	}
-}
-
-@media (min-width: 1360px) and (max-width: 1479px) {
-	.app .main:not(:has(.agent-result-panel)) > .thread-head,
-	.app .main:not(:has(.agent-result-panel)) > .thread,
-	.app .main:not(:has(.agent-result-panel)) > .composer,
-	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
-		@apply ml-conversation-left-medium mr-conversation-right-medium;
-	}
-
-	.app .pi-timeline-message,
-	.app .streaming-message {
-		@apply max-w-message-desktop;
-	}
-}
-
-@media (min-width: 1480px) and (max-width: 1599px) {
-	.app .main:not(:has(.agent-result-panel)) > .thread-head,
-	.app .main:not(:has(.agent-result-panel)) > .thread,
-	.app .main:not(:has(.agent-result-panel)) > .composer,
-	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
-		@apply ml-conversation-left-large mr-conversation-right-large;
-	}
-
-	.app .pi-timeline-message,
-	.app .streaming-message {
-		@apply max-w-message-desktop;
-	}
-}
-
-@media (min-width: 1600px) {
-	.app .main:not(:has(.agent-result-panel)) > .thread-head,
-	.app .main:not(:has(.agent-result-panel)) > .thread,
-	.app .main:not(:has(.agent-result-panel)) > .composer,
-	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
-		@apply ml-conversation-left-wide mr-conversation-right-wide;
-	}
-
-	.app .pi-timeline-message,
-	.app .streaming-message {
-		@apply max-w-message-wide;
-	}
-}
-
-/* Artifact results use a full-screen surface on phones, a drawer in regular
- * windows, and a persistent third column on wide desktop canvases. */
+/* Results alone use the responsive workspace. Character media opens a modal. */
 .app[data-layout="mobile"] .artifact-preview-backdrop,
 .app[data-layout="window"] .artifact-preview-backdrop {
 	@apply block;
@@ -393,15 +311,36 @@
 }
 
 .app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) {
-	grid-template-columns: 320px minmax(0, 1fr) minmax(360px, 440px);
+	grid-template-columns: 320px minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) > .main {
 	grid-column: 2;
+	grid-template-areas: "header" "thread" "composer";
+	grid-template-columns: minmax(0, 1fr);
 }
 
 .app[data-layout="fullscreen"] .attachment-preview-column {
+	@apply sticky top-0 h-dvh max-h-dvh self-start;
 	grid-column: 3;
+}
+
+.media-viewer-backdrop {
+	@apply fixed inset-0 z-70;
+}
+
+.media-viewer {
+	@apply fixed inset-8 z-80 m-auto grid min-h-0 min-w-0 max-w-screen-2xl overflow-hidden rounded-xl border shadow-app;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.media-viewer[data-expanded="true"],
+html[data-app-layout="mobile"] .media-viewer {
+	@apply inset-0 max-w-none rounded-none border-0;
+}
+
+html[data-app-layout="mobile"] .media-viewer-expand {
+	@apply hidden;
 }
 
 /* Responsive management surfaces. Header and footer remain outside the

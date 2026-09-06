@@ -54,9 +54,10 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	const modelDefaults = createMemo(() => modelData()?.defaults);
 	const systemModelDefaults = createMemo(() => modelData()?.systemDefaults);
 	const firstRunStage = createMemo(() => store.settings?.data?.()?.firstRunStage);
-	const modelRequired = createMemo(() => firstRunStage() === "model");
+	const modelRequired = createMemo(() => store.systemSetupReady && firstRunStage() === "model");
 	const roleModelRequired = createMemo(
 		() =>
+			store.characterSetupReady &&
 			firstRunStage() === "role" &&
 			(!modelDefaults()?.reply || modelDefaults()?.onboardingComplete !== true),
 	);
@@ -87,7 +88,9 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		const error = hasMethod(store.model?.error) ? store.model.error() : null;
 		return error === null || error === undefined ? null : messageOf(error);
 	});
-	const memorySetupRequired = createMemo(() => firstRunStage() === "embedding");
+	const memorySetupRequired = createMemo(
+		() => store.systemSetupReady && firstRunStage() === "embedding",
+	);
 	const currentOnboardingStepId = createMemo(() =>
 		store.onboarding.status === "active" ? store.onboarding.currentStepId : undefined,
 	);
@@ -113,9 +116,10 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		() => store.onboarding.status === "active" && currentStep() !== undefined,
 	);
 	const conversationVisible = createMemo(
-		() => !modelRequired() && !memorySetupRequired() && !roleModelRequired() && visible(),
+		() =>
+			store.characterSetupReady && firstRunStage() === "role" && !roleModelRequired() && visible(),
 	);
-	const onboardingError = createMemo(() => store.error);
+	const onboardingError = createMemo(() => store.setupLoadError ?? store.error);
 
 	const saveModelDefault = async (action: () => Promise<void>): Promise<boolean> => {
 		if (setupBusy()) return false;

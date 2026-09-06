@@ -47,6 +47,26 @@ export async function getBootstrap(page: Page): Promise<WebDevBootstrap> {
 	return parseWebDevBootstrap(await response.json());
 }
 
+export async function activeConversationId(page: Page, expectedId?: string): Promise<string> {
+	const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	let id: string | undefined;
+	// Selection and the conversation list are authoritative projections that can
+	// settle separately after create or reload. Read only their joined UI state.
+	await expect
+		.poll(async () => {
+			id = await navigation.getByRole("button").evaluateAll((buttons) => {
+				const selected = buttons.filter((button) => button.getAttribute("aria-current") === "page");
+				return selected.length === 1
+					? selected[0]?.getAttribute("data-conversation-id") || undefined
+					: undefined;
+			});
+			return id;
+		})
+		.toEqual(expectedId ?? expect.stringMatching(/\S/));
+	if (!id) throw new Error("active conversation has no identity");
+	return id;
+}
+
 export async function selectKobalteOption(
 	page: Page,
 	trigger: Locator,
@@ -280,7 +300,7 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 	const composer = page.getByRole("textbox", {
 		name: zhCN.composer.messageInputLabel,
 	});
-	const send = page.getByRole("button", { name: zhCN.composer.sendLabel });
+	const send = page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true });
 	await composer.fill(text);
 	await expect(send).toBeEnabled();
 	const [response] = await Promise.all([
@@ -291,6 +311,30 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 		send.click(),
 	]);
 	expect(await response.json()).toMatchObject({ ok: true });
+}
+
+/** Hold an authored provider response, never a Host lifecycle or executor event. */
+export function providerHold(page: Page) {
+	const id = crypto.randomUUID();
+	const url = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/control/holds/${id}`;
+	return {
+		id,
+		async entered() {
+			await expect
+				.poll(async () => (await (await page.request.get(url)).json()).entered, {
+					timeout: 30_000,
+				})
+				.toBe(true);
+		},
+		async cancelled() {
+			await expect
+				.poll(async () => (await (await page.request.get(url)).json()).cancelled)
+				.toBe(true);
+		},
+		async release() {
+			await expect(await page.request.post(url, { timeout: 5_000 })).toBeOK();
+		},
+	};
 }
 
 export default async function globalTeardown(): Promise<void> {

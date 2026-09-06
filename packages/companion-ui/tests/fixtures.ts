@@ -298,7 +298,15 @@ export function createTestClient() {
 		conversationId: id,
 		name: title,
 		branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
-		live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+		live: {
+			isStreaming: false,
+			isRetrying: false,
+			retryAttempt: 0,
+			isCompacting: false,
+			pendingToolCallIds: [],
+			steering: [],
+			followUp: [],
+		},
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
 	const liveQueue: LivePush[] = [];
@@ -435,6 +443,28 @@ export function createTestClient() {
 				if (!detail) throw new Error(`Unknown fixture conversation: ${conversationId}`);
 				return ok(detail);
 			}),
+			history: vi.fn(
+				({
+					conversationId,
+					beforeEntryId,
+					limit = 50,
+				}: {
+					conversationId: string;
+					beforeEntryId?: string;
+					limit?: number;
+				}) => {
+					const detail = conversationDetails.get(conversationId);
+					if (!detail) throw new Error(`Unknown fixture conversation: ${conversationId}`);
+					const end =
+						beforeEntryId === undefined
+							? detail.branch.entries.length
+							: detail.branch.entries.findIndex((entry) => entry.id === beforeEntryId);
+					if (end < 0) throw new Error(`Unknown fixture history entry: ${beforeEntryId}`);
+					const start = Math.max(0, end - limit);
+					const entries = detail.branch.entries.slice(start, end);
+					return ok({ entries, ...(start > 0 ? { nextCursor: entries[0]?.id } : {}) });
+				},
+			),
 			rename: vi.fn(({ conversationId, title }: { conversationId: string; title: string }) => {
 				const conversation = conversations.find((item) => item.conversationId === conversationId);
 				if (conversation !== undefined) conversation.name = title;
@@ -603,11 +633,36 @@ export function createTestClient() {
 		},
 		run: {
 			list: vi.fn(() => ok({ runs: [] })),
-			steer: vi.fn(() => ok(null)),
-			interrupt: vi.fn(() => ok(null)),
-			resume: vi.fn(() => ok(null)),
-			cancel: vi.fn(() => ok(null)),
-			respondPermission: vi.fn(() => ok(null)),
+			// No Run exists in the idle fixture. Tests exercising real controls
+			// must install their authoritative Run responses, not null success.
+			get: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			steer: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			interrupt: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			resume: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			cancel: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			respondPermission: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
+			retryDelivery: vi.fn(async () => ({
+				ok: false as const,
+				error: { kind: "not_found" as const, reason: "run_not_found" },
+			})),
 		},
 		artifact: {
 			read: vi.fn(({ artifactId, offset = 0 }) =>
@@ -714,6 +769,48 @@ export function createTestClient() {
 			receiveLive = undefined;
 			deliver(event);
 		} else liveQueue.push(event);
+		// Model Pi storage separately from its native notices: listeners see
+		// message_end, then SessionManager appends; no user entry_appended exists.
+		if (event.type === "conversationActivity") {
+			const detail = conversationDetails.get(event.conversationId);
+			if (detail) conversationDetails.set(event.conversationId, { ...detail, live: event.live });
+		}
+		if (event.type === "pi") {
+			let detail = conversationDetails.get(event.conversationId);
+			if (!detail) return;
+			if (event.version) {
+				detail = { ...detail, live: { ...detail.live, version: event.version } };
+				conversationDetails.set(event.conversationId, detail);
+			}
+			const native = event.event;
+			if (native.type === "message_end") {
+				const id = `fixture-native-${native.message.role}-${native.message.timestamp}`;
+				if (detail.branch.entries.some((entry) => entry.id === id)) return;
+				conversationDetails.set(event.conversationId, {
+					...detail,
+					branch: {
+						...detail.branch,
+						activeLeafId: id,
+						entries: [
+							...detail.branch.entries,
+							{
+								type: "message",
+								id,
+								parentId: detail.branch.activeLeafId ?? null,
+								timestamp: new Date(native.message.timestamp).toISOString(),
+								message: native.message,
+							},
+						],
+					},
+					live: { ...detail.live, streamingMessage: undefined },
+				});
+			} else if (native.type === "agent_start" || native.type === "agent_settled") {
+				conversationDetails.set(event.conversationId, {
+					...detail,
+					live: { ...detail.live, isStreaming: native.type === "agent_start" },
+				});
+			}
+		}
 	});
 
 	return {

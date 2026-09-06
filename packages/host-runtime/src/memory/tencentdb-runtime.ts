@@ -158,10 +158,12 @@ export class TencentDbRuntime {
 	async flush(sessionKey: string): Promise<void> {
 		await this.core.handleSessionEnd(sessionKey);
 	}
-	searchMemories(query: string, limit = 5) {
+	async searchMemories(query: string, limit = 5) {
+		await this.start();
 		return this.core.searchMemories({ query, limit });
 	}
-	searchConversations(query: string, sessionKey: string, limit = 5) {
+	async searchConversations(query: string, sessionKey: string, limit = 5) {
+		await this.start();
 		return this.core.searchConversations({ query, sessionKey, limit });
 	}
 	getEmbeddingService(): EmbeddingService | undefined {
@@ -174,6 +176,7 @@ export class TencentDbRuntime {
 		const promise = (async () => {
 			await this.core.initialize();
 			await this.core.waitForStoresReady();
+			if (this.closed) throw new Error("TencentDB memory runtime is closed");
 			this.started = true;
 		})();
 		this.startPromise = promise;
@@ -185,13 +188,14 @@ export class TencentDbRuntime {
 	}
 
 	isStarted(): boolean {
-		return this.started;
+		return this.started && !this.closed;
 	}
 
 	async close(signal?: AbortSignal): Promise<void> {
 		if (signal?.aborted) throw new Error("TencentDB memory runtime close aborted");
 		if (this.closed) return;
 		this.closed = true;
+		this.started = false;
 		await this.startPromise?.catch(() => undefined);
 		await this.core.destroy();
 	}

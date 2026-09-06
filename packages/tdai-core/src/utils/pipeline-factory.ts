@@ -158,10 +158,16 @@ export function initStores(
 	logger: PipelineLogger,
 ): Promise<StoreInitResult> {
 	const canonicalDir = canonicalDataDir(pluginDataDir);
-	if (!_storeInitCache.has(canonicalDir)) {
-		_storeInitCache.set(canonicalDir, _doInitStores(cfg, canonicalDir, logger));
-	}
-	return _storeInitCache.get(canonicalDir)!;
+	const cached = _storeInitCache.get(canonicalDir);
+	if (cached) return cached;
+	const pending = _doInitStores(cfg, canonicalDir, logger).catch((error) => {
+		if (_storeInitCache.get(canonicalDir) === pending) {
+			_storeInitCache.delete(canonicalDir);
+		}
+		throw error;
+	});
+	_storeInitCache.set(canonicalDir, pending);
+	return pending;
 }
 
 /**
@@ -180,11 +186,15 @@ export async function resetStores(pluginDataDir?: string): Promise<void> {
 		const initPromise = _storeInitCache.get(key);
 		if (!initPromise) continue;
 		try {
-			const result = await initPromise;
-			result.vectorStore?.close();
-			if (result.embeddingService?.close) await result.embeddingService.close();
-		} catch {
-			// Initialization failures have no resources that need closing.
+			// Rejected initialization already closes its partial resources.
+			const result = await initPromise.catch(() => undefined);
+			if (result) {
+				try {
+					result.vectorStore?.close();
+				} finally {
+					await result.embeddingService?.close?.();
+				}
+			}
 		} finally {
 			// Only evict the exact promise we observed; a newer initialization
 			// may have replaced this entry while shutdown was awaiting it.
@@ -224,11 +234,12 @@ async function _doInitStores(
 		}
 
 		if (vectorStore.isDegraded()) {
-			logger.warn(
-				`${TAG} Store is in degraded mode, falling back to keyword dedup`,
+			throw Object.assign(
+				new Error("Configured memory store initialization failed", {
+					cause: initResult.reason,
+				}),
+				{ code: "memory_search_unavailable" },
 			);
-			vectorStore = undefined;
-			embeddingService = undefined;
 		} else {
 			logger.debug?.(
 				`${TAG} Store initialized: backend=${cfg.storeBackend}, provider=${cfg.embedding.provider}`,
@@ -272,10 +283,20 @@ async function _doInitStores(
 		}
 	} catch (err) {
 		logger.warn(
-			`${TAG} Store init failed; vector/FTS recall and dedup conflict detection will be unavailable: ${err instanceof Error ? err.message : String(err)}`,
+			`${TAG} Store init failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
-		vectorStore = undefined;
-		embeddingService = undefined;
+		try {
+			try {
+				vectorStore?.close();
+			} finally {
+				await embeddingService?.close?.();
+			}
+		} catch (cleanupError) {
+			logger.error(
+				`${TAG} Store cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+			);
+		}
+		throw err;
 	}
 
 	return { vectorStore, embeddingService, needsReindex, reindexReason };
@@ -903,20 +924,7 @@ export async function createPipeline(
 	const destroy = async () => {
 		logger.info(`${TAG} Destroying pipeline...`);
 		await scheduler.destroy();
-		if (vectorStore) {
-			logger.info(`${TAG} Closing VectorStore`);
-			vectorStore.close();
-		}
-		if (embeddingService?.close) {
-			try {
-				logger.info(`${TAG} Closing EmbeddingService`);
-				await embeddingService.close();
-			} catch (err) {
-				logger.warn(
-					`${TAG} Error closing EmbeddingService: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-		}
+		// The cache owns these resources; close each only once.
 		await resetStores(pluginDataDir);
 		logger.info(`${TAG} Pipeline destroyed`);
 	};

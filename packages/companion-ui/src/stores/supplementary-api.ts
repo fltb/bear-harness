@@ -1,4 +1,5 @@
 import type { LocalEmbeddingAcquisitionState } from "@bear-harness/protocol";
+import type { CreateQueryResult } from "@tanstack/solid-query";
 import type { Accessor } from "solid-js";
 import type {
 	ArtifactActionResponse,
@@ -20,17 +21,18 @@ import type {
 	CharacterSummary,
 	ConfiguredModel,
 	ModelListData,
-	OnboardingData,
 	ProviderInfo,
 	ProviderListData,
 	ProviderLoginResult,
+	RunGetResponse,
 	RunInfo,
 	RunListData,
+	RunListRequest,
 	RunPermissionRequest,
+	RunSteerResponse,
 	SettingsCapabilities,
 	SettingsData,
 	SettingsPatch,
-	Snapshot,
 } from "./ipc.js";
 
 export type EmbeddingSettingsValue =
@@ -159,12 +161,19 @@ export interface ModelApi {
 }
 
 export interface RunApi {
-	list(): Promise<RunListData>;
+	list(request?: RunListRequest): Promise<RunListData>;
+	get(runId: string, cursor?: string): Promise<RunGetResponse>;
+	observeDetail(
+		runId: Accessor<string | undefined>,
+		cursor?: Accessor<string | undefined>,
+	): CreateQueryResult<RunGetResponse, Error>;
+	observeHistory(cursor?: Accessor<string | undefined>): CreateQueryResult<RunListData, Error>;
 	pendingPermissions(): RunPermissionRequest[];
-	steer(runId: string, instruction: string): Promise<void>;
+	steer(runId: string, instruction: string): Promise<RunSteerResponse>;
 	interrupt(runId: string): Promise<RunInfo>;
-	resume(runId: string): Promise<RunInfo>;
+	resume(runId: string, instruction?: string): Promise<RunInfo>;
 	cancel(runId: string): Promise<RunInfo>;
+	retryDelivery(runId: string): Promise<RunInfo>;
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
 }
 

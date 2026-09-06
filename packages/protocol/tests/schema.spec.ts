@@ -46,6 +46,30 @@ describe("protocol authority boundaries", () => {
 		).toMatchObject({ success: false });
 	});
 
+	it("requires stage invocation and session ownership without conflating memory failure with generation", () => {
+		const capture = {
+			type: "conversationActivity",
+			conversationId: "session-1",
+			operationId: "capture-1",
+			activity: "memory_capture",
+			status: "failed",
+			errorMessage: "memory storage unavailable",
+			live: {
+				isStreaming: false,
+				isRetrying: false,
+				retryAttempt: 0,
+				isCompacting: false,
+				pendingToolCallIds: [],
+				steering: [],
+				followUp: [],
+			},
+		};
+		expect(LivePush.safeParse(capture).success).toBe(true);
+		expect(LivePush.safeParse({ ...capture, operationId: undefined }).success).toBe(false);
+		expect(LivePush.safeParse({ ...capture, conversationId: undefined }).success).toBe(false);
+		expect(LivePush.safeParse({ ...capture, activity: "guessed_progress" }).success).toBe(false);
+	});
+
 	it("requires every Artifact read and native action to carry all ownership ids", () => {
 		expect(Object.keys(RPC.artifact).sort()).toEqual(["open", "read", "reveal", "saveAs"]);
 		expect(

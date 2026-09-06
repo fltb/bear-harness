@@ -119,6 +119,7 @@ export class TdaiCore {
 	 */
 	private schedulerStartPromise?: Promise<void>;
 	private storeReady?: Promise<void>;
+	private initializationPromise?: Promise<void>;
 
 	/**
 	 * In-flight fire-and-forget background tasks started by
@@ -167,35 +168,43 @@ export class TdaiCore {
 	 * Must be called once before any other methods.
 	 */
 	async initialize(): Promise<void> {
-		this.logger.debug?.(
-			`${TAG} Initializing TDAI Core: dataDir=${this.dataDir}`,
-		);
-		initDataDirectories(this.dataDir);
-
-		// Initialize stores (async)
-		this.storeReady = this.initStores();
-
-		// Create pipeline manager (sync — does not need store)
-		if (this.cfg.extraction.enabled) {
-			this.scheduler = createPipelineManager(
-				this.cfg,
-				this.logger,
-				this.sessionFilter,
-			);
-			// Wire runners after store is ready (or after store init fails — runners
-			// still work in degraded mode with JSONL fallback and no embedding)
-			this.storeReady
-				.then(() => this.wirePipelineRunners())
-				.catch((err) => {
-					this.logger.error(
-						`${TAG} Store init failed; wiring pipeline runners in degraded mode: ${err instanceof Error ? err.message : String(err)}`,
+		if (this.initializationPromise) return this.initializationPromise;
+		const pending = (async () => {
+			this.logger.debug?.(`${TAG} Initializing TDAI Core`);
+			initDataDirectories(this.dataDir);
+			await this.initStores();
+			try {
+				if (this.cfg.extraction.enabled && !this.scheduler) {
+					this.scheduler = createPipelineManager(
+						this.cfg,
+						this.logger,
+						this.sessionFilter,
 					);
-					this.wirePipelineRunners();
-				});
+				}
+				this.wirePipelineRunners();
+				this.logger.debug?.(`${TAG} TDAI Core initialized`);
+			} catch (error) {
+				try {
+					await resetStores(this.dataDir);
+				} finally {
+					this.vectorStore = undefined;
+					this.embeddingService = undefined;
+					this.scheduler = undefined;
+				}
+				throw error;
+			}
+		})();
+		this.storeReady = pending;
+		this.initializationPromise = pending;
+		try {
+			await pending;
+		} catch (error) {
+			this.logger.error(
+				`${TAG} Initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			if (this.initializationPromise === pending) this.initializationPromise = undefined;
+			throw error;
 		}
-		await this.storeReady;
-
-		this.logger.debug?.(`${TAG} TDAI Core initialized`);
 	}
 
 	/** Wait until asynchronous vector-store and embedding-service setup has settled. */
@@ -207,7 +216,8 @@ export class TdaiCore {
 	async reconfigureEmbedding(
 		embedding: MemoryTdaiConfig["embedding"],
 	): Promise<void> {
-		await this.storeReady;
+		await this.storeReady?.catch(() => {});
+		this.initializationPromise = undefined;
 		await resetStores(this.dataDir);
 		this.vectorStore = undefined;
 		this.embeddingService = undefined;
@@ -215,6 +225,7 @@ export class TdaiCore {
 		this.storeReady = this.initStores();
 		await this.storeReady;
 		this.wirePipelineRunners();
+		this.initializationPromise = this.storeReady;
 	}
 
 	/**
@@ -268,24 +279,14 @@ export class TdaiCore {
 			}
 		}
 
-		if (this.vectorStore) {
-			this.vectorStore.close();
+		try {
+			await resetStores(this.dataDir);
+		} finally {
 			this.vectorStore = undefined;
-			this.logger.debug?.(`${TAG} VectorStore closed`);
-		}
-
-		if (this.embeddingService?.close) {
-			try {
-				await this.embeddingService.close();
-			} catch (err) {
-				this.logger.warn(
-					`${TAG} EmbeddingService close error: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
 			this.embeddingService = undefined;
+			this.scheduler = undefined;
+			this.initializationPromise = undefined;
 		}
-
-		await resetStores(this.dataDir);
 		this.logger.debug?.(`${TAG} TDAI Core destroyed`);
 	}
 
@@ -456,6 +457,7 @@ export class TdaiCore {
 	async searchMemories(
 		params: MemorySearchParams,
 	): Promise<{ text: string; total: number; strategy: string }> {
+		await this.storeReady;
 		const result = await executeMemorySearch({
 			query: params.query,
 			limit: params.limit ?? 5,
@@ -480,6 +482,7 @@ export class TdaiCore {
 	async searchConversations(
 		params: ConversationSearchParams,
 	): Promise<{ text: string; total: number }> {
+		await this.storeReady;
 		const result = await executeConversationSearch({
 			query: params.query,
 			limit: params.limit ?? 5,
@@ -597,11 +600,14 @@ export class TdaiCore {
 	}
 
 	private async initStores(): Promise<void> {
+		let acquired = false;
 		try {
 			const stores = await initStores(this.cfg, this.dataDir, this.logger);
+			acquired = true;
 			this.vectorStore = stores.vectorStore;
 			this.embeddingService = stores.embeddingService;
 			if (stores.needsReindex) {
+				this.logger.info(`${TAG} Embedding reindex started`);
 				if (!this.vectorStore || !this.embeddingService) {
 					throw new Error(
 						"embedding reindex required but the vector store or embedding service is unavailable",
@@ -627,7 +633,10 @@ export class TdaiCore {
 				);
 				this.lastReindexResult = result;
 				if (!result.complete) {
-					throw new Error(result.error ?? "embedding reindex did not complete");
+					throw Object.assign(
+						new Error(`Embedding reindex incomplete: ${result.error ?? "records remain unindexed"}`),
+						{ code: "memory_search_unavailable" },
+					);
 				}
 				this.logger.info(
 					`${TAG} Embedding reindex completed before the new configuration became ready` +
@@ -639,8 +648,20 @@ export class TdaiCore {
 			);
 		} catch (err) {
 			this.logger.warn(
-				`${TAG} Store init failed; recall/dedup degraded: ${err instanceof Error ? err.message : String(err)}`,
+				`${TAG} Store init failed: ${err instanceof Error ? err.message : String(err)}`,
 			);
+			this.vectorStore = undefined;
+			this.embeddingService = undefined;
+			if (acquired) {
+				try {
+					await resetStores(this.dataDir);
+				} catch (cleanupError) {
+					this.logger.error(
+						`${TAG} Store cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+					);
+				}
+			}
+			throw err;
 		}
 	}
 

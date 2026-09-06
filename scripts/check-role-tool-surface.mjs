@@ -11,6 +11,8 @@ const allowedHostTools = new Set([
 	"tdai_conversation_search",
 	"explicit_memory",
 	"host_delegate",
+	"host_run_read",
+	"host_run_control",
 ]);
 const retired = [
 	"host_get_state",
@@ -91,10 +93,10 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 	}
 }
 
-if (allowedHostTools.size + 1 > 9)
-	failures.push("model tool surface exceeds 9 tools including role_skill");
+if (allowedHostTools.size + 1 > 11)
+	failures.push("model tool surface exceeds 11 tools including role_skill");
 if (failures.length) {
 	console.error(`Role tool-surface violations:\n${failures.join("\n")}`);
 	process.exit(1);
 }
-console.log("Role tool surface valid: role_skill plus 8 conditional Host domain tools");
+console.log("Role tool surface valid: role_skill plus 10 conditional Host domain tools");

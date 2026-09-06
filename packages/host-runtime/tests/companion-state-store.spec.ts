@@ -101,7 +101,7 @@ describe("companion state", () => {
 		});
 	});
 
-	it("marks repeated explicit-memory output unchanged so the UI can suppress duplicate updates", async () => {
+	it("keeps unchanged explicit-memory content visible without claiming another change", async () => {
 		let content = "";
 		const explicitMemory = {
 			read: vi.fn(async () => content),
@@ -122,7 +122,62 @@ describe("companion state", () => {
 
 		expect(first?.details).toMatchObject({ ok: true, data: { changed: true } });
 		expect(repeated?.details).toMatchObject({ ok: true, data: { changed: false } });
+		expect(repeated?.content).toEqual([{ type: "text", text: content }]);
 		expect(explicitMemory.edit).toHaveBeenCalledTimes(2);
+	});
+
+	it("reads explicit memory once and reports the same authoritative content", async () => {
+		const explicitMemory = {
+			read: vi
+				.fn()
+				.mockResolvedValueOnce("Saved preference")
+				.mockRejectedValue(new Error("Unexpected second read")),
+			edit: vi.fn(),
+		};
+		const tools = registerHostTools({ explicitMemory } as never);
+		const result = await tools.explicit_memory?.execute("memory-read", { action: "read" });
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "Saved preference" }],
+			details: { ok: true, data: { content: "Saved preference", changed: false } },
+		});
+		expect(explicitMemory.edit).not.toHaveBeenCalled();
+	});
+
+	it("returns initial memory read failures and never attempts a blind edit", async () => {
+		const explicitMemory = {
+			read: vi.fn().mockRejectedValue({
+				code: "memory_unavailable",
+				message: "Memory storage is unavailable.",
+			}),
+			edit: vi.fn(),
+		};
+		const tools = registerHostTools({ explicitMemory } as never);
+		const result = await tools.explicit_memory?.execute("memory-edit", {
+			action: "edit",
+			newText: "Remember this",
+		});
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "Memory storage is unavailable." }],
+			details: { ok: false, code: "memory_unavailable", message: "Memory storage is unavailable." },
+		});
+		expect(explicitMemory.edit).not.toHaveBeenCalled();
+	});
+
+	it("reports thrown tool Errors as Host failures with their readable message", async () => {
+		const tools = registerHostTools({
+			character: () => {
+				throw new Error("Character storage could not be read.");
+			},
+		} as never);
+		const result = await tools.host_media?.execute("media-error", { id: "signal" });
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "Character storage could not be read." }],
+			details: {
+				ok: false,
+				code: "host_media_failed",
+				message: "Character storage could not be read.",
+			},
+		});
 	});
 
 	it("updates simple Character values and Display in one optional batch", async () => {

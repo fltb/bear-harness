@@ -359,8 +359,8 @@ export class VectorStore implements IMemoryStore {
 
 	/**
 	 * When `true`, the store is in a degraded state (e.g. sqlite-vec failed to
-	 * load, or init() encountered an unrecoverable error).  All public methods
-	 * become safe no-ops so the plugin never blocks the main OpenClaw flow.
+	 * load, or init() encountered an unrecoverable error). Writes remain
+	 * best-effort; retrieval rejects rather than reporting false zero hits.
 	 */
 	private degraded = false;
 
@@ -449,7 +449,7 @@ export class VectorStore implements IMemoryStore {
 
 	/**
 	 * Whether the store is in degraded mode (e.g. sqlite-vec failed to load).
-	 * When degraded, all write/search operations become safe no-ops.
+	 * When degraded, retrieval rejects and best-effort writes are skipped.
 	 */
 	isDegraded(): boolean {
 		return this.degraded;
@@ -475,7 +475,7 @@ export class VectorStore implements IMemoryStore {
 			const message = err instanceof Error ? err.message : String(err);
 			this.logger?.error(
 				`${TAG} Failed to load sqlite-vec extension: ${message}. ` +
-					`VectorStore entering degraded mode — all operations will be no-ops.`,
+					`VectorStore entering degraded mode — retrieval is unavailable.`,
 			);
 			this.degraded = true;
 			return { needsReindex: false, reason: `sqlite-vec load failed: ${message}` };
@@ -1143,13 +1143,11 @@ export class VectorStore implements IMemoryStore {
 	 * Vector similarity search (cosine distance).
 	 * Returns top-k results sorted by similarity (highest first).
 	 *
-	 * **Fault-tolerant**: returns an empty array on any error (e.g. dimension
-	 * mismatch, corrupted DB) so callers can fall back to keyword search.
+	 * Rejects unavailable indexes and query failures so callers can distinguish fallback from no hits.
 	 */
 	searchL1Vector(queryEmbedding: Float32Array, topK = 5): VectorSearchResult[] {
-		if (this.degraded || !this.vecTablesReady) {
-			if (this.degraded) this.logger?.warn(`${TAG} [L1-search] SKIPPED (degraded mode)`);
-			return [];
+		if (this.closed || this.degraded || !this.vecTablesReady) {
+			throw Object.assign(new Error("L1 vector index is unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
 			// Over-retrieve to compensate for legacy zero-vector placeholders that
@@ -1240,10 +1238,7 @@ export class VectorStore implements IMemoryStore {
 			);
 			return trimmed;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L1-search] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L1 vector retrieval failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1418,12 +1413,11 @@ export class VectorStore implements IMemoryStore {
 	 * Uses the composite index `idx_l1_session_updated(session_id, updated_time)`
 	 * for efficient filtering. All timestamps are compared as UTC ISO 8601 strings.
 	 *
-	 * **Fault-tolerant**: returns an empty array on any error (degraded mode, DB issues).
+	 * Rejects unavailable stores and enumeration failures instead of claiming an empty record set.
 	 */
 	queryL1Records(filter?: L1QueryFilter): L1RecordRow[] {
-		if (this.degraded) {
-			this.logger?.warn(`${TAG} [L1-query] SKIPPED (degraded mode)`);
-			return [];
+		if (this.closed || this.degraded) {
+			throw Object.assign(new Error("L1 record enumeration unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
 			const { sessionKey, sessionId, updatedAfter } = filter ?? {};
@@ -1457,7 +1451,7 @@ export class VectorStore implements IMemoryStore {
 					`${TAG} [L1-query] Schema mismatch: first row missing expected columns. ` +
 						`Got keys: [${Object.keys(raw[0]).join(", ")}]`,
 				);
-				return [];
+				throw new Error("L1 record schema mismatch");
 			}
 
 			const rows = raw as unknown as L1RecordRow[];
@@ -1468,10 +1462,7 @@ export class VectorStore implements IMemoryStore {
 			);
 			return rows;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L1-query] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L1 record enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1627,12 +1618,11 @@ export class VectorStore implements IMemoryStore {
 	 * Vector similarity search on L0 individual messages (cosine distance).
 	 * Returns top-k results sorted by similarity (highest first).
 	 *
-	 * **Fault-tolerant**: returns an empty array on any error.
+	 * Rejects unavailable indexes and query failures; only successful searches may return no hits.
 	 */
 	searchL0Vector(queryEmbedding: Float32Array, topK = 5): L0VectorSearchResult[] {
-		if (this.degraded || !this.vecTablesReady) {
-			if (this.degraded) this.logger?.warn(`${TAG} [L0-search] SKIPPED (degraded mode)`);
-			return [];
+		if (this.closed || this.degraded || !this.vecTablesReady) {
+			throw Object.assign(new Error("L0 vector index is unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
 			// Over-retrieve to compensate for legacy zero-vector placeholders that
@@ -1714,10 +1704,7 @@ export class VectorStore implements IMemoryStore {
 			);
 			return trimmed;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L0-search] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L0 vector retrieval failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -1852,16 +1839,15 @@ export class VectorStore implements IMemoryStore {
 	 * Returns record_id → content pairs.
 	 */
 	getAllL1Texts(): Array<{ record_id: string; content: string; updated_time: string }> {
-		if (this.degraded) return [];
+		if (this.closed || this.degraded) {
+			throw new Error("L1 reindex enumeration unavailable");
+		}
 		try {
 			return this.db
 				.prepare("SELECT record_id, content, updated_time FROM l1_records")
 				.all() as Array<{ record_id: string; content: string; updated_time: string }>;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} getAllL1Texts failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw new Error("L1 reindex enumeration failed", { cause: err });
 		}
 	}
 
@@ -1870,16 +1856,15 @@ export class VectorStore implements IMemoryStore {
 	 * Returns record_id → message_text/recorded_at tuples.
 	 */
 	getAllL0Texts(): Array<{ record_id: string; message_text: string; recorded_at: string }> {
-		if (this.degraded) return [];
+		if (this.closed || this.degraded) {
+			throw new Error("L0 reindex enumeration unavailable");
+		}
 		try {
 			return this.db
 				.prepare("SELECT record_id, message_text, recorded_at FROM l0_conversations")
 				.all() as Array<{ record_id: string; message_text: string; recorded_at: string }>;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} getAllL0Texts failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw new Error("L0 reindex enumeration failed", { cause: err });
 		}
 	}
 
@@ -1922,6 +1907,7 @@ export class VectorStore implements IMemoryStore {
 
 		try {
 			const l1Rows = this.getAllL1Texts();
+			const l0Rows = this.getAllL0Texts();
 			let l1Done = 0;
 			let failedL1Count = 0;
 			for (const { record_id, content, updated_time } of l1Rows) {
@@ -1950,7 +1936,6 @@ export class VectorStore implements IMemoryStore {
 				onProgress?.(l1Done + failedL1Count, l1Rows.length, "L1");
 			}
 
-			const l0Rows = this.getAllL0Texts();
 			let l0Done = 0;
 			let failedL0Count = 0;
 			for (const { record_id, message_text, recorded_at } of l0Rows) {
@@ -2020,9 +2005,8 @@ export class VectorStore implements IMemoryStore {
 		recorded_at: string;
 		timestamp: number;
 	}> {
-		if (this.degraded) {
-			this.logger?.warn(`${TAG} [L0-query] SKIPPED (degraded mode)`);
-			return [];
+		if (this.closed || this.degraded) {
+			throw Object.assign(new Error("L0 record enumeration unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
 			// Query newest-first (DESC) with LIMIT, then reverse to chronological order
@@ -2055,10 +2039,7 @@ export class VectorStore implements IMemoryStore {
 				}))
 				.reverse();
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L0-query] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L0 record enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2083,10 +2064,6 @@ export class VectorStore implements IMemoryStore {
 			recordedAtMs: number;
 		}>;
 	}> {
-		if (this.degraded) {
-			this.logger?.warn(`${TAG} [L0-query-grouped] SKIPPED (degraded mode)`);
-			return [];
-		}
 		try {
 			const rows = this.queryL0ForL1(sessionKey, afterRecordedAtMs, limit);
 
@@ -2142,10 +2119,7 @@ export class VectorStore implements IMemoryStore {
 
 			return groups;
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L0-query-grouped] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L0 grouped enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2157,14 +2131,13 @@ export class VectorStore implements IMemoryStore {
 	 * Pass `""` as `afterId` for the first page.
 	 */
 	queryL1RecordsCursor(afterId: string, pageSize: number): L1RecordRow[] {
-		if (this.degraded) return [];
+		if (this.closed || this.degraded) {
+			throw Object.assign(new Error("L1 migration enumeration unavailable"), { code: "memory_search_unavailable" });
+		}
 		try {
 			return this.stmtL1QueryMigrationCursor.all(afterId, pageSize) as unknown as L1RecordRow[];
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L1-query-cursor] FAILED (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L1 migration enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2174,14 +2147,13 @@ export class VectorStore implements IMemoryStore {
 	 * Pass `""` as `afterId` for the first page.
 	 */
 	queryL0RecordsCursor(afterId: string, pageSize: number): L0RecordRow[] {
-		if (this.degraded) return [];
+		if (this.closed || this.degraded) {
+			throw Object.assign(new Error("L0 migration enumeration unavailable"), { code: "memory_search_unavailable" });
+		}
 		try {
 			return this.stmtL0QueryMigrationCursor.all(afterId, pageSize) as unknown as L0RecordRow[];
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L0-query-cursor] FAILED (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L0 migration enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2192,7 +2164,7 @@ export class VectorStore implements IMemoryStore {
 	 * When `false`, callers should skip keyword-based recall entirely.
 	 */
 	isFtsAvailable(): boolean {
-		return this.ftsAvailable;
+		return !this.closed && !this.degraded && this.ftsAvailable;
 	}
 
 	/**
@@ -2202,10 +2174,12 @@ export class VectorStore implements IMemoryStore {
 	 * @param ftsQuery  A pre-built FTS5 MATCH expression (from `buildFtsQuery()`).
 	 * @param limit     Maximum number of results to return.
 	 *
-	 * **Fault-tolerant**: returns an empty array on any error.
+	 * Rejects unavailable indexes and query failures; only successful searches may return no hits.
 	 */
 	searchL1Fts(ftsQuery: string, limit = 20): FtsSearchResult[] {
-		if (this.degraded || !this.ftsAvailable) return [];
+		if (this.closed || this.degraded || !this.ftsAvailable) {
+			throw Object.assign(new Error("L1 keyword index is unavailable"), { code: "memory_search_unavailable" });
+		}
 		try {
 			const rows = this.stmtL1FtsSearch.all(ftsQuery, limit) as Array<{
 				record_id: string;
@@ -2237,10 +2211,7 @@ export class VectorStore implements IMemoryStore {
 				metadata_json: r.metadata_json,
 			}));
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L1-fts-search] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L1 keyword retrieval failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2251,10 +2222,12 @@ export class VectorStore implements IMemoryStore {
 	 * @param ftsQuery  A pre-built FTS5 MATCH expression (from `buildFtsQuery()`).
 	 * @param limit     Maximum number of results to return.
 	 *
-	 * **Fault-tolerant**: returns an empty array on any error.
+	 * Rejects unavailable indexes and query failures; only successful searches may return no hits.
 	 */
 	searchL0Fts(ftsQuery: string, limit = VectorStore.FTS_DEFAULT_LIMIT): L0FtsSearchResult[] {
-		if (this.degraded || !this.ftsAvailable) return [];
+		if (this.closed || this.degraded || !this.ftsAvailable) {
+			throw Object.assign(new Error("L0 keyword index is unavailable"), { code: "memory_search_unavailable" });
+		}
 		try {
 			const rows = this.stmtL0FtsSearch.all(ftsQuery, limit) as Array<{
 				record_id: string;
@@ -2278,10 +2251,7 @@ export class VectorStore implements IMemoryStore {
 				timestamp: r.timestamp ?? 0,
 			}));
 		} catch (err) {
-			this.logger?.warn(
-				`${TAG} [L0-fts-search] FAILED (non-fatal, returning empty): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return [];
+			throw Object.assign(new Error("L0 keyword retrieval failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 

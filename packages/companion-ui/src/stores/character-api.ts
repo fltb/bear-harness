@@ -99,8 +99,22 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			}),
 		activate: async (characterId) => {
 			await invoke(client, () => client.character.activate({ characterId }));
-			await c.switchCharacterConversations();
-			await Promise.all([c.resyncOnboarding(), c.refreshCharacters(), c.refreshSnapshot()]);
+			// These projections belong to the previous character. Unlike a routine
+			// same-character refetch, activation must make them unknown until the
+			// newly active character's authoritative responses arrive.
+			// Cancel retired task reads before these resets can start new-scope reads.
+			await Promise.all([
+				queryClient.cancelQueries({ queryKey: queryKeys.runs }),
+				...[
+					queryKeys.onboarding,
+					queryKeys.modelDefaults,
+					queryKeys.characters,
+					queryKeys.snapshot,
+				].map((queryKey) =>
+					queryClient.resetQueries({ queryKey, exact: true }, { throwOnError: true }),
+				),
+				c.switchCharacterConversations(),
+			]);
 		},
 		import: async (files) => {
 			await invoke(client, () => client.character.import({ files }));

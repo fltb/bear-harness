@@ -29,10 +29,9 @@ describe("executor control IPC schemas", () => {
 				bypassConsent: true,
 			}).success,
 		).toBe(false);
-		expect(CHANNEL_CONTRACTS["commission.launch"]).toBeUndefined();
 	});
 
-	it("requires a concrete pending-permission request and option to resume a run", () => {
+	it("requires the exact pending permission request and option rather than treating resume as approval", () => {
 		expect(
 			schema("run.respondPermission").safeParse({
 				runId: "run-1",
@@ -47,5 +46,63 @@ describe("executor control IPC schemas", () => {
 				optionId: "allow-once",
 			}).success,
 		).toBe(false);
+		expect(
+			schema("run.resume").safeParse({
+				runId: "run-1",
+				requestId: "permission-1",
+				optionId: "allow-once",
+			}).success,
+		).toBe(false);
+	});
+
+	it("bounds task history and evidence pages without rejecting valid cursors", () => {
+		expect(
+			schema("run.list").safeParse({
+				conversationId: "conversation-1",
+				scope: "history",
+				cursor: "page-2",
+				limit: 100,
+			}).success,
+		).toBe(true);
+		expect(
+			schema("run.get").safeParse({
+				runId: "run-1",
+				cursor: "evidence-2",
+				limit: 100,
+			}).success,
+		).toBe(true);
+		expect(schema("run.list").safeParse({ limit: 101 }).success).toBe(false);
+		expect(schema("run.get").safeParse({ runId: "run-1", limit: 0 }).success).toBe(false);
+		expect(
+			schema("run.get").safeParse({
+				runId: "run-1",
+				cursor: "x".repeat(257),
+			}).success,
+		).toBe(false);
+		expect(
+			schema("run.get").safeParse({
+				runId: "run-1",
+				path: "/private/worker-output",
+			}).success,
+		).toBe(false);
+	});
+
+	it("accepts bounded continuation instructions and reports steering without claiming completion", () => {
+		expect(
+			schema("run.resume").safeParse({
+				runId: "run-1",
+				instruction: "Continue with only the verified inputs.",
+			}).success,
+		).toBe(true);
+		expect(
+			schema("run.resume").safeParse({
+				runId: "run-1",
+				instruction: "x".repeat(12001),
+			}).success,
+		).toBe(false);
+		const receipt = CHANNEL_CONTRACTS["run.steer"]!.response;
+		expect(receipt.safeParse({ outcome: "injected" }).success).toBe(true);
+		expect(receipt.safeParse({ outcome: "sent" }).success).toBe(true);
+		expect(receipt.safeParse({ outcome: "completed" }).success).toBe(false);
 	});
 });

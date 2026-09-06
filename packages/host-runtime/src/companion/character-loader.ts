@@ -714,8 +714,8 @@ export class CharacterLoader {
 			parse(readFileSync(canonManifestPath, "utf8")),
 		);
 		validateCanonManifest(canonManifest, id);
-		if (canonManifest.language !== parsed.language)
-			throw new Error(`character package ${id}: canon language must match character language`);
+		// Canon describes source text, while the character language controls its
+		// presentation. A Chinese-speaking character may cite English originals.
 		const canonSources = canonManifest.sources.map((source) => ({
 			...source,
 			content: readFileSync(this.characterPackagePath(id, `canon/${source.path}`), "utf8"),
@@ -733,6 +733,8 @@ export class CharacterLoader {
 			"tdai_conversation_search",
 			"explicit_memory",
 			"host_delegate",
+			"host_run_read",
+			"host_run_control",
 		]);
 		for (const skill of skills) {
 			for (const tool of skill.allowedTools)
@@ -869,11 +871,13 @@ export class CharacterLoader {
 Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
 Use host_state for Character or Display changes. Its update action accepts one or more path/value changes under /character or /display. Use only ids declared in the display catalog.
 Use host_media with a declared media id when media would materially help the conversation. Use host_choices only for choices created for the current response; every choice is ordinary user input.
-Treat external Runs as separate work. Starting a Run does not mean it finished. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
+Use host_delegate to ask the built-in Pi Worker to do separate work. Supply the instruction and optional absolute user-supplied inputPaths, never an executor or agent selector. An accepted receipt identifies a Run; it is not proof of startup, progress, or completion. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
+Use host_run_read to list this conversation's Runs or inspect one exact runId. Use host_run_control only for that exact Run and its reported available actions. Steer sends instructions without promising they were fulfilled; resume continues a paused Run; retryDelivery only retries delivery of an existing result and never re-executes work. User permission approvals must remain in the task UI. Do not claim progress, success, artifacts, or delivery without Host evidence.
 Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle state from Host data. Use Pi's own values and events for those concerns.
 Use Markdown only when it makes the answer easier to read: natural paragraphs for short conversation, lists for genuinely parallel points, tables for matrix data, and fenced code blocks with a language tag for code. Write mathematical expressions with $...$ for inline math or $$ on separate lines for display math; do not put arithmetic or formulas in inline-code backticks. Never emit raw HTML, Markdown images, or text that imitates product buttons; media and choices must use their Host tools.
 When relationship memory is enabled, completed natural conversation is captured by TDAI and may be selectively distilled; the user does not need to use a fixed command. Use explicit_memory only when the user clearly asks to remember, change, or forget exact information.
 Do not claim that missing an explicit request prevents TDAI capture, and do not promise that every natural message becomes durable structured memory. Keep automatic relationship memory and explicit MEMORY.md edits distinct.
+A failed memory tool is unavailable evidence, not proof that no memory exists or that an edit succeeded. A successful explicit_memory result with changed:false still reports the current content; it does not mean the tool failed.
 </host_product_contract>`;
 		const displayCatalog = `<host_display_catalog>\n${JSON.stringify(
 			modelDisplayCatalog(character),

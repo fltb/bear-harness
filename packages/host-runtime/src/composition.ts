@@ -825,28 +825,33 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		pi: { available: true as const, profileId: "pi-default" as const },
 		codex: await s.externalAgents.status(),
 	}));
-	dispatcher.registerHandler(RPC.run.list, async () => {
-		const companionId = getCompanionId(s);
-		return {
-			runs: s.externalAgentRuns.list(companionId).map((run) => runWire(s, run)),
-		};
+	dispatcher.registerHandler(RPC.run.list, async (request) => {
+		if (request.conversationId) await requireOwnedConversation(s, request.conversationId);
+		return s.externalAgentRuns.listPage(getCompanionId(s), request);
+	});
+	dispatcher.registerHandler(RPC.run.get, async (request) => {
+		await requireOwnedRun(s, request.runId);
+		return s.externalAgentRuns.getDetail(request.runId, request);
 	});
 	dispatcher.registerHandler(RPC.run.steer, async ({ runId, instruction }) => {
 		await requireOwnedRun(s, runId);
-		await s.externalAgentRuns.steerRun(runId, instruction);
-		return {};
+		return s.externalAgentRuns.steerRun(runId, instruction);
 	});
 	dispatcher.registerHandler(RPC.run.interrupt, async ({ runId }) => {
 		await requireOwnedRun(s, runId);
 		return runWire(s, await s.externalAgentRuns.interruptRun(runId));
 	});
-	dispatcher.registerHandler(RPC.run.resume, async ({ runId }) => {
+	dispatcher.registerHandler(RPC.run.resume, async ({ runId, instruction }) => {
 		await requireOwnedRun(s, runId);
-		return runWire(s, await s.externalAgentRuns.resumeRun(runId));
+		return runWire(s, await s.externalAgentRuns.resumeRun(runId, instruction));
 	});
 	dispatcher.registerHandler(RPC.run.cancel, async ({ runId }) => {
 		await requireOwnedRun(s, runId);
 		return runWire(s, await s.externalAgentRuns.cancelRun(runId));
+	});
+	dispatcher.registerHandler(RPC.run.retryDelivery, async ({ runId }) => {
+		await requireOwnedRun(s, runId);
+		return runWire(s, await s.externalAgentRuns.retryDelivery(runId));
 	});
 	dispatcher.registerHandler(RPC.run.respondPermission, async ({ runId, requestId, optionId }) => {
 		await requireOwnedRun(s, runId);
@@ -1122,13 +1127,7 @@ async function requireOwnedConversation(
 }
 
 async function requireOwnedRun(s: HostCompositionContext, runId: string): Promise<void> {
-	const row = s.orm
-		.select({ conversationId: runs.conversationId })
-		.from(runs)
-		.where(eq(runs.id, runId))
-		.get();
-	if (!row) throw { kind: "not_found", reason: "run_not_found" };
-	await requireOwnedConversation(s, row.conversationId);
+	s.externalAgentRuns.assertCharacterRun(getCompanionId(s), runId);
 }
 
 function requireOwnedArtifact(

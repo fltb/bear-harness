@@ -9,6 +9,7 @@ import {
 	sqliteTable,
 	text,
 	unique,
+	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 export const installationIdentity = sqliteTable(
@@ -137,6 +138,7 @@ export const runs = sqliteTable(
 			.notNull()
 			.references(() => conversations.id, { onDelete: "cascade" }),
 		triggerEntryId: text("trigger_entry_id").notNull(),
+		toolCallId: text("tool_call_id"),
 		executorProfile: text("executor_profile").notNull(),
 		title: text().notNull(),
 		instruction: text().notNull(),
@@ -169,6 +171,7 @@ export const runs = sqliteTable(
 	},
 	(table) => [
 		index("idx_runs_conversation_trigger").on(table.conversationId, table.triggerEntryId),
+		uniqueIndex("idx_runs_conversation_tool_call").on(table.conversationId, table.toolCallId),
 		check(
 			"runs_status",
 			sql`status IN ('enqueued','running','needs_user','completed','failed','cancelled','interrupted','forced_termination')`,

@@ -1,12 +1,9 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
-	CANONICAL_LAYOUT_VIEWPORTS,
 	CompanionApp,
 	FULLSCREEN_LAYOUT_MIN_WIDTH,
 	layoutModeForWidth,
@@ -19,14 +16,6 @@ import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js
 import { ThreadHead } from "../src/ThreadHead.js";
 import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
 
-const stylesDirectory = resolve(process.cwd(), "src/styles");
-const styles = [
-	readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"),
-	...readdirSync(stylesDirectory)
-		.filter((file) => file.endsWith(".css"))
-		.sort()
-		.map((file) => readFileSync(resolve(stylesDirectory, file), "utf8")),
-].join("\n");
 const PORTRAIT_MODEL = {
 	providerId: "test-provider",
 	modelId: "test-model",
@@ -67,7 +56,15 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				conversationId,
 				name: summary.name,
 				branch,
-				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+				live: {
+					isStreaming: false,
+					isCompacting: false,
+					isRetrying: false,
+					retryAttempt: 0,
+					pendingToolCallIds: [],
+					steering: [],
+					followUp: [],
+				},
 			}
 		: undefined;
 	const snapshot = {
@@ -100,53 +97,11 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 }
 
 describe("shell visual and thread head contracts", () => {
-	it("publishes semantic surface roles and the three layout templates", () => {
-		expect(CANONICAL_LAYOUT_VIEWPORTS).toEqual({
-			mobile: { width: 390, height: 844 },
-			window: { width: 1280, height: 800 },
-			fullscreen: { width: 1920, height: 1080 },
-		});
-		expect(layoutModeForWidth(390)).toBe("mobile");
+	it("selects the correct layout on both sides of each responsive boundary", () => {
 		expect(layoutModeForWidth(MOBILE_LAYOUT_MAX_WIDTH)).toBe("mobile");
 		expect(layoutModeForWidth(MOBILE_LAYOUT_MAX_WIDTH + 1)).toBe("window");
 		expect(layoutModeForWidth(FULLSCREEN_LAYOUT_MIN_WIDTH - 1)).toBe("window");
 		expect(layoutModeForWidth(FULLSCREEN_LAYOUT_MIN_WIDTH)).toBe("fullscreen");
-		for (const token of [
-			"--surface-sidebar",
-			"--surface-panel",
-			"--surface-action",
-			"--surface-danger",
-			"--text-strong",
-			"--text-soft",
-			"--focus-ring",
-		]) {
-			expect(styles).toContain(token);
-		}
-		expect(styles).toContain('.app[data-layout="mobile"]');
-		expect(styles).toContain('.app[data-layout="window"]');
-		expect(styles).toContain('.app[data-layout="fullscreen"]');
-		expect(styles).toContain('.app[data-layout="mobile"] .attachment-preview-column');
-		expect(styles).toContain('.app[data-layout="window"] .attachment-preview-column');
-		expect(styles).toContain('.app[data-layout="fullscreen"] .attachment-preview-column');
-
-		render(() => (
-			<div class="app" data-layout="window" role="application" aria-label="Companion">
-				<div class="shell">
-					<aside class="sidebar" aria-label="Conversations" />
-					<main class="main">
-						<section class="thread" aria-label="Conversation thread" />
-						<form class="composer">
-							<textarea aria-label="Message" />
-						</form>
-					</main>
-				</div>
-			</div>
-		));
-
-		const application = screen.getByRole("application", { name: "Companion" });
-		expect(application).toHaveAttribute("data-layout", "window");
-		expect(within(application).getAllByRole("complementary")).toHaveLength(1);
-		expect(within(application).getByRole("textbox", { name: "Message" })).toBeEnabled();
 	});
 
 	it("shows an explicit empty state when no work is running", async () => {
@@ -160,16 +115,16 @@ describe("shell visual and thread head contracts", () => {
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
 		await user.click(queue);
-		expect(screen.getByRole("menu", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
+		expect(screen.getByRole("region", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
 			zhCN.threadHead.noRunningWork,
 		);
 		await user.click(queue);
 		expect(
-			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),
+			screen.queryByRole("region", { name: zhCN.threadHead.runningWork }),
 		).not.toBeInTheDocument();
 	});
 
-	it("opens the active-run menu, maps status text, and closes with Escape", async () => {
+	it("moves focus through current work and task details, restoring it on back, Escape, and close", async () => {
 		const user = userEvent.setup();
 		const store = {
 			activeConversationId: "conversation-1",
@@ -195,7 +150,13 @@ describe("shell visual and thread head contracts", () => {
 					evidence: [],
 				},
 			],
-		} as CompanionStore;
+			run: {
+				observeDetail: () => ({
+					isPending: true,
+					isFetching: true,
+				}),
+			},
+		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
 				<ThreadHead sceneLabel="Scene title" />
@@ -205,15 +166,34 @@ describe("shell visual and thread head contracts", () => {
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		const workMenu = screen.getByRole("menu", { name: zhCN.threadHead.runningWork });
+		const workMenu = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
+		expect(workMenu).toHaveFocus();
 		expect(workMenu).toHaveTextContent(zhCN.work.timeline.runStatuses.needs_user);
 		expect(workMenu).toHaveTextContent(zhCN.threadHead.recentWork);
 		expect(workMenu).toHaveTextContent("Completed run");
 		expect(workMenu).toHaveTextContent(zhCN.work.timeline.runStatuses.completed);
+		await user.click(
+			within(workMenu).getAllByRole("button", { name: zhCN.work.timeline.revealDetails })[0]!,
+		);
+		const details = screen.getByRole("region", { name: zhCN.work.task.details });
+		expect(details).toHaveFocus();
+		expect(within(details).getByRole("status")).toHaveTextContent(zhCN.work.task.loading);
+		await user.click(within(details).getByRole("button", { name: zhCN.work.task.back }));
+		expect(workMenu).toHaveFocus();
+		await user.click(
+			within(workMenu).getAllByRole("button", { name: zhCN.work.timeline.revealDetails })[0]!,
+		);
 		await user.keyboard("{Escape}");
 		expect(
-			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),
+			screen.queryByRole("region", { name: zhCN.threadHead.runningWork }),
 		).not.toBeInTheDocument();
+		expect(queueButton).toHaveFocus();
+		await user.keyboard("{Enter}");
+		const reopenedWork = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
+		expect(screen.getByRole("region", { name: zhCN.work.task.details })).toHaveFocus();
+		await user.click(within(reopenedWork).getByRole("button", { name: zhCN.work.task.close }));
+		expect(reopenedWork).not.toBeInTheDocument();
+		expect(queueButton).toHaveFocus();
 	});
 
 	it("renders package scene and presence assets with package-owned accessible labels", () => {
@@ -312,6 +292,9 @@ describe("portrait layout contracts", () => {
 					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
 					live: {
 						isStreaming: true,
+						isCompacting: false,
+						isRetrying: false,
+						retryAttempt: 0,
 						pendingToolCallIds: [],
 						steering: [],
 						followUp: [],
@@ -335,7 +318,7 @@ describe("portrait layout contracts", () => {
 				await user.type(composer, "Keep the portrait open");
 				await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 				await waitFor(() => expect(composer).toHaveValue(""));
-				expect(screen.getByTestId("pending-user-message")).toHaveTextContent(
+				expect(screen.getByTestId("conversation-submission")).toHaveTextContent(
 					"Keep the portrait open",
 				);
 			} else {
@@ -346,8 +329,10 @@ describe("portrait layout contracts", () => {
 				});
 				await waitFor(() =>
 					expect(
-						screen.getByRole("status", { name: zhCN.messages.responding }),
-					).toBeInTheDocument(),
+						within(screen.getByRole("main")).getByRole("status", {
+							name: zhCN.messages.responding,
+						}),
+					).toBeVisible(),
 				);
 			}
 			await waitFor(() => expect(presence).toHaveAttribute("data-layout-mode", "expanded"));

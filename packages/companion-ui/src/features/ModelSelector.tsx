@@ -81,9 +81,20 @@ export function ModelSelector(props: {
 			optionTextValue={optionLabel}
 			placeholder={props.placeholder ?? t("settings.chooseModel")}
 			disabled={props.disabled}
-			onChange={(option) =>
-				props.onModelChange(option && !isAutoModelOption(option) ? option : null)
-			}
+			onChange={(option) => {
+				const model = option && !isAutoModelOption(option) ? option : null;
+				const selected = props.value;
+				// Controlled selection reconciliation is not a user model change.
+				if (
+					model === selected ||
+					(model &&
+						selected &&
+						model.providerId === selected.providerId &&
+						model.modelId === selected.modelId)
+				)
+					return;
+				props.onModelChange(model);
+			}}
 			itemComponent={(itemProps) => (
 				<Select.Item
 					item={itemProps.item}

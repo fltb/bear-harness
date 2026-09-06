@@ -5,8 +5,14 @@ import type {
 	LivePush,
 	LocalEmbeddingAcquisitionState,
 } from "@bear-harness/protocol";
-import { isCancelledError, useQueryClient } from "@tanstack/solid-query";
 import {
+	CancelledError,
+	createQuery,
+	isCancelledError,
+	useQueryClient,
+} from "@tanstack/solid-query";
+import {
+	batch,
 	createContext,
 	createMemo,
 	createSignal,
@@ -16,7 +22,11 @@ import {
 	useContext,
 } from "solid-js";
 import { IpcInvocationError } from "../lib/ipc.js";
-import { appendPiProjectionEvent } from "../lib/pi-event-replay.js";
+import {
+	appendPiProjectionEvent,
+	isNewerPiVersion,
+	retainPiHistory,
+} from "../lib/pi-event-replay.js";
 import { createCanonApi, createCharacterApi } from "./character-api.js";
 import { createExternalAgentApi } from "./external-agent-api.js";
 import type {
@@ -30,6 +40,8 @@ import type {
 	PiSessionEntry,
 	RunInfo,
 	RunListData,
+	RunListRequest,
+	Snapshot,
 } from "./ipc.js";
 import { invoke } from "./ipc.js";
 import { createModelProviderApis } from "./model-provider-api.js";
@@ -67,25 +79,42 @@ export interface CompanionErrorMetadata {
 	source: "transport" | "domain" | "projection";
 	kind?: string;
 }
-export interface PendingUserMessage {
-	clientMessageId: string;
+export interface ConversationSubmission {
+	id: string;
 	conversationId: string;
+	kind: "send" | "edit" | "correct";
 	text: string;
-	createdAt: number;
-	anchorEntryId?: string;
-	state: "pending" | "failed";
+	entryId?: string;
+	state: "submitting" | "accepted" | "failed" | "unknown";
 	error?: string;
+}
+export interface ConversationActivity {
+	kind:
+		| "memory_recall"
+		| "context"
+		| "memory_capture"
+		| "responding"
+		| "tool"
+		| "retry"
+		| "compaction";
+	toolName?: string;
+	attempt?: number;
+	maxAttempts?: number;
+	delayMs?: number;
+	errorMessage?: string;
 }
 export type TimelineProjectionItem =
 	| { kind: "entry"; id: string; entry: PiSessionEntry }
-	| { kind: "optimistic-user"; id: string; message: PendingUserMessage }
-	| { kind: "queued-user"; id: string; text: string }
+	| { kind: "submission"; id: string; submission: ConversationSubmission }
+	| { kind: "queued-user"; id: string; text: string; queue: "steering" | "followUp" }
 	| {
 			kind: "tool-execution";
 			id: string;
 			toolCallId: string;
 			toolName: string;
-			status: "running" | "completed" | "failed";
+			status: "pending" | "running" | "completed" | "failed";
+			args?: unknown;
+			result?: unknown;
 	  }
 	| {
 			kind: "streaming-assistant";
@@ -94,6 +123,9 @@ export type TimelineProjectionItem =
 	  };
 export interface CompanionStore {
 	readonly loading: boolean;
+	readonly systemSetupReady: boolean;
+	readonly characterSetupReady: boolean;
+	readonly setupLoadError: string | null;
 	readonly error: string | null;
 	readonly errorMetadata: CompanionErrorMetadata | null;
 	readonly onboarding: ReturnType<typeof createOnboardingStore>["data"] extends () => infer T
@@ -104,9 +136,14 @@ export interface CompanionStore {
 	readonly activeConversationId: string | null;
 	readonly activePiEntries: PiSessionEntry[] | undefined;
 	readonly activePiBranch: ConversationDetail["branch"] | undefined;
+	readonly historyLoading: boolean;
+	readonly historyError: string | null;
+	loadOlderHistory(): Promise<void>;
 	readonly completedConversationIds: ReadonlySet<string>;
 	readonly activePiLiveState: PiLiveState | undefined;
-	readonly pendingUserMessages: readonly PendingUserMessage[];
+	readonly activeSubmission: ConversationSubmission | undefined;
+	readonly activeActivity: ConversationActivity | undefined;
+	readonly liveConnectionStatus: "connecting" | "connected" | "reconnecting";
 	readonly conversationMutationBusy: boolean;
 	readonly activeTimeline: readonly TimelineProjectionItem[];
 	readonly runs: RunInfo[];
@@ -123,8 +160,8 @@ export interface CompanionStore {
 	deleteConversation(id: string): Promise<void>;
 	updateCompanionState(changes: CompanionStateChange[]): Promise<void>;
 	sendMessage(text: string): Promise<void>;
-	retryPendingMessage(clientMessageId: string): Promise<void>;
-	dismissPendingMessage(clientMessageId: string): void;
+	retrySubmission(id: string): Promise<void>;
+	dismissSubmission(id: string): void;
 	correctMessage(entryId: string, feedback: string): Promise<void>;
 	switchMessageVersion(leafId: string): Promise<void>;
 	editMessage(entryId: string, text: string): Promise<void>;
@@ -160,16 +197,21 @@ const stores = new WeakMap<CompanionClient, CompanionStore>();
 const PI_RECONNECT_MIN_DELAY_MS = 100;
 const PI_RECONNECT_MAX_DELAY_MS = 5_000;
 
-function piMessageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.flatMap((part) =>
-			part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
-				? [String(part.text)]
-				: [],
-		)
-		.join("\n");
+function samePiMessage(
+	left: NonNullable<PiLiveState["streamingMessage"]>,
+	right: NonNullable<PiLiveState["streamingMessage"]>,
+): boolean {
+	if (left.role !== right.role) return false;
+	if (
+		left.role === "assistant" &&
+		right.role === "assistant" &&
+		left.responseId &&
+		right.responseId
+	)
+		return left.responseId === right.responseId;
+	if (left.role === "toolResult" && right.role === "toolResult")
+		return left.toolCallId === right.toolCallId;
+	return left.timestamp === right.timestamp;
 }
 
 function waitForPiReconnect(signal: AbortSignal, delayMs: number): Promise<boolean> {
@@ -223,7 +265,25 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const client = withRpcMutations(source, queryClient);
 	const [cacheRevision, setCacheRevision] = createSignal(0);
 	const [operationError, setOperationError] = createSignal<CompanionErrorMetadata | null>(null);
-	const [conversationMutationBusy, setConversationMutationBusy] = createSignal(false);
+	const [mutationSessions, setMutationSessions] = createSignal<ReadonlySet<string>>(new Set());
+	const conversationMutationBusy = () =>
+		mutationSessions().has(activeConversationId() ?? "") ||
+		submissionsBySession().get(activeConversationId() ?? "")?.state === "submitting";
+	const [liveConnectionStatus, setLiveConnectionStatus] = createSignal<
+		"connecting" | "connected" | "reconnecting"
+	>("connecting");
+	const [activitiesBySession, setActivitiesBySession] = createSignal<
+		ReadonlyMap<string, { activity: ConversationActivity; failed: boolean }>
+	>(new Map());
+	const [hostStagesBySession, setHostStagesBySession] = createSignal<
+		ReadonlyMap<string, { operationId: string; activity: ConversationActivity }>
+	>(new Map());
+	const [hostFailuresBySession, setHostFailuresBySession] = createSignal<
+		ReadonlyMap<string, ConversationActivity>
+	>(new Map());
+	const [completedMessagesBySession, setCompletedMessagesBySession] = createSignal<
+		ReadonlyMap<string, NonNullable<PiLiveState["streamingMessage"]>[]>
+	>(new Map());
 	const [titleQuery, setTitleQuery] = createSignal("");
 	const [piLiveBySession, setPiLiveBySession] = createSignal<ReadonlyMap<string, PiLiveState>>(
 		new Map(),
@@ -231,19 +291,48 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const [completedConversationIds, setCompletedConversationIds] = createSignal<ReadonlySet<string>>(
 		new Set(),
 	);
-	const [optimisticUserBySession, setOptimisticUserBySession] = createSignal<
-		ReadonlyMap<string, PendingUserMessage>
+	const [submissionsBySession, setSubmissionsBySession] = createSignal<
+		ReadonlyMap<string, ConversationSubmission>
 	>(new Map());
+	const submissionAnchors = new Map<string, ReadonlySet<string>>();
 	const [toolExecutionsBySession, setToolExecutionsBySession] = createSignal<
 		ReadonlyMap<
 			string,
 			ReadonlyMap<
 				string,
-				{ toolCallId: string; toolName: string; status: "running" | "completed" | "failed" }
+				{
+					toolCallId: string;
+					toolName: string;
+					status: "running" | "completed" | "failed";
+					args?: unknown;
+					result?: unknown;
+				}
 			>
 		>
 	>(new Map());
 	const piEventCaptures = new Map<string, Set<AgentSessionEvent[]>>();
+	type PiVersion = NonNullable<PiLiveState["version"]>;
+	const eventVersions = new WeakMap<AgentSessionEvent, PiVersion>();
+	const sessionVersions = new Map<string, PiVersion>();
+	const retiredInstances = new Map<string, Set<string>>();
+	const readGenerations = new Map<string, number>();
+	const [historyRequest, setHistoryRequest] = createSignal<{
+		conversationId: string;
+		token: object;
+	}>();
+	const [historyFailure, setHistoryFailure] = createSignal<{
+		conversationId: string;
+		message: string;
+	}>();
+	const clearTransientProjection = (conversationId: string) => {
+		dropToolExecutions(conversationId);
+		setCompletedMessagesBySession((current) => {
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+	};
+	let projectionEpoch = 0;
 	const deletedConversationIds = new Set<string>();
 	const markConversationDeleted = (conversationId: string) => {
 		deletedConversationIds.delete(conversationId);
@@ -275,12 +364,17 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		operation: string,
 		action: () => Promise<T>,
 	): Promise<T> => {
+		const conversationId = requireConversation();
 		if (conversationMutationBusy()) throw new Error("conversation_mutation_pending");
-		setConversationMutationBusy(true);
+		setMutationSessions((current) => new Set(current).add(conversationId));
 		try {
 			return await run(operation, action);
 		} finally {
-			setConversationMutationBusy(false);
+			setMutationSessions((current) => {
+				const next = new Set(current);
+				next.delete(conversationId);
+				return next;
+			});
 		}
 	};
 
@@ -308,13 +402,22 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		key: queryKeys.archivedConversations,
 		request: () => invoke(client, () => client.conversation.list({ archived: true, limit: 100 })),
 	});
-	const activeQuery = createRpcQuery<ConversationActiveResponse>({
+	createRpcQuery<ConversationActiveResponse>({
 		client: queryClient,
 		key: queryKeys.activeConversation,
 		request: () => invoke(client, () => client.conversation.activeGet({})),
 		enabled: false,
 	});
-	const activeDetail = () => activeQuery.data?.activeConversation ?? undefined;
+	// Native events retire transient rows in the same transaction that updates
+	// this query. Its Solid observer notifies later; read the authoritative cache
+	// through the existing revision signal so a row never disappears in between.
+	const activeDetail = createMemo(() => {
+		cacheRevision();
+		return (
+			queryClient.getQueryData<ConversationActiveResponse>(queryKeys.activeConversation)
+				?.activeConversation ?? undefined
+		);
+	});
 	const activeConversationId = () => activeDetail()?.conversationId ?? null;
 	const companionStateQuery = createRpcQuery<CompanionStateData | undefined>({
 		client: queryClient,
@@ -325,11 +428,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				? invoke(client, () => client.companionState.get({ conversationId: key[1] as string }))
 				: Promise.resolve(undefined),
 	});
-	const runsQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.runs,
-		request: () => invoke(client, () => client.run.list()),
-	});
 	const charactersQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.characters,
@@ -339,6 +437,26 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		() =>
 			charactersQuery.data?.characters.find((item) => item.active)?.id ??
 			snapshotQuery.data?.character?.id,
+	);
+	// Primitive identity equality keeps same-character refreshes valid; a new token
+	// on every transition also retires manual reads when switching A → B → A.
+	const runIdentity = createMemo(() => ({ characterId: currentCharacterId() }));
+	const runsRequest = async (request?: RunListRequest, signal?: AbortSignal) => {
+		const identity = runIdentity();
+		if (!identity.characterId) throw new CancelledError({ silent: true });
+		const result = await invoke(client, () => client.run.list(request));
+		if (signal?.aborted || identity !== runIdentity()) throw new CancelledError({ silent: true });
+		return result;
+	};
+	const runsQuery = createQuery(
+		() => ({
+			queryKey: queryKeys.activeRuns(runIdentity().characterId),
+			enabled: !!runIdentity().characterId,
+			structuralSharing: false,
+			staleTime: 0,
+			queryFn: ({ signal }) => runsRequest(undefined, signal),
+		}),
+		() => queryClient,
 	);
 	const settingsQuery = createRpcQuery({
 		client: queryClient,
@@ -370,6 +488,31 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		key: queryKeys.systemModelDefaults,
 		request: () => invoke(client, () => client.model.systemDefaultsGet()),
 	});
+	const characterSetupKeys = [
+		queryKeys.snapshot,
+		queryKeys.characters,
+		queryKeys.modelDefaults,
+		queryKeys.onboarding,
+	] as const;
+	const setupQueryReady = (key: readonly unknown[]): boolean => {
+		cacheRevision();
+		const state = queryClient.getQueryState(key);
+		return state?.data !== undefined;
+	};
+	const systemSetupReady = createMemo(
+		() => settingsQuery.data !== undefined && setupQueryReady(queryKeys.settings),
+	);
+	const characterSetupReady = createMemo(
+		() =>
+			systemSetupReady() &&
+			defaultsQuery.data !== undefined &&
+			snapshotQuery.data !== undefined &&
+			charactersQuery.data !== undefined &&
+			characterSetupKeys.every(setupQueryReady) &&
+			snapshotQuery.data?.character.id === currentCharacterId() &&
+			snapshotQuery.data?.character.id ===
+				queryClient.getQueryData<Snapshot>(queryKeys.snapshot)?.character.id,
+	);
 	const routeQuery = createRpcQuery<ModelRouteData | undefined>({
 		client: queryClient,
 		key: () => queryKeys.modelRoute(activeConversationId() ?? ""),
@@ -399,28 +542,63 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		key: queryKeys.embeddingAcquisition,
 		request: () => invoke(client, () => client.memory.localEmbeddingAcquisitionStatus({})),
 	});
-	const removeOptimisticUser = (conversationId: string) =>
-		setOptimisticUserBySession((current) => {
+	const removeSubmission = (conversationId: string) =>
+		setSubmissionsBySession((current) => {
 			if (!current.has(conversationId)) return current;
 			const next = new Map(current);
 			next.delete(conversationId);
 			return next;
 		});
-	const reconcileOptimisticUser = (detail: ConversationDetail) => {
-		const optimistic = optimisticUserBySession().get(detail.conversationId);
-		if (!optimistic) return;
-		const anchorIndex = optimistic.anchorEntryId
-			? detail.branch.entries.findIndex((entry) => entry.id === optimistic.anchorEntryId)
-			: -1;
-		const acknowledged = detail.branch.entries
-			.slice(anchorIndex + 1)
-			.some(
-				(entry) =>
-					entry.type === "message" &&
-					entry.message.role === "user" &&
-					piMessageText(entry.message.content) === optimistic.text,
+	const updateSubmission = (submission: ConversationSubmission) => {
+		if (deletedConversationIds.has(submission.conversationId)) return;
+		setSubmissionsBySession((current) => {
+			const previous = current.get(submission.conversationId);
+			if (previous && previous.id !== submission.id) submissionAnchors.delete(previous.id);
+			return new Map(current).set(submission.conversationId, submission);
+		});
+	};
+	const reconcileMessages = (detail: ConversationDetail) => {
+		const submission = submissionsBySession().get(detail.conversationId);
+		const anchor = submission && submissionAnchors.get(submission.id);
+		if (
+			submission?.state === "accepted" &&
+			(submission.kind !== "send" ||
+				(anchor &&
+					detail.branch.entries.some(
+						(entry) =>
+							!anchor.has(entry.id) && entry.type === "message" && entry.message.role === "user",
+					)))
+		) {
+			submissionAnchors.delete(submission.id);
+			removeSubmission(detail.conversationId);
+		}
+		setCompletedMessagesBySession((current) => {
+			const messages = current.get(detail.conversationId);
+			if (!messages) return current;
+			const remaining = messages.filter(
+				(message) =>
+					!detail.branch.entries.some(
+						(entry) => entry.type === "message" && samePiMessage(entry.message, message),
+					),
 			);
-		if (acknowledged) removeOptimisticUser(detail.conversationId);
+			const next = new Map(current);
+			if (remaining.length) next.set(detail.conversationId, remaining);
+			else next.delete(detail.conversationId);
+			return next;
+		});
+		setActivitiesBySession((current) => {
+			const native = current.get(detail.conversationId);
+			if (
+				!native ||
+				native.failed ||
+				(native.activity.kind === "retry" && detail.live.isRetrying) ||
+				(native.activity.kind === "compaction" && detail.live.isCompacting)
+			)
+				return current;
+			const next = new Map(current);
+			next.delete(detail.conversationId);
+			return next;
+		});
 	};
 	const refreshSnapshot = () =>
 		refreshRpcQuery({
@@ -432,15 +610,11 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		if (!conversationId) return undefined;
 		return withPiEventReplay(
 			conversationId,
-			() =>
-				refreshRpcQuery({
-					client: queryClient,
-					key: queryKeys.conversation(conversationId),
-					request: () => invoke(client, () => client.conversation.open({ conversationId })),
-				}),
+			() => invoke(client, () => client.conversation.open({ conversationId })),
 			(detail) => {
-				reconcileOptimisticUser(detail);
-				dropPiLive(detail.conversationId);
+				hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
+				reconcileMessages(detail);
+				setPiLiveBySession((current) => new Map(current).set(detail.conversationId, detail.live));
 				replaceToolExecutions(detail);
 				if (activeConversationId() === detail.conversationId)
 					hydrateRpcQuery(queryClient, queryKeys.activeConversation, {
@@ -475,17 +649,29 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	};
 	const replaceToolExecutions = (detail: ConversationDetail) => {
 		const pending = new Set(detail.live.pendingToolCallIds);
-		const executions = new Map<
-			string,
-			{ toolCallId: string; toolName: string; status: "running" }
-		>();
-		const message = detail.live.streamingMessage;
-		if (message?.role === "assistant" && Array.isArray(message.content)) {
+		const executions = new Map(toolExecutionsBySession().get(detail.conversationId) ?? []);
+		for (const [id] of executions) {
+			const persisted = detail.branch.entries.some(
+				(entry) =>
+					entry.type === "message" &&
+					entry.message.role === "toolResult" &&
+					entry.message.toolCallId === id,
+			);
+			if (persisted || !pending.has(id)) executions.delete(id);
+		}
+		const messages = detail.branch.entries.flatMap((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" ? [entry.message] : [],
+		);
+		if (detail.live.streamingMessage?.role === "assistant")
+			messages.push(detail.live.streamingMessage);
+		for (const message of messages) {
 			for (const part of message.content) {
 				if (part.type !== "toolCall" || !pending.has(part.id)) continue;
 				executions.set(part.id, {
+					...executions.get(part.id),
 					toolCallId: part.id,
 					toolName: part.name,
+					args: part.arguments,
 					status: "running",
 				});
 			}
@@ -502,7 +688,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	};
 	let activeMutationGeneration = 0;
-	const beginActiveMutation = () => ++activeMutationGeneration;
+	let activeProjectionLoaded = false;
+	const beginActiveMutation = () => {
+		setHistoryRequest(undefined);
+		setHistoryFailure(undefined);
+		return ++activeMutationGeneration;
+	};
 	const applyActiveProjectionIfCurrent = (
 		generation: number,
 		response: ConversationActiveResponse,
@@ -524,17 +715,52 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		);
 	};
 	const applyActiveProjection = (response: ConversationActiveResponse) => {
+		activeProjectionLoaded = true;
 		const previousId = activeConversationId();
-		const detail = response.activeConversation ?? undefined;
-		hydrateRpcQuery(queryClient, queryKeys.activeConversation, response);
+		let detail = response.activeConversation ?? undefined;
+		if (detail) {
+			const previous = queryClient.getQueryData<ConversationDetail>(
+				queryKeys.conversation(detail.conversationId),
+			);
+			const currentVersion = sessionVersions.get(detail.conversationId);
+			const version = detail.live.version;
+			if (
+				currentVersion &&
+				(!version ||
+					(version.instanceId === currentVersion.instanceId &&
+						version.sequence < currentVersion.sequence))
+			)
+				return;
+			if (version && retiredInstances.get(detail.conversationId)?.has(version.instanceId)) return;
+			const previousVersion = previous?.live.version ?? currentVersion;
+			const changedInstance = previousVersion && version?.instanceId !== previousVersion.instanceId;
+			if (changedInstance) {
+				const retired = retiredInstances.get(detail.conversationId) ?? new Set<string>();
+				retired.add(previousVersion.instanceId);
+				if (retired.size > 8) retired.delete(retired.values().next().value!);
+				retiredInstances.set(detail.conversationId, retired);
+			}
+			if (
+				changedInstance ||
+				(previous?.branch.activeLeafId !== detail.branch.activeLeafId &&
+					!detail.branch.entries.some((entry) => entry.id === previous?.branch.activeLeafId))
+			)
+				clearTransientProjection(detail.conversationId);
+			if (!changedInstance)
+				detail = { ...detail, branch: retainPiHistory(previous?.branch, detail.branch) };
+			if (version) sessionVersions.set(detail.conversationId, version);
+		}
+		hydrateRpcQuery(queryClient, queryKeys.activeConversation, {
+			activeConversation: detail ?? null,
+		});
 		if (detail) {
 			hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
 			if (detail.selectedModel)
 				hydrateRpcQuery(queryClient, queryKeys.modelRoute(detail.conversationId), {
 					selected: detail.selectedModel,
 				});
-			reconcileOptimisticUser(detail);
-			dropPiLive(detail.conversationId);
+			reconcileMessages(detail);
+			setPiLiveBySession((current) => new Map(current).set(detail.conversationId, detail.live));
 			replaceToolExecutions(detail);
 			setCompletedConversationIds((current) => {
 				if (!current.has(detail.conversationId)) return current;
@@ -544,12 +770,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			});
 		}
 		if (previousId && previousId !== detail?.conversationId) {
-			const previousOptimistic = optimisticUserBySession().get(previousId);
-			if (previousOptimistic?.state === "failed") removeOptimisticUser(previousId);
-			if (piLiveBySession().get(previousId)?.isStreaming !== true) {
-				dropPiLive(previousId);
-				dropToolExecutions(previousId);
-			}
 			queryClient.removeQueries({ queryKey: queryKeys.conversation(previousId), exact: true });
 			queryClient.removeQueries({ queryKey: queryKeys.companionState(previousId), exact: true });
 			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(previousId), exact: true });
@@ -566,13 +786,33 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			});
 		if (activeConversationId() === conversationId)
 			applyActiveProjection({ activeConversation: detail });
+		else {
+			setPiLiveBySession((current) => new Map(current).set(conversationId, detail.live));
+			reconcileMessages(detail);
+			replaceToolExecutions(detail);
+		}
 	};
 
 	const refreshActiveConversation = async () => {
 		const generation = activeMutationGeneration;
-		const response = await invoke(client, () => client.conversation.activeGet({}));
-		applyActiveProjectionIfCurrent(generation, response);
-		return response;
+		const epoch = projectionEpoch;
+		const conversationId = activeConversationId();
+		if (!conversationId) {
+			const response = await invoke(client, () => client.conversation.activeGet({}));
+			if (epoch === projectionEpoch) applyActiveProjectionIfCurrent(generation, response);
+			return;
+		}
+		let response: ConversationActiveResponse | undefined;
+		await withPiEventReplay(
+			conversationId,
+			async () => {
+				response = await invoke(client, () => client.conversation.activeGet({}));
+				return response.activeConversation ?? undefined;
+			},
+			(detail) => applyActiveProjectionIfCurrent(generation, { activeConversation: detail }),
+		);
+		if (response && epoch === projectionEpoch && !response.activeConversation)
+			applyActiveProjectionIfCurrent(generation, response);
 	};
 	const refreshConversations = async () => {
 		const result = await refreshRpcQuery({
@@ -605,14 +845,15 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		}),
 		invoke(client, () => client.conversation.activeGet({})),
 	])
-		.then(([, , active]) => applyActiveProjectionIfCurrent(startupActiveGeneration, active))
+		.then(([, , active]) => {
+			if (!activeProjectionLoaded) applyActiveProjectionIfCurrent(startupActiveGeneration, active);
+		})
 		.catch((cause) => fail("conversation.initialize", cause));
 	const refreshRuns = () =>
-		refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.runs,
-			request: () => invoke(client, () => client.run.list()),
-		});
+		queryClient.invalidateQueries(
+			{ queryKey: queryKeys.activeRuns(currentCharacterId()), exact: true },
+			{ cancelRefetch: false },
+		);
 	const refreshCharacters = () =>
 		refreshRpcQuery({
 			client: queryClient,
@@ -649,219 +890,492 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		activeConversationId,
 		onRefreshError: (cause) => fail("model.refresh", cause),
 	});
+	const projectionRefreshes = new Map<
+		string,
+		{ dirty: boolean; settled: boolean; epoch: number }
+	>();
+	const scheduleConversationRefresh = (conversationId: string, settled = false) => {
+		const running = projectionRefreshes.get(conversationId);
+		if (running) {
+			running.dirty = true;
+			running.settled ||= settled;
+			return;
+		}
+		const request = { dirty: true, settled, epoch: projectionEpoch };
+		projectionRefreshes.set(conversationId, request);
+		// Native message_end precedes SessionManager append. Leave its synchronous
+		// listener stack before reading; coalesce updates arriving during the read.
+		queueMicrotask(() => {
+			void (async () => {
+				try {
+					let detail: ConversationDetail | undefined;
+					do {
+						if (request.epoch !== projectionEpoch) return;
+						request.dirty = false;
+						detail = await refreshConversation(conversationId);
+					} while (
+						request.dirty &&
+						request.epoch === projectionEpoch &&
+						!deletedConversationIds.has(conversationId)
+					);
+					if (
+						detail &&
+						request.epoch === projectionEpoch &&
+						request.settled &&
+						conversationId !== activeConversationId()
+					) {
+						// A delayed settled notice may belong to an older run. Only the
+						// refreshed native snapshot, including replayed events, establishes idle.
+						const live = piLiveBySession().get(conversationId) ?? detail.live;
+						const available = conversationsQuery.data?.conversations.some(
+							(item) => item.conversationId === conversationId,
+						);
+						if (
+							available &&
+							!live.isStreaming &&
+							!live.isRetrying &&
+							!live.isCompacting &&
+							!live.pendingToolCallIds.length
+						)
+							setCompletedConversationIds((current) => new Set(current).add(conversationId));
+					}
+				} catch (cause) {
+					if (request.epoch !== projectionEpoch) return;
+					const message = cause instanceof Error ? cause.message : String(cause);
+					const submission = submissionsBySession().get(conversationId);
+					if (submission?.state === "accepted") updateSubmission({ ...submission, error: message });
+					else if (activeConversationId() === conversationId)
+						setOperationError({
+							operation: "conversation.projection",
+							source: "projection",
+							message,
+						});
+				} finally {
+					if (projectionRefreshes.get(conversationId) === request)
+						projectionRefreshes.delete(conversationId);
+				}
+			})();
+		});
+	};
 	const applyPiEvent = (
 		conversationId: string,
 		event: AgentSessionEvent,
-		options: { capture: boolean } = { capture: true },
-	) => {
-		if (deletedConversationIds.has(conversationId)) return;
-		if (options.capture)
-			for (const capture of piEventCaptures.get(conversationId) ?? [])
-				appendPiProjectionEvent(capture, event);
-		setPiLiveBySession((current) => {
-			const previous = current.get(conversationId) ??
-				queryClient.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
-					?.live ?? {
-					isStreaming: false,
-					pendingToolCallIds: [],
-					steering: [],
-					followUp: [],
-				};
-			let nextLive = previous;
-			switch (event.type) {
-				case "agent_start":
-					nextLive = { ...previous, isStreaming: true, errorMessage: undefined };
-					break;
-				case "message_start":
-				case "message_update":
-					nextLive = {
-						...previous,
-						isStreaming: true,
-						streamingMessage: event.message,
-					};
-					break;
-				case "message_end": {
-					const responseId =
-						event.message.role === "assistant" ? event.message.responseId : undefined;
-					const persisted =
-						event.message.role === "assistant" &&
-						queryClient
-							.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
-							?.branch.entries.some(
-								(entry) =>
-									entry.type === "message" &&
-									entry.message.role === "assistant" &&
-									((entry.message.responseId && entry.message.responseId === responseId) ||
-										entry.message.timestamp === event.message.timestamp),
-							);
-					nextLive = {
-						...previous,
-						// Keep the completed transient message visible until Pi appends the
-						// authoritative transcript entry. Clearing it here creates a visible gap.
-						streamingMessage: persisted ? undefined : event.message,
-						...(event.message.role === "assistant" && event.message.errorMessage
-							? { errorMessage: event.message.errorMessage }
-							: {}),
-					};
-					break;
+		options: { capture: boolean; version?: PiVersion } = { capture: true },
+	) =>
+		batch(() => {
+			if (deletedConversationIds.has(conversationId)) return;
+			const version = options.version;
+			const currentVersion = sessionVersions.get(conversationId);
+			if (version && retiredInstances.get(conversationId)?.has(version.instanceId)) return;
+			if (version && currentVersion && version.instanceId !== currentVersion.instanceId) {
+				const retired = retiredInstances.get(conversationId) ?? new Set<string>();
+				retired.add(currentVersion.instanceId);
+				if (retired.size > 8) retired.delete(retired.values().next().value!);
+				retiredInstances.set(conversationId, retired);
+				sessionVersions.set(conversationId, version);
+				readGenerations.set(conversationId, (readGenerations.get(conversationId) ?? 0) + 1);
+				if (historyRequest()?.conversationId === conversationId) {
+					setHistoryRequest(undefined);
+					setHistoryFailure(undefined);
 				}
-				case "queue_update":
-					nextLive = {
-						...previous,
-						steering: [...event.steering],
-						followUp: [...event.followUp],
-					};
-					break;
-				case "tool_execution_start":
-				case "tool_execution_update":
-					nextLive = {
-						...previous,
-						pendingToolCallIds: [...new Set([...previous.pendingToolCallIds, event.toolCallId])],
-					};
-					break;
-				case "tool_execution_end":
-					nextLive = {
-						...previous,
-						pendingToolCallIds: previous.pendingToolCallIds.filter(
-							(toolCallId) => toolCallId !== event.toolCallId,
-						),
-					};
-					break;
-				case "agent_settled":
-					nextLive = { ...previous, isStreaming: false, pendingToolCallIds: [] };
-					break;
-			}
-			if (nextLive === previous) return current;
-			const next = new Map(current);
-			next.set(conversationId, nextLive);
-			return next;
-		});
-		if (
-			event.type === "tool_execution_start" ||
-			event.type === "tool_execution_update" ||
-			event.type === "tool_execution_end"
-		) {
-			setToolExecutionsBySession((current) => {
-				const executions = new Map(current.get(conversationId) ?? []);
-				executions.set(event.toolCallId, {
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
-					status:
-						event.type !== "tool_execution_end"
-							? "running"
-							: event.isError
-								? "failed"
-								: "completed",
-				});
-				const next = new Map(current);
-				next.set(conversationId, executions);
-				return next;
-			});
-		}
-		if (event.type === "entry_appended") {
-			if (event.entry.type === "message" && event.entry.message.role === "assistant") {
-				setPiLiveBySession((current) => {
-					const previous = current.get(conversationId);
-					if (!previous?.streamingMessage) return current;
-					const next = new Map(current);
-					next.set(conversationId, { ...previous, streamingMessage: undefined });
-					return next;
-				});
-			}
-			const appendEntry = (current: ConversationDetail): ConversationDetail => {
-				const existing = current.branch.entries.findIndex((entry) => entry.id === event.entry.id);
-				const entries = [...current.branch.entries];
-				if (existing >= 0) entries[existing] = event.entry;
-				else entries.push(event.entry);
-				return {
-					...current,
-					branch: { ...current.branch, entries, activeLeafId: event.entry.id },
-				};
-			};
-			updateConversationProjection(conversationId, appendEntry);
-			if (
-				event.entry.type === "message" &&
-				event.entry.message.role === "user" &&
-				optimisticUserBySession().get(conversationId)?.text ===
-					piMessageText(event.entry.message.content)
-			)
-				removeOptimisticUser(conversationId);
-			const completedToolCallId =
-				event.entry.type === "message" && event.entry.message.role === "toolResult"
-					? event.entry.message.toolCallId
-					: undefined;
-			if (completedToolCallId) {
-				setToolExecutionsBySession((current) => {
-					const existing = current.get(conversationId);
-					if (!existing?.has(completedToolCallId)) return current;
-					const executions = new Map(existing);
-					executions.delete(completedToolCallId);
-					const next = new Map(current);
-					if (executions.size === 0) next.delete(conversationId);
-					else next.set(conversationId, executions);
-					return next;
-				});
-			}
-		}
-		if (event.type === "session_info_changed") {
-			queryClient.setQueryData<ConversationDetail>(
-				queryKeys.conversation(conversationId),
-				(current) => (current ? { ...current, name: event.name } : current),
-			);
-		}
-		if (event.type === "agent_start") {
-			setCompletedConversationIds((current) => {
-				if (!current.has(conversationId)) return current;
-				const next = new Set(current);
-				next.delete(conversationId);
-				return next;
-			});
-		}
-		if (event.type === "agent_settled") {
-			dropToolExecutions(conversationId);
-			if (conversationId === activeConversationId())
-				void Promise.all([
-					refreshConversation(conversationId),
-					refreshCompanionState(conversationId),
-				]).catch((cause) => fail("conversation.settled", cause));
-			else {
+				clearTransientProjection(conversationId);
 				dropPiLive(conversationId);
-				removeOptimisticUser(conversationId);
-				const available = conversationsQuery.data?.conversations.some(
-					(conversation) => conversation.conversationId === conversationId,
-				);
-				if (available)
-					setCompletedConversationIds((current) => new Set(current).add(conversationId));
+				scheduleConversationRefresh(conversationId);
+				return;
 			}
-		}
-	};
+			if (!isNewerPiVersion(version, currentVersion)) return;
+			if (version) {
+				sessionVersions.set(conversationId, version);
+				eventVersions.set(event, version);
+			}
+			if (options.capture)
+				for (const capture of piEventCaptures.get(conversationId) ?? [])
+					appendPiProjectionEvent(capture, event);
+			setPiLiveBySession((current) => {
+				const previous = current.get(conversationId) ??
+					queryClient.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
+						?.live ?? {
+						isStreaming: false,
+						pendingToolCallIds: [],
+						steering: [],
+						followUp: [],
+						isRetrying: false,
+						retryAttempt: 0,
+						isCompacting: false,
+					};
+				let nextLive = previous;
+				switch (event.type) {
+					case "agent_start":
+						nextLive = { ...previous, isStreaming: true, errorMessage: undefined };
+						break;
+					case "message_start":
+					case "message_update":
+						nextLive = {
+							...previous,
+							isStreaming: true,
+							streamingMessage: event.message,
+						};
+						break;
+					case "message_end":
+						nextLive = {
+							...previous,
+							streamingMessage: samePiMessage(
+								previous.streamingMessage ?? event.message,
+								event.message,
+							)
+								? undefined
+								: previous.streamingMessage,
+							...(event.message.role === "assistant" && event.message.errorMessage
+								? { errorMessage: event.message.errorMessage }
+								: {}),
+						};
+						break;
+					case "queue_update":
+						nextLive = {
+							...previous,
+							steering: [...event.steering],
+							followUp: [...event.followUp],
+						};
+						break;
+					case "tool_execution_start":
+					case "tool_execution_update":
+						nextLive = {
+							...previous,
+							pendingToolCallIds: [...new Set([...previous.pendingToolCallIds, event.toolCallId])],
+						};
+						break;
+					case "tool_execution_end":
+						nextLive = {
+							...previous,
+							pendingToolCallIds: previous.pendingToolCallIds.filter(
+								(toolCallId) => toolCallId !== event.toolCallId,
+							),
+						};
+						break;
+					case "agent_settled":
+						// May describe a run whose capture overlapped a newer run. Refresh below.
+						break;
+					case "auto_retry_start":
+						nextLive = { ...previous, isRetrying: true, retryAttempt: event.attempt };
+						break;
+					case "auto_retry_end":
+						nextLive = {
+							...previous,
+							isRetrying: false,
+							errorMessage: event.success ? undefined : event.finalError,
+						};
+						break;
+					case "compaction_start":
+						nextLive = { ...previous, isCompacting: true };
+						break;
+					case "compaction_end":
+						nextLive = { ...previous, isCompacting: false, errorMessage: event.errorMessage };
+						break;
+					case "agent_end":
+					// End/settled notices do not identify the currently running native turn.
+					case "turn_start":
+					case "turn_end":
+					case "entry_appended":
+					case "session_info_changed":
+					case "thinking_level_changed":
+					case "summarization_retry_scheduled":
+					case "summarization_retry_attempt_start":
+					case "summarization_retry_finished":
+					case "bash_execution_update":
+						// Turn boundaries/config have no separate phase. Summarization has
+						// explicit activity below; standalone bash deltas lack tool ownership.
+						break;
+					default: {
+						const exhaustive: never = event;
+						return exhaustive;
+					}
+				}
+				if (version) nextLive = { ...nextLive, version };
+				if (nextLive === previous) return current;
+				const next = new Map(current);
+				next.set(conversationId, nextLive);
+				return next;
+			});
+			setActivitiesBySession((current) => {
+				const previous = current.get(conversationId);
+				let activity = previous?.activity;
+				let failed = previous?.failed ?? false;
+				switch (event.type) {
+					case "auto_retry_start":
+					case "summarization_retry_scheduled":
+						activity = {
+							kind: "retry",
+							attempt: event.attempt,
+							maxAttempts: event.maxAttempts,
+							delayMs: event.delayMs,
+							errorMessage: event.errorMessage,
+						};
+						failed = false;
+						break;
+					case "auto_retry_end":
+						activity = event.success
+							? undefined
+							: { kind: "retry", attempt: event.attempt, errorMessage: event.finalError };
+						failed = !event.success;
+						break;
+					case "compaction_start":
+					case "summarization_retry_attempt_start":
+						activity = { kind: "compaction" };
+						failed = false;
+						break;
+					case "compaction_end":
+						activity = event.errorMessage
+							? { kind: "compaction", errorMessage: event.errorMessage }
+							: undefined;
+						failed = !!event.errorMessage;
+						break;
+					case "summarization_retry_finished":
+						activity = undefined;
+						break;
+					case "agent_start":
+						activity = undefined;
+						break;
+				}
+				if (activity === previous?.activity && failed === (previous?.failed ?? false))
+					return current;
+				const next = new Map(current);
+				if (activity) next.set(conversationId, { activity, failed });
+				else next.delete(conversationId);
+				return next;
+			});
+			if (event.type === "message_end") {
+				if (event.message.role === "assistant")
+					setCompletedMessagesBySession((current) => {
+						const messages = current.get(conversationId) ?? [];
+						const next = new Map(current);
+						next.set(conversationId, [
+							...messages.filter((message) => !samePiMessage(message, event.message)),
+							event.message,
+						]);
+						return next;
+					});
+				if (options.capture) scheduleConversationRefresh(conversationId);
+			}
+			if (
+				event.type === "tool_execution_start" ||
+				event.type === "tool_execution_update" ||
+				event.type === "tool_execution_end"
+			) {
+				setToolExecutionsBySession((current) => {
+					const executions = new Map(current.get(conversationId) ?? []);
+					executions.set(event.toolCallId, {
+						toolCallId: event.toolCallId,
+						toolName: event.toolName,
+						status:
+							event.type !== "tool_execution_end"
+								? "running"
+								: event.isError
+									? "failed"
+									: "completed",
+						args: "args" in event ? event.args : executions.get(event.toolCallId)?.args,
+						result:
+							event.type === "tool_execution_update"
+								? event.partialResult
+								: event.type === "tool_execution_end"
+									? event.result
+									: undefined,
+					});
+					const next = new Map(current);
+					next.set(conversationId, executions);
+					return next;
+				});
+			}
+			if (event.type === "entry_appended") {
+				if (event.entry.type === "message" && event.entry.message.role === "assistant") {
+					setPiLiveBySession((current) => {
+						const previous = current.get(conversationId);
+						if (
+							!previous?.streamingMessage ||
+							event.entry.type !== "message" ||
+							!samePiMessage(previous.streamingMessage, event.entry.message)
+						)
+							return current;
+						const next = new Map(current);
+						next.set(conversationId, { ...previous, streamingMessage: undefined });
+						return next;
+					});
+				}
+				const appendEntry = (current: ConversationDetail): ConversationDetail => {
+					const existing = current.branch.entries.findIndex((entry) => entry.id === event.entry.id);
+					const entries = [...current.branch.entries];
+					if (existing >= 0) entries[existing] = event.entry;
+					else if (event.entry.parentId === (current.branch.activeLeafId ?? null))
+						entries.push(event.entry);
+					else {
+						if (options.capture) scheduleConversationRefresh(conversationId);
+						return current;
+					}
+					return {
+						...current,
+						branch: { ...current.branch, entries, activeLeafId: event.entry.id },
+					};
+				};
+				updateConversationProjection(conversationId, appendEntry);
+				const detail = queryClient.getQueryData<ConversationDetail>(
+					queryKeys.conversation(conversationId),
+				);
+				if (detail) reconcileMessages(detail);
+				const completedToolCallId =
+					event.entry.type === "message" && event.entry.message.role === "toolResult"
+						? event.entry.message.toolCallId
+						: undefined;
+				if (completedToolCallId) {
+					setToolExecutionsBySession((current) => {
+						const existing = current.get(conversationId);
+						if (!existing?.has(completedToolCallId)) return current;
+						const executions = new Map(existing);
+						executions.delete(completedToolCallId);
+						const next = new Map(current);
+						if (executions.size === 0) next.delete(conversationId);
+						else next.set(conversationId, executions);
+						return next;
+					});
+				}
+			}
+			if (event.type === "session_info_changed") {
+				queryClient.setQueryData<ConversationDetail>(
+					queryKeys.conversation(conversationId),
+					(current) => (current ? { ...current, name: event.name } : current),
+				);
+			}
+			if (event.type === "agent_start") {
+				setHostFailuresBySession((current) => {
+					if (!current.has(conversationId)) return current;
+					const next = new Map(current);
+					next.delete(conversationId);
+					return next;
+				});
+				setCompletedConversationIds((current) => {
+					if (!current.has(conversationId)) return current;
+					const next = new Set(current);
+					next.delete(conversationId);
+					return next;
+				});
+			}
+			if (event.type === "agent_settled") {
+				if (options.capture) {
+					scheduleConversationRefresh(conversationId, true);
+					if (conversationId === activeConversationId())
+						void refreshCompanionState(conversationId).catch((cause) =>
+							fail("conversation.settled", cause),
+						);
+				}
+			}
+		});
 	async function withPiEventReplay(
 		conversationId: string,
 		request: () => Promise<ConversationDetail | undefined>,
 		commit: (detail: ConversationDetail) => void,
 	): Promise<ConversationDetail | undefined> {
+		const epoch = projectionEpoch;
+		const navigation = activeMutationGeneration;
+		const baselineVersion = sessionVersions.get(conversationId);
+		const generation = (readGenerations.get(conversationId) ?? 0) + 1;
+		readGenerations.set(conversationId, generation);
+		const current = () =>
+			epoch === projectionEpoch &&
+			navigation === activeMutationGeneration &&
+			readGenerations.get(conversationId) === generation &&
+			!deletedConversationIds.has(conversationId);
 		const capture: AgentSessionEvent[] = [];
 		const captures = piEventCaptures.get(conversationId) ?? new Set<AgentSessionEvent[]>();
 		captures.add(capture);
 		piEventCaptures.set(conversationId, captures);
-		let committed = false;
 		try {
 			const detail = await request();
-			if (!detail || deletedConversationIds.has(conversationId)) return undefined;
-			commit(detail);
-			committed = true;
-			return detail;
+			if (!detail || !current()) return undefined;
+			const previous = queryClient.getQueryData<ConversationDetail>(
+				queryKeys.conversation(conversationId),
+			);
+			const version = detail.live.version;
+			const currentVersion = sessionVersions.get(conversationId);
+			if (
+				currentVersion &&
+				(!version || retiredInstances.get(conversationId)?.has(version.instanceId))
+			)
+				return undefined;
+			if (
+				baselineVersion &&
+				version?.instanceId === baselineVersion.instanceId &&
+				version.sequence < baselineVersion.sequence
+			)
+				return undefined;
+			let branch = detail.branch;
+			const previousVersion = previous?.live.version ?? currentVersion;
+			const changedInstance = previousVersion && version?.instanceId !== previousVersion.instanceId;
+			if (!changedInstance) {
+				// A long turn may move the latest page beyond the loaded window. Ask Pi
+				// for the missing ancestry rather than joining disconnected branches.
+				for (
+					let page = 0;
+					previous?.branch.entries.length && branch.hasMoreBefore && page < 100;
+					page++
+				) {
+					const retained = retainPiHistory(previous.branch, branch);
+					if (retained !== branch) {
+						branch = retained;
+						break;
+					}
+					const first = branch.entries[0];
+					if (!first || previous.branch.entries.some((entry) => entry.id === first.id)) break;
+					const older = await invoke(client, () =>
+						client.conversation.history({
+							conversationId,
+							beforeEntryId: first.id,
+							limit: 100,
+						}),
+					);
+					if (!current()) return undefined;
+					const joined = retainPiHistory(
+						{ ...branch, entries: older.entries, hasMoreBefore: !!older.nextCursor },
+						branch,
+					);
+					if (joined === branch) break;
+					branch = joined;
+				}
+			} else {
+				clearTransientProjection(conversationId);
+				const retired = retiredInstances.get(conversationId) ?? new Set<string>();
+				retired.add(previousVersion.instanceId);
+				if (retired.size > 8) retired.delete(retired.values().next().value!);
+				retiredInstances.set(conversationId, retired);
+			}
+			if (!current()) return undefined;
+			if (
+				previous?.branch.activeLeafId &&
+				previous.branch.activeLeafId !== branch.activeLeafId &&
+				!branch.entries.some((entry) => entry.id === previous.branch.activeLeafId)
+			)
+				clearTransientProjection(conversationId);
+			const resolvedDetail = { ...detail, branch };
+			// The snapshot may precede captured events; replay only strictly later
+			// events from this exact native instance.
+			if (version) sessionVersions.set(conversationId, version);
+			batch(() => {
+				commit(resolvedDetail);
+				for (const event of capture)
+					applyPiEvent(conversationId, event, {
+						capture: false,
+						version: eventVersions.get(event),
+					});
+			});
+			return resolvedDetail;
 		} finally {
 			captures.delete(capture);
-			if (captures.size === 0) piEventCaptures.delete(conversationId);
-			if (committed && !deletedConversationIds.has(conversationId))
-				for (const event of capture) applyPiEvent(conversationId, event, { capture: false });
+			if (captures.size === 0 && piEventCaptures.get(conversationId) === captures)
+				piEventCaptures.delete(conversationId);
 		}
 	}
 	async function selectAndActivate(
 		conversationId: string,
 	): Promise<ConversationDetail | undefined> {
 		const generation = beginActiveMutation();
+		const epoch = projectionEpoch;
 		let response: ConversationActiveResponse | undefined;
 		const detail = await withPiEventReplay(
 			conversationId,
@@ -873,8 +1387,15 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			},
 			(active) => applyActiveProjectionIfCurrent(generation, { activeConversation: active }),
 		);
-		if (response && generation === activeMutationGeneration && !response.activeConversation)
+		if (
+			response &&
+			epoch === projectionEpoch &&
+			generation === activeMutationGeneration &&
+			!response.activeConversation
+		)
 			applyActiveProjectionIfCurrent(generation, response);
+		else if (!detail && response && generation === activeMutationGeneration)
+			await refreshActiveConversation();
 		return detail;
 	}
 	const invalidationAbort = new AbortController();
@@ -895,34 +1416,125 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			if (!(await waitForPiReconnect(invalidationAbort.signal, PI_RECONNECT_MIN_DELAY_MS))) return;
 		}
 	})().catch(() => undefined);
-	let markInitialLiveProjection!: () => void;
-	const initialLiveProjection = new Promise<void>((resolve) => {
-		markInitialLiveProjection = resolve;
-	});
 	const liveAbort = new AbortController();
 	onCleanup(() => liveAbort.abort());
 	void (async () => {
 		let consecutiveDisconnects = 0;
 		let initialized = false;
 		const replaceActiveFromHost = async () => {
+			const reconnecting = liveConnectionStatus() === "reconnecting";
+			if (reconnecting) {
+				++projectionEpoch;
+				piEventCaptures.clear();
+				projectionRefreshes.clear();
+			}
 			const generation = activeMutationGeneration;
+			const epoch = projectionEpoch;
 			const response = await settlePiSnapshot(
 				invoke(client, () => client.conversation.activeGet({})),
 				liveAbort.signal,
 			);
-			if (!response || liveAbort.signal.aborted) return;
-			applyActiveProjectionIfCurrent(generation, response);
+			if (
+				!response ||
+				liveAbort.signal.aborted ||
+				generation !== activeMutationGeneration ||
+				epoch !== projectionEpoch
+			)
+				return;
+			if (reconnecting) {
+				++projectionEpoch;
+				piEventCaptures.clear();
+				projectionRefreshes.clear();
+			}
+			const commit = (active: ConversationActiveResponse) => {
+				if (liveAbort.signal.aborted || generation !== activeMutationGeneration) return;
+				setHostStagesBySession(new Map());
+				setHostFailuresBySession(new Map());
+				setActivitiesBySession(new Map());
+				setPiLiveBySession(new Map());
+				setToolExecutionsBySession(new Map());
+				setCompletedMessagesBySession(new Map());
+				applyActiveProjectionIfCurrent(generation, active);
+			};
+			if (response.activeConversation) {
+				const detail = response.activeConversation;
+				await withPiEventReplay(
+					detail.conversationId,
+					() => Promise.resolve(detail),
+					(activeConversation) => commit({ activeConversation }),
+				);
+			} else {
+				commit(response);
+			}
 		};
 		const applyLiveEvent = (event: LivePush) => {
-			if (event.type === "pi") applyPiEvent(event.conversationId, event.event);
+			if (event.type === "pi")
+				applyPiEvent(event.conversationId, event.event, { capture: true, version: event.version });
+			if (
+				event.type === "conversationActivity" &&
+				!deletedConversationIds.has(event.conversationId)
+			) {
+				// The snapshot is freshly projected native state, independent of
+				// which overlapping stage currently owns the visible phase.
+				const currentVersion = sessionVersions.get(event.conversationId);
+				if (
+					!currentVersion ||
+					(event.live.version?.instanceId === currentVersion.instanceId &&
+						event.live.version.sequence >= currentVersion.sequence)
+				) {
+					setPiLiveBySession((current) => new Map(current).set(event.conversationId, event.live));
+					if (event.live.version) sessionVersions.set(event.conversationId, event.live.version);
+				}
+				if (event.status === "failed")
+					setHostFailuresBySession((current) =>
+						new Map(current).set(event.conversationId, {
+							kind: event.activity,
+							errorMessage: event.errorMessage ?? "conversation_activity_failed",
+						}),
+					);
+				setHostStagesBySession((current) => {
+					const previous = current.get(event.conversationId);
+					const next = new Map(current);
+					if (event.status === "started")
+						next.set(event.conversationId, {
+							operationId: event.operationId,
+							activity: { kind: event.activity },
+						});
+					else if (previous?.operationId === event.operationId) next.delete(event.conversationId);
+					else return current;
+					return next;
+				});
+				if (event.activity === "memory_capture" && event.status !== "started")
+					scheduleConversationRefresh(event.conversationId);
+			}
 			if (event.type === "companionState")
 				hydrateRpcQuery(queryClient, queryKeys.companionState(event.conversationId), event.state);
-			if (event.type === "run") {
-				queryClient.setQueryData(queryKeys.runs, (current: RunListData | undefined) => ({
-					runs: current?.runs.some((run) => run.id === event.run.id)
-						? current.runs.map((run) => (run.id === event.run.id ? event.run : run))
-						: [event.run, ...(current?.runs ?? [])].slice(0, 10),
-				}));
+			if (event.type === "run" && event.companionId === currentCharacterId()) {
+				queryClient.setQueryData(
+					queryKeys.activeRuns(event.companionId),
+					(current: RunListData | undefined) => {
+						const runs = current?.runs.some((run) => run.id === event.run.id)
+							? current.runs.map((run) => (run.id === event.run.id ? event.run : run))
+							: [event.run, ...(current?.runs ?? [])];
+						let terminalCount = 0;
+						return {
+							...current,
+							runs: runs.filter(
+								(run) =>
+									run.status === "enqueued" ||
+									run.status === "running" ||
+									run.status === "needs_user" ||
+									run.status === "interrupted" ||
+									++terminalCount <= 100,
+							),
+						};
+					},
+				);
+				void queryClient.invalidateQueries({
+					queryKey: queryKeys.runs,
+					predicate: (query) =>
+						query.queryKey[1] !== "active" && query.queryKey[2] === currentCharacterId(),
+				});
 			}
 			if (event.type === "embeddingAcquisition") {
 				hydrateRpcQuery(queryClient, queryKeys.embeddingAcquisition, event.state);
@@ -975,12 +1587,36 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			let receivedEvent = false;
 			try {
 				const events = await client.live.subscribe(liveAbort.signal);
-				await Promise.all([replaceActiveFromHost(), refreshRuns()]);
+				await Promise.all([
+					replaceActiveFromHost(),
+					...(initialized
+						? [
+								refreshRuns(),
+								queryClient.invalidateQueries({
+									queryKey: queryKeys.runs,
+									predicate: (query) =>
+										query.queryKey[1] !== "active" && query.queryKey[2] === currentCharacterId(),
+								}),
+							]
+						: []),
+					...(initialized ? [refreshConversations()] : []),
+					...(initialized
+						? [
+								queryClient.invalidateQueries({
+									predicate: (query) =>
+										[queryKeys.settings, ...characterSetupKeys].some(
+											(key) =>
+												key.length === query.queryKey.length &&
+												key.every((part, index) => part === query.queryKey[index]),
+										),
+								}),
+							]
+						: []),
+				]);
 				if (liveAbort.signal.aborted) return;
-				if (!initialized) {
-					initialized = true;
-					markInitialLiveProjection();
-				}
+				initialized = true;
+				setLiveConnectionStatus("connected");
+				if (operationError()?.operation === "live.initialize") setOperationError(null);
 				for await (const event of events) {
 					if (liveAbort.signal.aborted) return;
 					receivedEvent = true;
@@ -991,6 +1627,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				if (!initialized) fail("live.initialize", cause);
 			}
 			if (liveAbort.signal.aborted) return;
+			++projectionEpoch;
+			piEventCaptures.clear();
+			projectionRefreshes.clear();
+			setHistoryRequest(undefined);
+			setHistoryFailure(undefined);
+			setLiveConnectionStatus("reconnecting");
 			if (!receivedEvent) consecutiveDisconnects += 1;
 			const delayMs = Math.min(
 				PI_RECONNECT_MIN_DELAY_MS * 2 ** Math.min(Math.max(0, consecutiveDisconnects - 1), 10),
@@ -1002,10 +1644,13 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const runApi = createRunApi({
 		client,
 		queryClient,
-		runsRequest: () => invoke(client, () => client.run.list()),
+		runsRequest,
+		characterId: currentCharacterId,
 		activeRuns: () => runsQuery.data?.runs ?? [],
 		refreshRuns,
-		onRefreshError: (cause) => fail("run.refresh", cause),
+		onRefreshError: (cause) => {
+			if (!isCancelledError(cause)) fail("run.refresh", cause);
+		},
 	});
 	const artifactApi: ArtifactApi = {
 		read: (request) => invoke(client, () => client.artifact.read(request)),
@@ -1024,9 +1669,19 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		resyncOnboarding: onboarding.resync,
 		switchCharacterConversations: async () => {
 			beginActiveMutation();
+			++projectionEpoch;
+			projectionRefreshes.clear();
+			sessionVersions.clear();
+			retiredInstances.clear();
+			readGenerations.clear();
 			setPiLiveBySession(new Map());
 			setToolExecutionsBySession(new Map());
-			setOptimisticUserBySession(new Map());
+			setSubmissionsBySession(new Map());
+			submissionAnchors.clear();
+			setActivitiesBySession(new Map());
+			setHostStagesBySession(new Map());
+			setHostFailuresBySession(new Map());
+			setCompletedMessagesBySession(new Map());
 			setCompletedConversationIds(new Set<string>());
 			piEventCaptures.clear();
 			deletedConversationIds.clear();
@@ -1038,7 +1693,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			});
 			queryClient.removeQueries({ queryKey: ["companionState"] });
 			queryClient.removeQueries({ queryKey: ["models", "route"] });
-			queryClient.removeQueries({ queryKey: queryKeys.runs, exact: true });
 			await Promise.all([refreshConversations(), refreshArchived()]);
 		},
 		invalidateConversations: refreshConversations,
@@ -1113,10 +1767,88 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		}),
 	};
 
+	const dispatchSubmission = async (submission: ConversationSubmission): Promise<void> => {
+		const { conversationId, text, entryId } = submission;
+		if (
+			mutationSessions().has(conversationId) ||
+			submissionsBySession().get(conversationId)?.state === "submitting"
+		)
+			throw new Error("conversation_mutation_pending");
+		if (submission.kind !== "send") beginActiveMutation();
+		if (!submissionAnchors.has(submission.id))
+			submissionAnchors.set(
+				submission.id,
+				new Set(
+					(
+						queryClient.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
+							?.branch.entries ?? []
+					).map((entry) => entry.id),
+				),
+			);
+		updateSubmission({ ...submission, state: "submitting", error: undefined });
+		let accepted = false;
+		try {
+			if (submission.kind === "send") {
+				await invoke(client, () =>
+					client.message.send({ conversationId, text, clientMessageId: submission.id }),
+				);
+				accepted = true;
+				updateSubmission({ ...submission, state: "accepted", error: undefined });
+				scheduleConversationRefresh(conversationId);
+			} else {
+				if (!entryId) throw new Error("message_entry_required");
+				const projected = await withPiEventReplay(
+					conversationId,
+					async () => {
+						const detail = await invoke(client, () =>
+							submission.kind === "edit"
+								? client.message.edit({ conversationId, entryId, text })
+								: client.message.correct({ conversationId, entryId, feedback: text }),
+						);
+						accepted = true;
+						updateSubmission({ ...submission, state: "accepted", error: undefined });
+						return detail;
+					},
+					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
+				);
+				if (!projected) scheduleConversationRefresh(conversationId);
+				else if (submissionsBySession().get(conversationId)?.id === submission.id) {
+					submissionAnchors.delete(submission.id);
+					removeSubmission(conversationId);
+				}
+			}
+			if (activeConversationId() === conversationId) setOperationError(null);
+		} catch (cause) {
+			updateSubmission({
+				...submission,
+				state: accepted ? "accepted" : cause instanceof IpcInvocationError ? "failed" : "unknown",
+				error: cause instanceof Error ? cause.message : String(cause),
+			});
+			throw cause;
+		}
+	};
 	const companionState = () => companionStateQuery.data;
 	const store: CompanionStore = {
 		get loading() {
 			return snapshotQuery.isPending;
+		},
+		get systemSetupReady() {
+			return systemSetupReady();
+		},
+		get characterSetupReady() {
+			return characterSetupReady();
+		},
+		get setupLoadError() {
+			cacheRevision();
+			const keys =
+				settingsQuery.data?.settings.firstRunStage === "role"
+					? [queryKeys.settings, ...characterSetupKeys]
+					: [queryKeys.settings];
+			for (const key of keys) {
+				const error = queryClient.getQueryState(key)?.error;
+				if (error) return error instanceof Error ? error.message : String(error);
+			}
+			return null;
 		},
 		get error() {
 			return (
@@ -1154,6 +1886,58 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		get activePiBranch() {
 			return activeDetail()?.branch;
 		},
+		get historyLoading() {
+			return historyRequest()?.conversationId === activeConversationId();
+		},
+		get historyError() {
+			return historyFailure()?.conversationId === activeConversationId()
+				? historyFailure()!.message
+				: null;
+		},
+		loadOlderHistory: async () => {
+			const detail = activeDetail();
+			const first = detail?.branch.entries[0];
+			if (!detail || !first || !detail.branch.hasMoreBefore || historyRequest()) return;
+			const conversationId = detail.conversationId;
+			const epoch = projectionEpoch;
+			const navigation = activeMutationGeneration;
+			const generation = readGenerations.get(conversationId);
+			const token = {};
+			setHistoryRequest({ conversationId, token });
+			setHistoryFailure(undefined);
+			const current = () =>
+				epoch === projectionEpoch &&
+				navigation === activeMutationGeneration &&
+				generation === readGenerations.get(conversationId) &&
+				activeConversationId() === conversationId &&
+				historyRequest()?.token === token &&
+				activeDetail()?.branch.entries[0]?.id === first.id;
+			try {
+				const page = await invoke(client, () =>
+					client.conversation.history({
+						conversationId,
+						beforeEntryId: first.id,
+						limit: 100,
+					}),
+				);
+				if (!current()) return;
+				const branch = retainPiHistory(
+					{ ...detail.branch, entries: page.entries, hasMoreBefore: !!page.nextCursor },
+					activeDetail()!.branch,
+				);
+				if (branch === activeDetail()!.branch)
+					throw new Error("conversation_history_ancestry_mismatch");
+				updateConversationProjection(conversationId, (latest) => ({ ...latest, branch }));
+			} catch (cause) {
+				if (current())
+					setHistoryFailure({
+						conversationId,
+						message: cause instanceof Error ? cause.message : String(cause),
+					});
+			} finally {
+				if (historyRequest()?.token === token) setHistoryRequest(undefined);
+			}
+		},
 		get completedConversationIds() {
 			return completedConversationIds();
 		},
@@ -1161,10 +1945,29 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			const id = activeConversationId();
 			return id ? (piLiveBySession().get(id) ?? activeDetail()?.live) : undefined;
 		},
-		get pendingUserMessages() {
+		get activeSubmission() {
+			return submissionsBySession().get(activeConversationId() ?? "");
+		},
+		get liveConnectionStatus() {
+			return liveConnectionStatus();
+		},
+		get activeActivity(): ConversationActivity | undefined {
 			const id = activeConversationId();
-			const message = id ? optimisticUserBySession().get(id) : undefined;
-			return message ? [message] : [];
+			if (!id) return undefined;
+			const failure = hostFailuresBySession().get(id);
+			if (failure) return failure;
+			const stage = hostStagesBySession().get(id)?.activity;
+			if (stage) return stage;
+			const native = activitiesBySession().get(id);
+			if (native) return native.activity;
+			const live = piLiveBySession().get(id) ?? activeDetail()?.live;
+			if (live?.isCompacting) return { kind: "compaction" };
+			if (live?.isRetrying) return { kind: "retry", attempt: live.retryAttempt };
+			if (live?.pendingToolCallIds.length) {
+				const execution = toolExecutionsBySession().get(id)?.get(live.pendingToolCallIds[0]!);
+				return { kind: "tool", toolName: execution?.toolName };
+			}
+			return live?.isStreaming ? { kind: "responding" } : undefined;
 		},
 		get conversationMutationBusy() {
 			return conversationMutationBusy();
@@ -1173,45 +1976,95 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			const detail = activeDetail();
 			const id = activeConversationId();
 			if (!detail || !id) return [];
-			const result: TimelineProjectionItem[] = detail.branch.entries.map((entry) => ({
-				kind: "entry",
-				id: entry.id,
-				entry,
-			}));
-			const optimistic = optimisticUserBySession().get(id);
-			if (optimistic)
-				result.push({
-					kind: "optimistic-user",
-					id: optimistic.clientMessageId,
-					message: optimistic,
-				});
+			const result: TimelineProjectionItem[] = [];
+			const executions = toolExecutionsBySession().get(id);
 			const live = piLiveBySession().get(id) ?? detail.live;
-			for (const [index, text] of [...live.steering, ...live.followUp].entries())
-				result.push({ kind: "queued-user", id: `pi-queue-${index}-${text}`, text });
-			for (const execution of toolExecutionsBySession().get(id)?.values() ?? [])
+			const displayedTools = new Set<string>();
+			for (const entry of detail.branch.entries)
+				if (entry.type === "message" && entry.message.role === "toolResult")
+					displayedTools.add(entry.message.toolCallId);
+			const appendTools = (
+				message: NonNullable<PiLiveState["streamingMessage"]>,
+				preparing = false,
+			) => {
+				if (message.role !== "assistant") return;
+				for (const part of message.content) {
+					if (part.type !== "toolCall" || displayedTools.has(part.id)) continue;
+					const execution = executions?.get(part.id);
+					if (!execution && !preparing) continue;
+					displayedTools.add(part.id);
+					// A native streamed call is inspectable before execution starts.
+					// This row is presentation only; it never enters the execution map.
+					result.push({
+						kind: "tool-execution",
+						id: `tool:${id}:${part.id}`,
+						...(execution ?? {
+							toolCallId: part.id,
+							toolName: part.name,
+							args: part.arguments,
+							status:
+								message.stopReason === "error" || message.stopReason === "aborted"
+									? "failed"
+									: "pending",
+						}),
+					});
+				}
+			};
+			for (const entry of detail.branch.entries) {
 				result.push({
-					kind: "tool-execution",
-					id: `pi-tool-${execution.toolCallId}`,
-					...execution,
+					kind: "entry",
+					id:
+						entry.type === "message" && entry.message.role === "toolResult"
+							? `tool:${id}:${entry.message.toolCallId}`
+							: entry.id,
+					entry,
 				});
-			const streaming = live.streamingMessage;
-			if (streaming?.role === "assistant") {
-				const text = piMessageText(streaming.content);
+				if (entry.type === "message")
+					appendTools(entry.message, live.isStreaming && entry.id === detail.branch.activeLeafId);
+			}
+			const submission = submissionsBySession().get(id);
+			if (submission?.kind === "send")
+				result.push({ kind: "submission", id: submission.id, submission });
+			for (const queue of ["steering", "followUp"] as const)
+				for (const [index, text] of live[queue].entries())
+					result.push({
+						kind: "queued-user",
+						id: `pi-queue-${queue}-${index}-${text}`,
+						text,
+						queue,
+					});
+			const messages = [...(completedMessagesBySession().get(id) ?? [])];
+			if (
+				live.streamingMessage &&
+				!messages.some((message) => samePiMessage(message, live.streamingMessage!))
+			)
+				messages.push(live.streamingMessage);
+			for (const streaming of messages) {
+				if (streaming.role !== "assistant") continue;
+				const displayable = streaming.content.some(
+					(part) =>
+						(part.type === "text" && part.text.length > 0) ||
+						(part.type !== "text" && part.type !== "toolCall"),
+				);
 				const failed = streaming.stopReason === "error" || streaming.stopReason === "aborted";
 				const persisted = detail.branch.entries.some(
-					(entry) =>
-						entry.type === "message" &&
-						entry.message.role === "assistant" &&
-						((streaming.responseId && entry.message.responseId === streaming.responseId) ||
-							entry.message.timestamp === streaming.timestamp),
+					(entry) => entry.type === "message" && samePiMessage(entry.message, streaming),
 				);
-				if (!persisted && (text.length > 0 || failed))
+				if (!persisted && (displayable || failed || !!streaming.errorMessage))
 					result.push({
 						kind: "streaming-assistant",
 						id: `pi-stream-${streaming.responseId ?? streaming.timestamp}`,
 						message: streaming,
 					});
+				appendTools(streaming, true);
 			}
+			for (const execution of executions?.values() ?? [])
+				if (!displayedTools.has(execution.toolCallId))
+					result.push({
+						kind: "tool-execution",
+						id: `tool:${id}:${execution.toolCallId}`,
+						...execution,
+					});
 			return result;
 		},
 		get runs() {
@@ -1289,6 +2142,35 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				const generation = beginActiveMutation();
 				const response = await invoke(client, () => client.conversation.delete({ conversationId }));
 				markConversationDeleted(conversationId);
+				sessionVersions.delete(conversationId);
+				retiredInstances.delete(conversationId);
+				readGenerations.delete(conversationId);
+				piEventCaptures.delete(conversationId);
+				const submission = submissionsBySession().get(conversationId);
+				if (submission) submissionAnchors.delete(submission.id);
+				removeSubmission(conversationId);
+				dropPiLive(conversationId);
+				dropToolExecutions(conversationId);
+				setActivitiesBySession((current) => {
+					const next = new Map(current);
+					next.delete(conversationId);
+					return next;
+				});
+				setHostStagesBySession((current) => {
+					const next = new Map(current);
+					next.delete(conversationId);
+					return next;
+				});
+				setCompletedMessagesBySession((current) => {
+					const next = new Map(current);
+					next.delete(conversationId);
+					return next;
+				});
+				setHostFailuresBySession((current) => {
+					const next = new Map(current);
+					next.delete(conversationId);
+					return next;
+				});
 				queryClient.removeQueries({
 					queryKey: queryKeys.conversation(conversationId),
 					exact: true,
@@ -1315,100 +2197,85 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				);
 				await refreshCompanionState(id);
 			}),
-		sendMessage: (text) => {
-			if (conversationMutationBusy())
-				return Promise.reject(new Error("conversation_mutation_pending"));
-			const conversationId = requireConversation();
-			if (optimisticUserBySession().has(conversationId))
-				return Promise.reject(new Error("message_send_pending"));
-			const clientMessageId = crypto.randomUUID();
-			setOptimisticUserBySession((current) => {
-				const next = new Map(current);
-				next.set(conversationId, {
-					conversationId,
-					clientMessageId,
-					text,
-					createdAt: Date.now(),
-					anchorEntryId: activeDetail()?.branch.activeLeafId,
-					state: "pending",
-				});
-				return next;
-			});
-			return run("message.send", async () => {
-				await initialLiveProjection;
+		sendMessage: (text) =>
+			dispatchSubmission({
+				id: crypto.randomUUID(),
+				conversationId: requireConversation(),
+				kind: "send",
+				text,
+				state: "submitting",
+			}),
+		retrySubmission: async (id) => {
+			const submission = [...submissionsBySession().values()].find((item) => item.id === id);
+			if (!submission || submission.state === "submitting") return;
+			if (
+				submission.state === "accepted" ||
+				(submission.state === "unknown" && submission.kind !== "send")
+			) {
 				try {
-					await invoke(client, () =>
-						client.message.send({
-							conversationId,
-							text,
-							clientMessageId,
-						}),
-					);
-				} catch (cause) {
-					if (activeConversationId() !== conversationId) {
-						removeOptimisticUser(conversationId);
-						throw cause;
+					await refreshConversation(submission.conversationId);
+					const current = submissionsBySession().get(submission.conversationId);
+					if (current?.id === id) {
+						// Edit/correct lack Host request deduplication or receipt identity.
+						// A fresh branch alone cannot prove which request changed it.
+						if (current.state === "unknown") return;
+						if (current.kind === "send") updateSubmission({ ...current, error: undefined });
+						else {
+							submissionAnchors.delete(id);
+							removeSubmission(submission.conversationId);
+						}
 					}
-					setOptimisticUserBySession((current) => {
-						const item = current.get(conversationId);
-						if (!item) return current;
-						const next = new Map(current);
-						next.set(conversationId, {
-							...item,
-							state: "failed",
-							error: cause instanceof Error ? cause.message : String(cause),
-						});
-						return next;
+				} catch (cause) {
+					updateSubmission({
+						...submission,
+						error: cause instanceof Error ? cause.message : String(cause),
 					});
 					throw cause;
 				}
-			});
+				return;
+			}
+			await dispatchSubmission(submission);
 		},
-		retryPendingMessage: async (clientMessageId) => {
-			const message = [...optimisticUserBySession().values()].find(
-				(item) => item.clientMessageId === clientMessageId,
-			);
-			if (!message) return;
-			removeOptimisticUser(message.conversationId);
-			await store.sendMessage(message.text);
+		dismissSubmission: (id) => {
+			const submission = [...submissionsBySession().values()].find((item) => item.id === id);
+			if (!submission || submission.state === "submitting") return;
+			submissionAnchors.delete(id);
+			removeSubmission(submission.conversationId);
 		},
-		dismissPendingMessage: (clientMessageId) => {
-			const message = [...optimisticUserBySession().values()].find(
-				(item) => item.clientMessageId === clientMessageId,
-			);
-			if (message) removeOptimisticUser(message.conversationId);
-		},
-		correctMessage: (entryId, feedback) =>
-			runConversationMutation("message.correct", async () => {
-				const conversationId = requireConversation();
-				await withPiEventReplay(
-					conversationId,
-					() => invoke(client, () => client.message.correct({ conversationId, entryId, feedback })),
-					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
-				);
+		correctMessage: (entryId, text) =>
+			dispatchSubmission({
+				id: crypto.randomUUID(),
+				conversationId: requireConversation(),
+				kind: "correct",
+				entryId,
+				text,
+				state: "submitting",
 			}),
 		switchMessageVersion: (leafId) =>
 			runConversationMutation("message.switchVersion", async () => {
 				const conversationId = requireConversation();
-				await withPiEventReplay(
+				beginActiveMutation();
+				const projected = await withPiEventReplay(
 					conversationId,
 					() => invoke(client, () => client.message.switchVersion({ conversationId, leafId })),
 					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
 				);
+				if (!projected) scheduleConversationRefresh(conversationId);
 			}),
 		editMessage: (entryId, text) =>
-			runConversationMutation("message.edit", async () => {
-				const conversationId = requireConversation();
-				await withPiEventReplay(
-					conversationId,
-					() => invoke(client, () => client.message.edit({ conversationId, entryId, text })),
-					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
-				);
+			dispatchSubmission({
+				id: crypto.randomUUID(),
+				conversationId: requireConversation(),
+				kind: "edit",
+				entryId,
+				text,
+				state: "submitting",
 			}),
 		abort: () =>
 			run("message.abort", async () => {
-				await invoke(client, () => client.message.abort({ conversationId: requireConversation() }));
-				await refreshConversation();
+				const conversationId = requireConversation();
+				await invoke(client, () => client.message.abort({ conversationId }));
+				await refreshConversation(conversationId);
 			}),
 		submitOnboarding: (stepId, answer) =>
 			run("onboarding.submit", async () => {

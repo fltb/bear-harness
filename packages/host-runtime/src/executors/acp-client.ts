@@ -8,6 +8,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
+import type { RunSteerResponse } from "@bear-harness/protocol";
 import { applyProcessConfinement, type ConfinableProcessSpec } from "./confinement.js";
 
 export interface AcpProcessSpec extends ConfinableProcessSpec {
@@ -51,17 +52,19 @@ type PendingPermission = {
 
 /** codex-acp extension method that steers a live session (`_session/steering`). */
 const SESSION_STEERING_METHOD = "_session/steering";
-const PROCESS_GRACEFUL_STOP_MS = 250;
+const SHUTDOWN_METHOD = "_bear/shutdown";
 const PROCESS_STOP_TIMEOUT_MS = 2_000;
 
-/** JSON-RPC code for "Method not found", returned for unregistered extension methods. */
-function isMethodNotFound(error: unknown): boolean {
-	return Boolean(
-		error &&
-			typeof error === "object" &&
-			"code" in error &&
-			(error as { code: unknown }).code === -32601,
-	);
+function steeringReceipt(value: unknown): RunSteerResponse {
+	if (
+		value &&
+		typeof value === "object" &&
+		"outcome" in value &&
+		(value.outcome === "injected" || value.outcome === "startedNewTurn" || value.outcome === "sent")
+	) {
+		return { outcome: value.outcome };
+	}
+	throw { kind: "unavailable", reason: "executor_steering_receipt_invalid" };
 }
 
 /**
@@ -76,6 +79,9 @@ export class AcpRunClient {
 	private sessionId: string | null = null;
 	private stopped = false;
 	private permissionSequence = 0;
+	private stopping: Promise<void> | null = null;
+	private nativeShutdownRequired = false;
+	private nativeShutdown: Promise<unknown> | null = null;
 	private readonly pendingPermissions = new Map<string, PendingPermission>();
 
 	constructor(spec: AcpProcessSpec, handlers: AcpClientHandlers) {
@@ -85,6 +91,10 @@ export class AcpRunClient {
 
 	get activeSessionId(): string | null {
 		return this.sessionId;
+	}
+
+	get shutdownRequested(): boolean {
+		return this.stopped;
 	}
 
 	/**
@@ -98,7 +108,7 @@ export class AcpRunClient {
 		if (process.exitCode !== null || process.signalCode !== null) {
 			return "confirmed_lost";
 		}
-		if (!this.stopped && !process.killed && this.connection !== null && this.sessionId !== null) {
+		if (!process.killed && this.connection !== null && this.sessionId !== null) {
 			return "attached";
 		}
 		return "unknown";
@@ -106,6 +116,7 @@ export class AcpRunClient {
 
 	async start(): Promise<void> {
 		if (this.connection) throw new Error("ACP run client already started");
+		if (this.stopped) throw { kind: "conflict", reason: "executor_not_running" };
 
 		const confined = applyProcessConfinement(this.spec);
 		let process: ChildProcessWithoutNullStreams;
@@ -113,6 +124,7 @@ export class AcpRunClient {
 			process = spawn(confined.command, confined.args, {
 				cwd: this.spec.cwd,
 				env: this.spec.env,
+				detached: globalThis.process.platform !== "win32",
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch {
@@ -159,19 +171,23 @@ export class AcpRunClient {
 				clientCapabilities: this.clientCapabilities(),
 				clientInfo: { name: "bear-harness", title: "Bear Harness", version: "1.0.0" },
 			});
+			this.nativeShutdownRequired =
+				initialized.agentCapabilities?._meta?.bearNativeShutdown === true;
 			if (initialized.protocolVersion !== acp.PROTOCOL_VERSION) {
 				throw new Error(`ACP version mismatch: agent selected ${initialized.protocolVersion}`);
 			}
+			if (this.stopped || !this.connection) throw new Error("ACP startup cancelled");
 			const session = await this.connection.agent.request(acp.methods.agent.session.new, {
 				cwd: this.spec.cwd,
 				mcpServers: [],
 			});
+			if (this.stopped) throw new Error("ACP startup cancelled");
 			this.sessionId = session.sessionId;
 		} catch {
 			try {
 				await this.stop();
 			} catch {
-				// Startup failure is reported with one stable code below.
+				throw { kind: "unavailable", reason: "acp_process_release_failed" };
 			}
 			throw { kind: "unavailable", reason: "acp_start_failed" };
 		}
@@ -186,24 +202,22 @@ export class AcpRunClient {
 		});
 	}
 
-	/**
-	 * Deliver a steering instruction to the live agent session.
-	 *
-	 * Prefers the codex-acp `_session/steering` extension, which injects the
-	 * instruction into the running turn (or starts a new one when idle). Our
-	 * own pi worker implements the same extension. Agents that reject it as
-	 * method-not-found fall back to a plain follow-up `session/prompt` on the
-	 * same session, which enqueues a synthetic user message.
-	 */
-	async steerTurn(instruction: string): Promise<void> {
+	/** Return the adapter's actual receipt; unsupported steering is not a follow-up turn. */
+	async steerTurn(instruction: string): Promise<RunSteerResponse> {
 		const connection = this.requireConnection();
 		const sessionId = this.requireSessionId();
-		const prompt: acp.ContentBlock[] = [{ type: "text", text: instruction }];
 		try {
-			await connection.agent.request(SESSION_STEERING_METHOD, { sessionId, prompt });
+			return steeringReceipt(
+				await connection.agent.request(SESSION_STEERING_METHOD, {
+					sessionId,
+					prompt: [{ type: "text", text: instruction }],
+				}),
+			);
 		} catch (error) {
-			if (!isMethodNotFound(error)) throw error;
-			await connection.agent.request(acp.methods.agent.session.prompt, { sessionId, prompt });
+			if (error && typeof error === "object" && "code" in error && error.code === -32601) {
+				throw { kind: "unavailable", reason: "executor_steering_unsupported" };
+			}
+			throw error;
 		}
 	}
 
@@ -223,21 +237,50 @@ export class AcpRunClient {
 		pending.resolve({ outcome: { outcome: "selected", optionId } });
 	}
 
-	async stop(): Promise<void> {
+	stop(): Promise<void> {
+		this.stopping ??= this.stopProcess().catch((error) => {
+			this.stopping = null;
+			throw error;
+		});
+		return this.stopping;
+	}
+
+	private async stopProcess(): Promise<void> {
 		this.stopped = true;
 		this.resolvePendingPermissionsAsCancelled();
+		const process = this.process;
+		if (!process) {
+			this.connection = null;
+			this.sessionId = null;
+			return;
+		}
+		if (this.nativeShutdownRequired) {
+			// Native bash shells have their own detached POSIX process groups:
+			// killing this transport cannot prove those tools stopped.
+			if (!this.nativeShutdown) {
+				if (!this.connection || process.exitCode !== null || process.signalCode !== null)
+					throw new Error("acp_native_shutdown_not_confirmed");
+				this.nativeShutdown = this.connection.agent.request(SHUTDOWN_METHOD, {});
+			}
+			const receipt = await waitForNativeShutdown(this.nativeShutdown);
+			if (
+				!receipt ||
+				typeof receipt !== "object" ||
+				!("drained" in receipt) ||
+				receipt.drained !== true
+			)
+				throw new Error("acp_native_shutdown_not_confirmed");
+		}
 		this.connection = null;
 		this.sessionId = null;
-		const process = this.process;
-		if (!process || process.exitCode !== null || process.signalCode !== null) return;
-		process.stdin.end();
-		if (await waitForProcessExit(process, PROCESS_GRACEFUL_STOP_MS)) return;
-		if (!process.killed) process.kill();
-		if (await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS)) return;
-		process.kill("SIGKILL");
-		if (!(await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS))) {
+		if (process.exitCode !== null || process.signalCode !== null) return;
+		// A pre-initialize worker has no session/tools. An initialized native
+		// worker reaches here only after its real abort/drain acknowledgement.
+		terminateProcessGroup(process, "SIGTERM");
+		const exited = await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS);
+		terminateProcessGroup(process, "SIGKILL");
+		if (!exited && !(await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS)))
 			throw new Error("acp_process_stop_timeout");
-		}
 	}
 
 	private createClientApp(): acp.ClientApp {
@@ -322,13 +365,47 @@ export class AcpRunClient {
 	}
 
 	private requireConnection(): acp.ClientConnection {
-		if (!this.connection) throw { kind: "conflict", reason: "executor_not_running" };
+		if (this.stopped || !this.connection)
+			throw { kind: "conflict", reason: "executor_not_running" };
 		return this.connection;
 	}
 
 	private requireSessionId(): string {
 		if (!this.sessionId) throw { kind: "conflict", reason: "executor_session_not_ready" };
 		return this.sessionId;
+	}
+}
+
+function terminateProcessGroup(
+	child: ChildProcessWithoutNullStreams,
+	signal: NodeJS.Signals,
+): void {
+	if (process.platform === "win32" || !child.pid) {
+		child.kill(signal);
+		return;
+	}
+	try {
+		process.kill(-child.pid, signal);
+	} catch (error) {
+		if (!(error && typeof error === "object" && "code" in error && error.code === "ESRCH"))
+			throw error;
+	}
+}
+
+async function waitForNativeShutdown(operation: Promise<unknown>): Promise<unknown> {
+	let timer: NodeJS.Timeout | undefined;
+	try {
+		return await Promise.race([
+			operation,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error("acp_native_shutdown_timeout")),
+					PROCESS_STOP_TIMEOUT_MS,
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 

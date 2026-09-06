@@ -6,6 +6,7 @@
  * are returned as events to the owning run service.
  */
 
+import type { RunAction, RunSteerResponse } from "@bear-harness/protocol";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
@@ -67,13 +68,19 @@ export interface ExecutorController {
 	launch(request: ExecutorLaunchRequest): Promise<void>;
 	/** Query/recover the controller's live handle before startup declares a persisted run orphaned. */
 	recover(run: ExecutorRun): Promise<ExecutorRecovery>;
+	/** Synchronous observation of a resource owned by this controller. */
+	runtime?(run: ExecutorRun): { controller: ExecutorRecovery; actions: RunAction[] };
 	stop(run: ExecutorRun): Promise<void>;
 	close(): Promise<void>;
 	cancel?(run: ExecutorRun): Promise<void>;
-	steer?(run: ExecutorRun, instruction: string): Promise<void>;
+	steer?(run: ExecutorRun, instruction: string): Promise<RunSteerResponse>;
 	interrupt?(run: ExecutorRun): Promise<void>;
 	/** Resolve a pending permission with `response`, or re-prompt a paused run when `response` is omitted. */
-	resume?(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void>;
+	resume?(
+		run: ExecutorRun,
+		response?: ExecutorPermissionResponse,
+		instruction?: string,
+	): Promise<void>;
 }
 
 const PROFILE_TYPES: Record<ExecutorProfileType, true> = {
@@ -105,18 +112,10 @@ export class ExecutorRouter {
 		this.controllers.set(profileType, controller);
 	}
 
-	/**
-	 * Validate that a persisted profile exists and uses a currently supported
-	 * profile type. Controller wiring is checked separately during launch.
-	 */
-	validateProfile(profileId: string): void {
-		const row = this.db
-			.select({ profileType: executorProfiles.profileType })
-			.from(executorProfiles)
-			.where(eq(executorProfiles.id, profileId))
-			.get();
-		if (!row) unavailable("executor_profile_not_found");
-		if (!PROFILE_TYPES[row.profileType]) unavailable("executor_profile_type_invalid");
+	/** Validate known profile and controller prerequisites before admission. */
+	validateProfile(profileId: string, expectedType?: ExecutorProfileType): void {
+		const { profile } = this.resolve(profileId);
+		if (expectedType && profile.type !== expectedType) unavailable("executor_profile_type_invalid");
 	}
 
 	async launch(
@@ -133,6 +132,19 @@ export class ExecutorRouter {
 		return controller.recover(run);
 	}
 
+	runtime(run: ExecutorRun): { controller: ExecutorRecovery; actions: RunAction[] } {
+		try {
+			return (
+				this.resolve(run.executorProfile).controller.runtime?.(run) ?? {
+					controller: "unknown",
+					actions: [],
+				}
+			);
+		} catch {
+			return { controller: "unknown", actions: [] };
+		}
+	}
+
 	async stop(run: ExecutorRun): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
 		await controller.stop(run);
@@ -140,14 +152,14 @@ export class ExecutorRouter {
 
 	async cancel(run: ExecutorRun): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
-		if (!controller.cancel) return;
+		if (!controller.cancel) unavailable("executor_cancel_unsupported");
 		await controller.cancel(run);
 	}
 
-	async steer(run: ExecutorRun, instruction: string): Promise<void> {
+	async steer(run: ExecutorRun, instruction: string): Promise<RunSteerResponse> {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.steer) unavailable("executor_steering_unsupported");
-		await controller.steer(run, instruction);
+		return controller.steer(run, instruction);
 	}
 
 	async interrupt(run: ExecutorRun): Promise<void> {
@@ -156,10 +168,14 @@ export class ExecutorRouter {
 		await controller.interrupt(run);
 	}
 
-	async resume(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void> {
+	async resume(
+		run: ExecutorRun,
+		response?: ExecutorPermissionResponse,
+		instruction?: string,
+	): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.resume) unavailable("executor_resume_unsupported");
-		await controller.resume(run, response);
+		await controller.resume(run, response, instruction);
 	}
 
 	async close(): Promise<void> {

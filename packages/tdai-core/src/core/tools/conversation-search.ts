@@ -109,8 +109,8 @@ export async function executeConversationSearch(params: {
 	}
 
 	if (!vectorStore) {
-		logger?.warn?.(`${TAG} VectorStore not available`);
-		return { results: [], total: 0, strategy: "none" };
+		logger?.warn?.(`${TAG} memory_search_unavailable: store is unavailable`);
+		throw Object.assign(new Error("Conversation search store is unavailable"), { code: "memory_search_unavailable" });
 	}
 
 	// ── Determine available capabilities ──
@@ -118,20 +118,17 @@ export async function executeConversationSearch(params: {
 	const hasFts = vectorStore.isFtsAvailable();
 
 	if (!hasEmbedding && !hasFts) {
-		logger?.warn?.(`${TAG} Neither EmbeddingService nor FTS5 available — cannot search`);
-		return {
-			results: [],
-			total: 0,
-			strategy: "none",
-			message:
-				"Embedding service is not configured and FTS is not available. " +
-				"Conversation search requires an embedding provider or FTS5 support. " +
-				"Please configure an embedding provider in the embedding.provider setting (e.g. openai_compatible).",
-		};
+		logger?.warn?.(`${TAG} memory_search_unavailable: no retrieval capability`);
+		throw Object.assign(new Error("Conversation search requires an available embedding or keyword index"), {
+			code: "memory_search_unavailable",
+		});
 	}
 
 	// ── Over-retrieve for later filtering and RRF merging ──
 	const candidateK = sessionFilter ? limit * 4 : limit * 3;
+	let ftsOk = false;
+	let vecOk = false;
+	const failures: unknown[] = [];
 
 	// ── Run available search strategies in parallel ──
 	const [ftsItems, vecItems] = await Promise.all([
@@ -146,6 +143,7 @@ export async function executeConversationSearch(params: {
 				}
 				logger?.debug?.(`${TAG} [hybrid-fts] FTS5 query: "${ftsQuery}"`);
 				const ftsResults = await vectorStore.searchL0Fts(ftsQuery, candidateK);
+				ftsOk = true;
 				logger?.debug?.(`${TAG} [hybrid-fts] FTS5 returned ${ftsResults.length} candidates`);
 				return ftsResults.map((r) => ({
 					id: r.record_id,
@@ -156,9 +154,11 @@ export async function executeConversationSearch(params: {
 					recorded_at: r.recorded_at,
 				}));
 			} catch (err) {
+				ftsOk = false;
 				logger?.warn?.(
-					`${TAG} [hybrid-fts] FTS5 search failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+					`${TAG} memory_search_failed: keyword retrieval failed`,
 				);
+				failures.push(err);
 				return [];
 			}
 		})(),
@@ -177,6 +177,7 @@ export async function executeConversationSearch(params: {
 					candidateK,
 					query,
 				);
+				vecOk = true;
 				logger?.debug?.(
 					`${TAG} [hybrid-vec] Vector search returned ${vecResults.length} candidates`,
 				);
@@ -189,17 +190,17 @@ export async function executeConversationSearch(params: {
 					recorded_at: r.recorded_at,
 				}));
 			} catch (err) {
+				vecOk = false;
 				logger?.warn?.(
-					`${TAG} [hybrid-vec] Embedding search failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+					`${TAG} memory_search_failed: embedding retrieval failed`,
 				);
+				failures.push(err);
 				return [];
 			}
 		})(),
 	]);
 
 	// ── Determine effective strategy ──
-	const ftsOk = ftsItems.length > 0;
-	const vecOk = vecItems.length > 0;
 	let strategy: string;
 
 	if (ftsOk && vecOk) {
@@ -209,8 +210,14 @@ export async function executeConversationSearch(params: {
 	} else if (ftsOk) {
 		strategy = "fts";
 	} else {
-		logger?.debug?.(`${TAG} Both search paths returned 0 results`);
-		return { results: [], total: 0, strategy: hasEmbedding ? "embedding" : "fts" };
+		if (failures.length === 0) return { results: [], total: 0, strategy: "none" };
+		logger?.error(`${TAG} memory_search_failed: no retrieval path succeeded`);
+		throw Object.assign(new AggregateError(failures, "Conversation search failed: all available retrieval paths failed"), {
+			code: "memory_search_failed",
+		});
+	}
+	if (failures.length > 0) {
+		logger?.warn?.(`${TAG} memory_search_degraded: using ${strategy} fallback only`);
 	}
 
 	// ── Merge results ──
@@ -221,7 +228,7 @@ export async function executeConversationSearch(params: {
 			`${TAG} [hybrid] RRF merged: fts=${ftsItems.length}, vec=${vecItems.length} → ${results.length} unique`,
 		);
 	} else {
-		// Single-source: use whichever list has results (already sorted by score)
+		// Single successful source, including a valid zero-hit result.
 		results = ftsOk ? ftsItems : vecItems;
 	}
 

@@ -3,6 +3,7 @@ import type {
 	ConfiguredModel,
 	InvalidationNotice,
 	ModelDefaultsGetResponse,
+	OnboardingResponse,
 	ProviderInfo,
 	SettingsData,
 	SystemModelDefaultsGetResponse,
@@ -54,17 +55,13 @@ const imageModel: ConfiguredModel = {
 };
 const replyRoute = { providerId: "openai", modelId: "reply" };
 
-function first<T>(values: readonly T[]): T {
-	const value = values[0];
-	if (value === undefined) throw new Error("expected a matching element");
-	return value;
-}
-
 function firstRunHost(
 	options: {
 		providers?: ProviderInfo[];
 		models?: ConfiguredModel[];
 		defaults?: SystemModelDefaultsGetResponse;
+		stage?: SettingsData["firstRunStage"];
+		roleDefaults?: ModelDefaultsGetResponse;
 	} = {},
 ) {
 	const { client } = createTestClient();
@@ -99,7 +96,7 @@ function firstRunHost(
 		} else notices.push(notice);
 	};
 	let settings: SettingsData = {
-		firstRunStage: "model",
+		firstRunStage: options.stage ?? "model",
 		relationshipMemoryEnabled: false,
 		networkProxy: { mode: "direct" },
 		memoryVectorService: { enabled: false, provider: "none" },
@@ -110,7 +107,10 @@ function firstRunHost(
 	let systemDefaults: SystemModelDefaultsGetResponse = options.defaults ?? {
 		vision: { mode: "auto" },
 	};
-	let defaults: ModelDefaultsGetResponse = { vision: { mode: "auto" }, onboardingComplete: false };
+	let defaults: ModelDefaultsGetResponse = options.roleDefaults ?? {
+		vision: { mode: "auto" },
+		onboardingComplete: false,
+	};
 	let publishProviderProjection = true;
 	let providerAdded = false;
 	client.settings.get = vi.fn(() => ok({ settings }));
@@ -174,7 +174,7 @@ function firstRunHost(
 				})()}
 			</QueryClientProvider>
 		));
-		return { ...view, store };
+		return { ...view, store, queryClient };
 	};
 	return {
 		client,
@@ -199,10 +199,9 @@ async function selectProvider(user: UserEvent, dialog: HTMLElement) {
 
 async function addProvider(user: UserEvent, dialog: HTMLElement) {
 	await selectProvider(user, dialog);
-	await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
-	await user.click(
-		first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
-	);
+	const editor = within(dialog).getByRole("region", { name: candidate.name });
+	await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
+	await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
 }
 
 async function selectReply(user: UserEvent, dialog: HTMLElement) {
@@ -227,21 +226,214 @@ async function confirmRole(user: UserEvent) {
 }
 
 describe("Host-backed first-run setup", () => {
+	it("never mounts onboarding while completed role projections arrive separately", async () => {
+		const setup = firstRunHost({
+			stage: "role",
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: true },
+		});
+		let releaseDefaults!: () => void;
+		let releaseOnboarding!: () => void;
+		const defaultsPending = new Promise<void>((resolve) => {
+			releaseDefaults = resolve;
+		});
+		const onboardingPending = new Promise<void>((resolve) => {
+			releaseOnboarding = resolve;
+		});
+		const getDefaults = setup.client.model.defaultsGet;
+		setup.client.model.defaultsGet = vi.fn(async () => {
+			await defaultsPending;
+			return getDefaults();
+		});
+		setup.client.onboarding.get = vi.fn(async () => {
+			await onboardingPending;
+			return {
+				ok: true as const,
+				data: { status: "complete" as const, stateData: { answers: {} } },
+			};
+		});
+		const mountedDialogs: Element[] = [];
+		const observer = new MutationObserver((records) => {
+			for (const record of records) {
+				for (const node of record.addedNodes) {
+					if (!(node instanceof HTMLElement)) continue;
+					// Include the added root and detached transient dialogs, not only
+					// descendants that remain mounted when this callback is delivered.
+					const addedTree = document.createElement("div");
+					addedTree.append(node.cloneNode(true));
+					mountedDialogs.push(...within(addedTree).queryAllByRole("dialog", { hidden: true }));
+				}
+			}
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+		try {
+			const { store } = setup.mount();
+			await waitFor(() => expect(store.settings.data()?.firstRunStage).toBe("role"));
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+			releaseDefaults();
+			await waitFor(() => expect(store.model.data().defaults.onboardingComplete).toBe(true));
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+			releaseOnboarding();
+			await waitFor(() => expect(store.characterSetupReady).toBe(true));
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+			expect(mountedDialogs).toEqual([]);
+		} finally {
+			observer.disconnect();
+			releaseDefaults();
+			releaseOnboarding();
+		}
+	});
+
+	it("waits for system authority before showing the required setup layer", async () => {
+		const setup = firstRunHost({
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: true },
+		});
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const getSettings = setup.client.settings.get;
+		setup.client.settings.get = vi.fn(async () => {
+			await pending;
+			return getSettings();
+		});
+		const { store } = setup.mount();
+		await waitFor(() => expect(store.onboarding.status).toBe("active"));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		release();
+		await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		expect(screen.queryByRole("dialog", { name: "Introduction" })).not.toBeInTheDocument();
+	});
+
+	it("keeps confirmed incomplete onboarding and its draft during a same-character refetch", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunHost({
+			stage: "role",
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: true },
+		});
+		setup.client.snapshot.get = vi.fn(async () => ({
+			ok: true as const,
+			data: {
+				onboarding: {
+					status: "active" as const,
+					currentStepId: "hello",
+					stateData: { answers: {} },
+				},
+				character: {
+					...THEMED_CHARACTER,
+					character: {
+						...THEMED_CHARACTER.character,
+						first_meeting: {
+							...THEMED_CHARACTER.character.first_meeting,
+							steps: [
+								{
+									id: "hello",
+									kind: "text" as const,
+									heading: "Hello",
+									body: "Welcome",
+									answer_key: "name",
+									input_label: "Your name",
+									input_placeholder: "Name",
+									min_length: 1,
+									max_length: 64,
+									submit_label: "Continue",
+								},
+							],
+						},
+					},
+				},
+			},
+		}));
+		const { queryClient } = setup.mount();
+		const dialog = await screen.findByRole("dialog", { name: "Introduction" });
+		await user.type(within(dialog).getByRole("textbox", { name: "Your name" }), "Unsaved name");
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const getDefaults = setup.client.model.defaultsGet;
+		setup.client.model.defaultsGet = vi.fn(async () => {
+			await pending;
+			return getDefaults();
+		});
+		const refresh = queryClient.invalidateQueries({ queryKey: ["models", "defaults"] });
+		await waitFor(() =>
+			expect(queryClient.isFetching({ queryKey: ["models", "defaults"] })).toBe(1),
+		);
+		expect(dialog).toBeVisible();
+		expect(within(dialog).getByRole("textbox", { name: "Your name" })).toHaveValue("Unsaved name");
+		release();
+		await refresh;
+		expect(dialog).toBeVisible();
+		expect(within(dialog).getByRole("textbox", { name: "Your name" })).toHaveValue("Unsaved name");
+	});
+
+	it("does not borrow a previous character's completion while the new projection loads", async () => {
+		const setup = firstRunHost({
+			stage: "role",
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: true },
+		});
+		let character = THEMED_CHARACTER;
+		let onboarding: OnboardingResponse = { status: "complete", stateData: { answers: {} } };
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		setup.client.snapshot.get = vi.fn(async () => ({
+			ok: true as const,
+			data: { character, onboarding },
+		}));
+		setup.client.onboarding.get = vi.fn(async () => {
+			if (character.id !== THEMED_CHARACTER.id) await pending;
+			return { ok: true as const, data: onboarding };
+		});
+		setup.client.character.activate = vi.fn(async () => {
+			character = { ...THEMED_CHARACTER, id: "second-character" };
+			onboarding = { status: "active", currentStepId: "hello", stateData: { answers: {} } };
+			return { ok: true as const, data: { character } };
+		});
+		const { store } = setup.mount();
+		await waitFor(() => expect(store.characterSetupReady).toBe(true));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		const activation = store.characters.activate("second-character");
+		await waitFor(() => expect(store.character?.id).toBe("second-character"));
+		expect(store.characterSetupReady).toBe(false);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		release();
+		await activation;
+		await screen.findByRole("dialog", { name: "Introduction" });
+	});
+
+	it("shows a failed readiness request without inventing incomplete onboarding", async () => {
+		const setup = firstRunHost({ stage: "role" });
+		setup.client.model.defaultsGet = vi.fn(async () => {
+			throw new Error("role defaults unavailable");
+		});
+		const { queryClient } = setup.mount();
+		expect(await screen.findByRole("alert")).toHaveTextContent("role defaults unavailable");
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		setup.client.model.defaultsGet = vi.fn(async () => ({
+			ok: true as const,
+			data: { vision: { mode: "auto" as const }, onboardingComplete: false },
+		}));
+		await queryClient.invalidateQueries({ queryKey: ["models", "defaults"] });
+		await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
 	it("shows synced model settings only after the Host publishes the added provider", async () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost();
 		const { store } = setup.mount();
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		await selectProvider(user, dialog);
-		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
+		const editor = within(dialog).getByRole("region", { name: candidate.name });
+		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
 		await user.type(
-			first(within(dialog).getAllByLabelText(zhCN.settings.customBaseUrl)),
+			within(editor).getByLabelText(zhCN.settings.customBaseUrl),
 			"https://relay.example/v1",
 		);
 		setup.holdProviderList();
-		await user.click(
-			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
-		);
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
 		await waitFor(() =>
 			expect(setup.client.provider.overrideBaseUrl).toHaveBeenCalledWith({
 				providerId: "openai",

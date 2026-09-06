@@ -38,8 +38,8 @@ describe("idle homepage (official config, no bridge)", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
+					character: THEMED_CHARACTER,
 					onboarding: activeOnboarding,
-					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			}),
 		);
@@ -160,17 +160,7 @@ describe("idle homepage (official config, no bridge)", () => {
 				ok: true as const,
 				data: {
 					character: THEMED_CHARACTER,
-					model: {
-						models: [
-							{
-								providerId: "test-provider",
-								modelId: "test-model",
-								label: "Test Model",
-								supportsImages: true,
-								createdAt: "2026-01-01 00:00:00",
-							},
-						],
-					},
+					onboarding: { status: "complete" as const, stateData: { answers: {} } },
 				},
 			}),
 		);

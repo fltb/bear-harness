@@ -301,7 +301,7 @@ describe("external-agent process environments", () => {
 });
 
 describe("external-agent result delivery", () => {
-	it("returns the settled run summary verbatim instead of asking Pi to rewrite it", () => {
+	it("identifies the original run and executor alongside its unchanged terminal result", () => {
 		const message = externalAgentResultMessage({
 			run: {
 				id: "run-1",
@@ -318,9 +318,9 @@ describe("external-agent result delivery", () => {
 			outputs: [],
 		});
 
-		expect(message).toBe(
-			"External work completed: Read package.json\n\nThe top-level name is `bear-harness`.",
-		);
-		expect(message).not.toContain("Give the user");
+		expect(message).toContain("run-1");
+		expect(message).toContain("codex-profile");
+		expect(message).toContain("completed");
+		expect(message).toContain("The top-level name is `bear-harness`.");
 	});
 });

@@ -1,160 +1,131 @@
 # 白熊客栈 / Bear Harness
 
-白熊客栈是一个围绕 [Pi Coding Agent](https://github.com/badlogic/pi-mono) 构建的本地桌面角色产品。Pi 负责会话内容和执行，Bear 负责角色包、角色运行目录、会话资源、记忆、外部工作与结果展示。极昼（Jizhou）是随产品交付的默认角色包，不是产品框架本身。
+**English** | [简体中文](README.zh-CN.md)
 
-Electron 是生产外壳；WebDev 是本地开发和端到端验收环境，不是公开 Web 服务。
+**A local-first desktop AI companion, backed by a real agent runtime.**
 
-## 快速开始
+Meet a character with a place, a voice, and a shared history—without giving up real tools, independent conversations, or your choice of models. Bear Harness brings character-driven interaction to [Pi](https://github.com/earendil-works/pi), the agent runtime underneath.
 
-要求 Node.js `24.19.0` 和 npm `11.17.0`。
+The bundled character, **极昼 (Jizhou)**, welcomes you into an aurora-lit study. Jizhou is one character package, not the framework itself: you can customize or author packages with their own identity, scenes, media, and behavior.
+
+![Jizhou conversation in the aurora study](docs/screenshots/conversation.webp)
+
+*Recaptured from the real, isolated WebDev UI at 1440×850, using authored replies from a loopback provider. This is not live-model validation or evidence of file modifications. Jizhou's character dialogue is shown in Chinese.*
+
+## A companion with working tools
+
+- **Character presence, not just a chat label.** Scenes and expressions give conversations a setting; contextual choices and character media make room for interaction beyond text. Character packages own their stories and presentation.
+- **Conversations that keep their place.** Run independent Pi sessions concurrently, branch a conversation, edit a message, or retry a reply. Inspect native tool names, arguments, results, errors, and visible custom content, and load older native history without replacing it with a synthetic chat log. Switching the visible conversation does not stop a session running in the background.
+- **Memory with clear boundaries.** Keep explicit notes in `MEMORY.md`, and enable relationship recall by configuring embeddings. Relationship memory and its records are isolated per character; embedding configuration and model caches are system-wide. Failed or unavailable retrieval is not reported as a successful search with no hits; diagnostics stay bounded, redacted, and character-local.
+- **Optional work, inspectable results.** New delegations use the built-in Pi Worker only. Character-wide current work, paginated history, and task details expose real Run state, activity, evidence, delivery, and Artifacts. Host-supported controls—not invented progress—govern steering, interruption, resumption, cancellation, permission responses, and delivery retries.
+- **Your provider, your models.** Configure providers and a model pool, then choose character defaults and conversation model routes. Embedding configuration is optional; using a remote service still means sending it the data needed for that service.
+
+## A closer look
+
+### Character media, in context
+
+Character media appears at its native conversation position as a thumbnail or playback trigger. Select it to open a separate media viewer; CGs preserve their composition and support expanded and original-size viewing. Closing the viewer returns to the conversation without changing an open result workspace.
+
+![Jizhou character media in its independent viewer](docs/screenshots/media-preview.webp)
+
+*Recaptured at 1440×850 in the same isolated app. The media trigger is a genuine native `host_media` tool result driven by the authored loopback provider—not live-model proof or a task Artifact.*
+
+Run Artifacts use their own result buttons. On wide screens, selecting a result creates two main columns—conversation and result—with the standing-character area yielding space. Smaller windows use a drawer or full-screen result view. Run completion alone does not change the layout.
+
+Task selection spans the current character's conversations; Artifact selection belongs to its conversation. Opening a different conversation's Artifact is an explicit navigation action. Background work never steals focus, switches conversations, or opens results by itself. Run completion and result delivery are separate: delivery is acknowledged only when the original Pi session persists the native custom message, not when a follow-up is merely queued. Retrying delivery does not run the task again; requesting another execution sends an ordinary message through Pi.
+
+### The same interface, in a narrower window
+
+<p align="center">
+<img src="docs/screenshots/conversation-mobile.webp" width="320" alt="Jizhou conversation in a narrow-screen WebDev browser viewport" />
+</p>
+
+*Recaptured WebDev viewport at 390×1100 with the same isolated authored provider and Chinese Jizhou dialogue—not a native mobile app or execution proof. Electron is the desktop product shell; WebDev is the local development and acceptance surface.*
+
+## Run from source
+
+Install [fnm](https://github.com/Schniz/fnm), then use the repository-pinned **Node.js `24.19.0`** and **npm `11.17.0`**. From the repository root:
 
 ```sh
-npm install
-npm run dev:web
+fnm install
+fnm exec --using=.nvmrc npm install
+fnm exec --using=.nvmrc npm run dev:web
 ```
 
-WebDev 会输出实际使用的本地地址，通常从 `http://127.0.0.1:3200` 开始探测。它只监听回环地址，并使用进程级令牌保护 Host 接口。
+Open the loopback address printed by WebDev. It probes available ports starting at `http://127.0.0.1:3200`; use the address from your own process output.
 
-启动桌面开发版：
+To launch the Electron desktop development shell instead:
 
 ```sh
-npm run dev --workspace @bear-harness/desktop
+fnm exec --using=.nvmrc npm run dev --workspace @bear-harness/desktop
 ```
 
-## 产品边界
+On first setup, configure your provider credentials and reply model. Optionally configure a local or remote embedding service to enable relationship memory, then complete the character's first meeting and start a conversation.
 
-- Pi 是对话、消息、分支、模型历史、流式状态、队列、工具执行及会话生命周期事件的唯一权威。
-- Bear 管理真实的 Pi `AgentSession` 句柄，可以并发打开、显式路由、关闭、改名、归档和删除会话，但不会复制一套 Pi 状态机。
-- `active` 只是一个窗口当前显示的会话；`open` 表示 Host 持有真实会话句柄；`running` 和 `streaming` 来自 Pi。切换界面不会停止后台会话。
-- Character 和 Display 使用同一套角色数据库事务与响应式快照。Character 只有 `global`（当前用户与角色）和 `conversation` 两种顶层作用域；Display 只属于会话。
-- System Settings 负责供应商、模型池、网络和 embedding；Character Onboarding 只负责新角色的第一次见面、关系、记忆许可和角色默认模型。
-- 显式记忆写入 `MEMORY.md`；自动 TDAI 记忆按角色独立保存。embedding 设置和模型缓存是系统级，向量、索引和记录是角色级。
-- 外部工作由 External Run 管理。生成文件是归属于 Run 的 Artifact，经过所有权、路径、MIME、大小和哈希验证后进入角色自己的 CAS。
+**Local-first is not an offline guarantee.** Bear stores application data locally, but remote model providers receive the conversation and tool context sent to them; remote embedding services receive text submitted for embedding. Choose and configure those services accordingly.
 
-详细所有权和数据流见[系统架构](docs/refernece/architecture.md)。
+WebDev binds to loopback and protects Host calls with a process-level token. This is a development boundary, **not internet-facing user authentication**: do not expose the WebDev Host to a network.
 
-## 本地数据布局
+## Under the hood
 
-角色包和角色运行数据物理分离；每个角色的运行时文件与设置位于一个独立目录中：
+Bear is a character and product layer around Pi, not a second agent state machine:
 
-```text
-<dataRoot>/
-  system/
-    settings.db
-    security/
-    providers/
-    models/embeddings/
-    updates/
-  characters/<companionId>/
-    character.yaml
-    STORY.md
-    assets/
-    canon/
-    plugins/
-    skills/
-  companions/<companionId>/
-    runtime.db
-    sessions/
-    memory/MEMORY.md
-    memory/tdai/
-    runs/<runId>/
-    artifacts/<sha256>
-    audit/
-    diagnostics/
-```
-
-旧平面布局只允许经过一次性、失败关闭的迁移进入这棵目录树；迁移完成后没有双读、双写或旧路径回退。
-
-## 工作区
-
-| Workspace | 职责 |
+| Layer | Owns |
 | --- | --- |
-| `@bear-harness/schema` | Zod 约束、推断和 JSON Schema 辅助能力 |
-| `@bear-harness/protocol` | 有界 RPC、响应包、持久产品事件和 Pi 临时事件协议 |
-| `@bear-harness/companion-client` | 对 Electron IPC / WebDev HTTP 保持中立的类型化客户端 |
-| `@bear-harness/host-runtime` | Pi 会话 Registry、系统/角色存储、Character/Display、记忆、Runs、Artifacts、安全与审计 |
-| `@bear-harness/tdai-core` | 自动关系记忆的本地/远端检索与处理核心 |
-| `@bear-harness/companion-ui` | SolidJS 响应式投影、双层设置、会话、工作进度和结果工作区 |
-| `@bear-harness/product-config` | 构建时产品身份、品牌和发行配置 |
-| `@bear-harness/i18n` | 产品界面文案；角色文案仍由角色包拥有 |
-| `@bear-harness/desktop` | Electron 隔离、原生凭据、文件选择、Artifact 动作、诊断和打包 |
-| `@bear-harness/web-dev` | 本地浏览器 Host、HTTP 传输和 Playwright 验收 |
+| **Pi** | Messages, branches, model history, streaming, tool execution, and queues |
+| **Bear Host** | Real Pi session handles and resource membership/routing, character packages, scoped state and memory, Run lifecycle and durable result-delivery tracking, Artifacts, and local security boundaries |
+| **Shared UI + shells** | The interactive companion interface; Electron supplies desktop integration, while WebDev supplies local browser development and acceptance |
 
-默认角色包入口是 [`config/characters/jizhou/character.yaml`](config/characters/jizhou/character.yaml)。创建或导入角色包前请阅读[角色包创作指南](docs/character-package-authoring.md)。
+Character packages live in `characters/<companionId>/`; their mutable sessions, memory, Runs, and Artifacts live separately in `companions/<companionId>/`. System settings and shared embedding caches live under `system/`. Updating a character package is not the same operation as deleting its runtime data.
 
-## 开发命令
+The Renderer, character packages, models, and worker executors are not application-state authorities. Host validates resource ownership and native actions; character presentation cannot declare a Run successful or grant itself permissions. The UI does not optimistically invent Host-backed state: persisted changes come from successful Host responses or refreshed authoritative queries. New delegation has no agent selector, default-executor setting, or automatic Codex fallback; its accepted Pi receipt identifies a Run, not a completed task.
 
-```sh
-npm run dev:web
-npm run dev --workspace @bear-harness/desktop
-npm run lint
-npm run typecheck
-npm run test:unit
-npm run test:coverage
-npm run build
-```
+- **Architecture:** [system ownership and data flow](docs/refernece/architecture.md), [Host runtime](docs/refernece/host-runtime.md), and [Character / Display authority](docs/host-state-authority.md).
+- **Security and surfaces:** [Electron isolation and native boundaries](docs/refernece/desktop.md), [WebDev transport](docs/refernece/web-dev.md), and [protocol / schema](docs/refernece/protocol-schema.md).
+- **Character creation:** [package authoring guide](docs/character-package-authoring.md) and [Jizhou's manifest](config/characters/jizhou/character.yaml).
+- **Codebase navigation:** [reference index](docs/refernece/index.md) and [shared companion UI](docs/refernece/companion-ui.md).
 
-主要验收命令：
+## Development and release verification
+
+Useful development commands, using the pinned toolchain:
 
 ```sh
-npm run test:e2e:web:required
-npm run test:e2e:web:live
-npm run test:e2e:electron
-npm run test:release:recovery
-npm run test:e2e:packaged
-npm run test:diagnostics:crash
-npm run audit
+fnm exec --using=.nvmrc npm run lint
+fnm exec --using=.nvmrc npm run typecheck
+fnm exec --using=.nvmrc npm run test:unit
+fnm exec --using=.nvmrc npm run test:coverage
+fnm exec --using=.nvmrc npm run build
 ```
 
-`npm run check` 汇总 lint、typecheck、覆盖率、构建和 WebDev E2E；`npm run check:electron` 汇总桌面构建、Electron E2E 与崩溃诊断。完整 `npm run release:gate` 只在受保护的 `CI=true` 发布矩阵中运行，不能用一次本地构建代替。
+<details>
+<summary>Acceptance, recovery, and packaging commands</summary>
 
-平台包：
+For interactive acceptance and recovery:
 
 ```sh
-npm run package:mac:arm64
-npm run package:mac:x64
-npm run package:win
-npm run package:linux
+fnm exec --using=.nvmrc npm run test:e2e:web:required
+fnm exec --using=.nvmrc npm run test:e2e:web:live
+fnm exec --using=.nvmrc npm run test:e2e:electron
+fnm exec --using=.nvmrc npm run test:release:recovery
+fnm exec --using=.nvmrc npm run test:e2e:packaged
+fnm exec --using=.nvmrc npm run test:diagnostics:crash
+fnm exec --using=.nvmrc npm run audit
 ```
 
-发布前必须使用同一个干净提交完成要求的平台矩阵、真实模型验证、签名/证明和 packaged smoke；公开分发还需要平台签名及 notarization。详见[开发与发布验证](docs/development-verification.md)。
+`npm run check` combines lint, typechecking, coverage, builds, and WebDev E2E. `npm run check:electron` covers builds, Electron E2E, and crash diagnostics; run either with the same `fnm exec --using=.nvmrc` prefix.
 
-## 结果工作区
+Packaging targets are `package:mac:arm64`, `package:mac:x64`, `package:win`, and `package:linux`. For example:
 
-Run 启动不会强制分栏；进度留在会话时间线和“当前工作”区域。Run 完成只提示结果可用。用户选择完成的 Run 或 Artifact 后才打开结果工作区：
+```sh
+fnm exec --using=.nvmrc npm run package:linux
+```
 
-- `>= 1600px`：会话与预览双列；
-- `768..1599px`：右侧抽屉；
-- `<= 767px`：全屏结果页。
+**A local build is not release evidence.** The full `release:gate` runs only in the protected `CI=true` release matrix. Distribution requires verification from the same clean commit, real-provider checks, platform packages and packaged smoke tests, auditable evidence, and the applicable signing/notarization. Packaging commands and these screenshots do not establish release readiness or the availability of signed downloads. See [development and release verification](docs/development-verification.md) for the complete policy.
 
-Artifact 支持元数据、安全预览、打开、在文件管理器中显示、另存为，以及来源/证据。Renderer 只提交不可变 ID；Host 校验 `conversation -> run -> artifact` 所有权和内容完整性，绝不把内部 CAS 路径暴露给 Renderer。
+</details>
 
-## 安全原则
+## Licenses and credits
 
-- Renderer、角色包、模型和外部执行器都不是应用状态权威。
-- 普通本地输入文件留在原绝对路径；选择器把路径作为普通用户文本交给 Pi，不创建 Host 上传副本或隐式生命周期。
-- 生成输出只通过 Run-owned Artifact 边界进入产品，并按角色隔离。
-- API secrets 保存在平台凭据库；普通 RPC、日志和诊断不会返回秘密或内部路径。
-- WebDev 的回环令牌是开发边界，不是互联网用户认证；不要将 WebDev Host 暴露到网络。
-- Desktop 使用 context isolation、sandbox、关闭 Node integration，并在 main 进程验证 IPC 来源和所有原生动作。
-
-## 文档
-
-- [参考索引](docs/refernece/index.md)
-- [系统架构与数据流](docs/refernece/architecture.md)
-- [Host Runtime](docs/refernece/host-runtime.md)
-- [Companion UI](docs/refernece/companion-ui.md)
-- [Protocol / Schema](docs/refernece/protocol-schema.md)
-- [Desktop](docs/refernece/desktop.md)
-- [WebDev](docs/refernece/web-dev.md)
-- [Character / Display 权威](docs/host-state-authority.md)
-- [角色包创作](docs/character-package-authoring.md)
-- [开发与发布验证](docs/development-verification.md)
-
-目录名 `docs/refernece/` 是仓库现有路径，修改链接时保持一致。
-
-## 许可证
-
-- 代码使用 [GNU GPL-3.0](LICENSE)。
-- 白熊客栈、极昼及相关文字/视觉资产使用 [CC BY-SA 4.0](BRAND-LICENSE)；该许可不授予商标权或暗示背书。
-- `@bear-harness/tdai-core` 的上游代码按其记录的 [MIT 许可证](packages/tdai-core/LICENSE) 分发。
+- **Repository code:** [GNU GPL-3.0](LICENSE).
+- **Brand, character writing, and visual assets:** **fltb — 白熊客栈 / Bear Harness Brand Assets**, licensed under [CC BY-SA 4.0](BRAND-LICENSE). Adaptations must credit the creator, disclose changes, and follow the share-alike terms. This license does not grant trademark rights or imply endorsement. Bundled art details: [asset provenance](config/characters/jizhou/assets/PROVENANCE.md).
+- **Upstream `@bear-harness/tdai-core` code:** distributed under its recorded [MIT license](packages/tdai-core/LICENSE).

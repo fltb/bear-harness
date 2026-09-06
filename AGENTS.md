@@ -97,7 +97,7 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 - Each media item declares asset metadata plus natural-language `description` and `use_when`. Host does not interpret `use_when` as a condition or permission.
 - `host_media({ id })` resolves one declared media item. `host_choices({ prompt, choices })` creates choices only for the current response. Both remain ordinary Pi tool results at their native transcript positions and never write Character, Display, another table, or presentation history.
 - Choice-button clicks send their natural-language message as ordinary user input. Choices have no ids, commands, callbacks, consumption state, lifecycle, or privileged semantics.
-- Media and Artifact may share the same responsive preview column, but never ownership. Media belongs to its character package and Pi tool result; Artifact belongs to its External Run. Opening and closing a preview is UI-local and is not persisted or sent to Host.
+- Media and Artifact have distinct presentation containers and ownership. Media belongs to its character package and native Pi tool result: its timeline thumbnail/trigger opens an application-modal media viewer. Artifact belongs to its External Run: its result/file trigger opens the responsive result workspace. Image MIME alone never determines routing. Media opening does not close a selected result. Opening, expanding, and closing either surface is UI-local and is not persisted or sent to Host.
 - Character and Display share one storage/update mechanism and one reactive snapshot path while remaining separate semantic domains.
 - Character State has only `global` and `conversation` scopes. Here `global` means the current installation/user and character pair.
 - Every direct child of the Character root declares exactly one `x-scope`, restricted to the enum `global | conversation`; descendants inherit and cannot override it.
@@ -144,9 +144,10 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 
 - Starting a Run does not force a split layout. Progress stays in the conversation timeline and the "current work" surface.
 - Completing a Run signals that a result is ready but does not steal focus.
-- Selecting a completed Run, Artifact, or timeline MediaCard opens the shared preview workspace. This layout reuse does not change domain ownership.
-- At widths `>= 1600px`, conversation and result preview are adjacent columns. At `768..1599px`, the result is a right-side overlay/drawer. At `<= 767px`, it is a full-screen result view.
-- Closing the result or switching to a conversation that does not own it returns to the normal conversation layout.
+- Timeline media thumbnails and Run/Artifact result buttons are entry points, not the viewer/workspace itself. Neither media emission nor Run completion automatically opens a surface.
+- Selecting a Run/Artifact result opens the result workspace. At widths `>= 1600px`, conversation and result are the two main content columns; the large standing-character stage yields rather than becoming a third content column. At `768..1599px`, the result is a right-side overlay/drawer. At `<= 767px`, it is a full-screen result view.
+- Selecting a character-media thumbnail opens a separate modal viewer above the current layout. Preserve image composition, provide original-size/expanded viewing, use playback controls for audio/video, and stop playback on close. At phone widths the viewer fills the screen. It does not replace the result selection underneath.
+- Closing the result restores the normal character/conversation layout. Switching conversations clears the previous conversation's local viewer/result selection without changing Pi execution.
 
 ## Events and snapshots
 

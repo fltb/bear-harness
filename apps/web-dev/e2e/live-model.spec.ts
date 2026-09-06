@@ -642,7 +642,7 @@ test("configured live model answers a natural story with scene expression media 
 	const damagedSignal = thread.getByRole("region", { name: "残缺报码" });
 	await expect(damagedSignal).toBeVisible();
 	await damagedSignal.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	const damagedSignalPreview = page.getByRole("complementary", { name: "残缺报码" });
+	const damagedSignalPreview = page.getByRole("dialog", { name: "残缺报码" });
 	await expect(damagedSignalPreview).toBeVisible();
 	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 
@@ -677,7 +677,7 @@ test("configured live model answers a natural story with scene expression media 
 	await expect(page.getByRole("img", { name: "转发台资料室" })).toBeVisible();
 	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
 	await expect
-		.poll(() => thread.getByRole("region", { name: "转发台登记", exact: true }).count())
+		.poll(() => thread.getByRole("region", { name: "转发台灯下", exact: true }).count())
 		.toBeGreaterThan(0);
 });
 
@@ -765,7 +765,7 @@ test("configured live model answers naturally with rendered structured content",
 		"极昼，我在给客栈写一个夜间取暖费用小工具。电暖器功率 1.5kW，每晚 8 小时，电价 0.6 元/kWh，住 7 晚。算出总费用并解释计算关系，再给一个最小的 TypeScript 计算函数；顺手把它和 0.9kW 热泵的每晚耗电并排摆清楚，让我决定用哪个。";
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	await composer.fill(prompt);
-	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 	const response = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "84" });

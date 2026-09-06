@@ -1,5 +1,5 @@
 import { I18nextProvider, i18n } from "@bear-harness/i18n";
-import { zhCN } from "@bear-harness/i18n/locales";
+import { en, zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,7 +50,15 @@ function loadedClient() {
 			],
 			hasMoreBefore: false,
 		},
-		live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+		live: {
+			isStreaming: false,
+			isCompacting: false,
+			isRetrying: false,
+			retryAttempt: 0,
+			pendingToolCallIds: [],
+			steering: [],
+			followUp: [],
+		},
 	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({
@@ -102,7 +110,7 @@ describe("locale switching stability", () => {
 		await i18n.changeLanguage("en");
 
 		// English copy proves the language actually switched and re-rendered…
-		await screen.findByText("Active work");
+		await screen.findByRole("button", { name: new RegExp(en.threadHead.runningWork) });
 		// …while the persisted message still renders: the store instance survived.
 		expect(within(thread).getByText("必须保留的记忆测试消息")).toBeInTheDocument();
 		await waitFor(() => expect(screen.queryByRole("status", { name: "Loading" })).toBeNull());

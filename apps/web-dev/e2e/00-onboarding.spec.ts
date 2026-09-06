@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { selectKobalteOption } from "./helpers";
+import { ensureReadyForConversation, selectKobalteOption } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	let eventRequests = 0;
@@ -43,17 +43,24 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await providerSetup.getByRole("button", { name: zhCN.settings.addProvider }).click();
 	const replyModel = modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel });
 	await expect(replyModel).toBeVisible();
-	await selectKobalteOption(page, replyModel, /rule-model/);
-	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
+	await test.step("explicit model selection enables the uncommitted system draft", async () => {
+		await selectKobalteOption(page, replyModel, /rule-model/);
+		await expect(replyModel).toContainText(provider.modelId);
+		await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
+	});
 	expect(eventRequests).toBeGreaterThanOrEqual(1);
-	await page.reload();
-	await expect(modelSetup).toBeVisible();
-	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
 	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
 	const embeddingSetup = page.getByRole("dialog", {
 		name: zhCN.settings.memoryVectorSection,
 	});
 	await expect(embeddingSetup).toBeVisible();
+	// System model selection is an unsaved draft until Continue commits it.
+	// A new renderer resumes the Host-owned embedding stage after that commit.
+	await test.step("reload resumes embedding after the system model commit", async () => {
+		await page.reload();
+		await expect(modelSetup).toBeHidden();
+		await expect(embeddingSetup).toBeVisible();
+	});
 	const embeddingContinue = embeddingSetup.getByRole("button", {
 		name: zhCN.messages.continue,
 	});
@@ -96,4 +103,91 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(onboarding).toBeHidden();
 	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();
 	expect(eventRequests).toBeGreaterThanOrEqual(3); // one persistent connection per observed page load
+});
+
+test("completed onboarding never mounts a setup dialog while reload authority is pending", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	await page.addInitScript(() => {
+		const probe = window as typeof window & { onboardingDialogMounts: number };
+		probe.onboardingDialogMounts = 0;
+		const dialogs = new Set<Element>();
+		const recordDialog = (element: Element) => {
+			if (element.getAttribute("role") === "dialog" && !dialogs.has(element)) {
+				dialogs.add(element);
+				probe.onboardingDialogMounts++;
+			}
+		};
+		const observer = new MutationObserver((records) => {
+			for (const record of records) {
+				if (record.type === "attributes" && record.target instanceof Element) {
+					recordDialog(record.target);
+				}
+				for (const node of record.addedNodes) {
+					if (node instanceof Element) recordDialog(node);
+					const descendants = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+					while (descendants.nextNode()) recordDialog(descendants.currentNode as Element);
+				}
+			}
+		});
+		observer.observe(document, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["role"],
+		});
+	});
+	const holds = ["model.defaults.get", "onboarding.get"].map((channel) => ({
+		channel,
+		arrived: Promise.withResolvers<void>(),
+		release: Promise.withResolvers<void>(),
+	}));
+	for (const hold of holds) {
+		await page.route(`**/rpc/${hold.channel}`, async (route) => {
+			const response = await route.fetch();
+			expect(response.ok()).toBe(true);
+			const body = await response.json();
+			expect(body).toMatchObject(
+				hold.channel === "onboarding.get"
+					? { ok: true, data: { status: "complete" } }
+					: { ok: true, data: { onboardingComplete: true } },
+			);
+			hold.arrived.resolve();
+			await hold.release.promise;
+			await route.fulfill({ response });
+		});
+	}
+	const expectNoDialogMounts = async () => {
+		// Cross a browser paint boundary so the mutation observer includes the
+		// current render, including any dialog inserted and removed in that render.
+		const mounts = await page.evaluate(async () => {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			return (window as typeof window & { onboardingDialogMounts: number }).onboardingDialogMounts;
+		});
+		expect(mounts).toBe(0);
+		await expect(page.getByRole("dialog")).toHaveCount(0);
+	};
+	try {
+		await page.reload();
+		await Promise.all(holds.map((hold) => hold.arrived.promise));
+		await expect(page.getByRole("application", { name: zhCN.shell.productName })).toBeVisible();
+		await expectNoDialogMounts();
+		// Model authority resolves first; onboarding is still unknown, not incomplete.
+		for (const hold of holds) {
+			const delivered = page.waitForResponse(
+				(response) => new URL(response.url()).pathname === `/rpc/${hold.channel}`,
+			);
+			hold.release.resolve();
+			await (await delivered).finished();
+			await expectNoDialogMounts();
+		}
+		await expect(
+			page.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
+		).toBeEnabled();
+		await expectNoDialogMounts();
+	} finally {
+		for (const hold of holds) hold.release.resolve();
+		await page.unrouteAll({ behavior: "wait" });
+	}
 });

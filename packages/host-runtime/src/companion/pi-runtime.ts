@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
+import type { LivePush, PiProjectionVersion } from "@bear-harness/protocol";
 import type { RecallResult } from "@bear-harness/tdai-core";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AgentSession,
 	type AgentSessionEvent,
@@ -19,6 +21,7 @@ import PQueue from "p-queue";
 import type { CharacterPackage } from "./character-loader.js";
 import type { CompanionStateStore } from "./companion-store.js";
 import { type HostToolInput, registerHostTools } from "./host-tool-register.js";
+import { advancePiProjectionVersion, projectPiLiveSnapshot } from "./pi-live-events.js";
 import { loadRolePluginTools } from "./role-resources.js";
 
 type Images = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
@@ -30,21 +33,20 @@ export interface PiRoleResources {
 export type PiSnapshot = AgentSession | undefined;
 export type PiSessionCloseDisposition = "discard-unpersisted" | "preserve";
 
-export interface PiSessionEvent {
-	sessionId: string;
-	event: AgentSessionEvent;
-}
-
 export interface PiRuntimeOptions {
 	paths: { runtime: string; sessions: string };
 	models: { getModels(): Promise<ModelRuntime> };
 	character(): CharacterPackage;
 	store: CompanionStateStore;
 	delegate: HostToolInput["delegate"];
-	canon(companionId: string, query: string, limit: number): Promise<unknown>;
+	runRead: HostToolInput["runRead"];
+	runControl: HostToolInput["runControl"];
+	canon(companionId: string, query: string, limit: number, moduleId?: string): Promise<unknown>;
 	memory: {
+		enabled(companionId: string): boolean;
 		recall(companionId: string, sessionId: string, text: string): Promise<RecallResult>;
 		capture(companionId: string, sessionId: string, messages: AgentMessage[]): Promise<void>;
+		drain(sessionId: string): Promise<void>;
 		search(companionId: string, query: string, limit: number): Promise<unknown>;
 		searchConversations(
 			companionId: string,
@@ -63,7 +65,8 @@ export interface PiRuntimeOptions {
 	sessionContext?(sessionId: string): string | Promise<string>;
 	titleChanged?(sessionId: string, title: string): void;
 	sessionDiscarded?(sessionId: string): void;
-	sessionEvent?(event: PiSessionEvent): void;
+	sessionEvent?(sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion): void;
+	sessionActivity?(event: Extract<LivePush, { type: "conversationActivity" }>): void;
 	systemPrompt?: string;
 }
 
@@ -73,6 +76,11 @@ type PendingResponseGuidance = {
 	prompt: string;
 	feedback: string;
 };
+type ExternalDelivery = {
+	promise: Promise<{ entryId: string }>;
+	dispose(): void;
+};
+const RESULT_ACK_TIMEOUT_MS = 5_000;
 
 /** Resource registry around Pi-owned sessions. It never mirrors Pi conversation state. */
 export class PiRuntime {
@@ -81,6 +89,7 @@ export class PiRuntime {
 	private readonly deleting = new Map<string, Promise<void>>();
 	private readonly sessionEvents = new Map<string, PQueue>();
 	private readonly pendingResponseGuidance = new Map<string, PendingResponseGuidance>();
+	private readonly externalDeliveries = new WeakMap<AgentSession, Map<string, ExternalDelivery>>();
 	private readonly cwd: string;
 	private readonly sessionDir: string;
 	private roleResources: PiRoleResources;
@@ -186,9 +195,16 @@ export class PiRuntime {
 	}
 
 	async abort(sessionId: string) {
-		return this.inSessionSequence(sessionId, async () =>
-			(await this.requireSessionNow(sessionId)).abort(),
-		);
+		// Cancellation must not wait behind navigation or prompt preflight in the mutation queue.
+		this.requireAvailable(sessionId);
+		const session = await this.current(sessionId);
+		this.requireAvailable(sessionId);
+		// Close may have detached this handle while opening/current was awaited.
+		// Stopping a closed session must never create a replacement runtime.
+		if (!session || this.sessions.get(sessionId)?.session !== session) return;
+		session.abortCompaction();
+		session.abortBranchSummary();
+		await session.abort(); // Pi also cancels native retry backoff.
 	}
 
 	async navigate(sessionId: string, entryId: string) {
@@ -281,23 +297,109 @@ export class PiRuntime {
 	}
 
 	async deliverExternalResult(sessionId: string, runId: string, content: string) {
-		return this.inSessionSequence(sessionId, async () => {
+		// Serialize admission only: waiting for Pi's follow-up queue must not block Stop or close.
+		const { delivery } = await this.inSessionSequence(sessionId, async () => {
 			const session = await this.requireSessionNow(sessionId);
 			const existing = session.sessionManager
 				.getEntries()
 				.find((entry) => isExternalResult(entry, runId));
-			if (existing) return { entryId: existing.id };
-			await session.sendCustomMessage(
-				{
-					customType: "host_external_agent_result",
-					content,
-					display: true,
-					details: { runId },
-				},
-				{ triggerTurn: true, deliverAs: "followUp" },
-			);
-			return { entryId: session.sessionManager.getLeafId() ?? runId };
+			if (existing) return { delivery: Promise.resolve({ entryId: existing.id }) };
+			const operations =
+				this.externalDeliveries.get(session) ?? new Map<string, ExternalDelivery>();
+			this.externalDeliveries.set(session, operations);
+			const operation =
+				operations.get(runId) ?? this.beginExternalDelivery(session, runId, content, operations);
+			return { delivery: operation.promise };
 		});
+		let timer: NodeJS.Timeout | undefined;
+		try {
+			return await Promise.race([
+				delivery,
+				new Promise<never>((_resolve, reject) => {
+					timer = setTimeout(
+						() => reject({ kind: "unavailable", reason: "pi_result_delivery_pending" }),
+						RESULT_ACK_TIMEOUT_MS,
+					);
+				}),
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	private beginExternalDelivery(
+		session: AgentSession,
+		runId: string,
+		content: string,
+		operations: Map<string, ExternalDelivery>,
+	): ExternalDelivery {
+		const { promise, resolve: accepted, reject } = Promise.withResolvers<{ entryId: string }>();
+		let unsubscribe = () => {};
+		let settled = false;
+		let sendCompleted = false;
+		const finish = (entryId?: string, error?: unknown) => {
+			if (settled) return;
+			settled = true;
+			unsubscribe();
+			operations.delete(runId);
+			if (entryId) accepted({ entryId });
+			else reject(error);
+		};
+		const reconcile = () => {
+			if (settled) return false;
+			const entry = session.sessionManager
+				.getEntries()
+				.find((item) => isExternalResult(item, runId));
+			if (!entry) {
+				// Native queue exhaustion, not a copied Host queue, proves a removed delivery
+				// can no longer append. Idle triggerTurn must finish before this check applies.
+				if (sendCompleted && session.isIdle && !session.agent.hasQueuedMessages()) {
+					finish(undefined, { kind: "unavailable", reason: "pi_result_not_persisted" });
+				}
+				return false;
+			}
+			finish(entry.id);
+			return true;
+		};
+		const operation: ExternalDelivery = {
+			promise,
+			dispose: () => {
+				if (!reconcile())
+					finish(undefined, { kind: "unavailable", reason: "pi_result_session_closed" });
+			},
+		};
+		operations.set(runId, operation);
+		unsubscribe = session.subscribe((event) => {
+			if (
+				event.type === "message_end" ||
+				event.type === "agent_settled" ||
+				event.type === "queue_update"
+			) {
+				// Native subscribers fire before SessionManager's synchronous append.
+				queueMicrotask(reconcile);
+			}
+		});
+		// Keep ownership until persistence, native queue exhaustion, or disposal, even after timeout.
+		// sendCustomMessage resolves on enqueue when busy, and after the entire turn when idle.
+		try {
+			void session
+				.sendCustomMessage(
+					{ customType: "host_external_agent_result", content, display: true, details: { runId } },
+					{ triggerTurn: true, deliverAs: "followUp" },
+				)
+				.then(
+					() => {
+						sendCompleted = true;
+						reconcile();
+					},
+					(error) => {
+						if (!reconcile()) finish(undefined, error);
+					},
+				);
+		} catch (error) {
+			if (!reconcile()) finish(undefined, error);
+		}
+		return operation;
 	}
 
 	async close(
@@ -316,6 +418,8 @@ export class PiRuntime {
 		const manager = session.sessionManager;
 		const sessionFile = manager.getSessionFile();
 		const unmaterialized = Boolean(sessionFile && !existsSync(sessionFile));
+		session.abortCompaction();
+		session.abortBranchSummary();
 		let aborted = false;
 		if (disposition === "preserve") {
 			if (!sessionFile) throw { kind: "unavailable", reason: "pi_session_not_persistable" };
@@ -327,8 +431,14 @@ export class PiRuntime {
 		}
 		const handle = this.sessions.get(sessionId);
 		this.sessions.delete(sessionId);
+		const deliveries = this.externalDeliveries.get(session);
+		if (deliveries) {
+			for (const operation of deliveries.values()) operation.dispose();
+			this.externalDeliveries.delete(session);
+		}
 		try {
 			if (!aborted) await session.abort();
+			await this.options.memory.drain(sessionId);
 		} finally {
 			handle?.unsubscribe();
 			session.dispose();
@@ -415,9 +525,6 @@ export class PiRuntime {
 				});
 				void turn.catch(rejected);
 			});
-			if (options.responseGuidance !== undefined) {
-				await turn.catch(() => undefined);
-			}
 		} finally {
 			if (this.pendingResponseGuidance.get(session.sessionId)?.operation === operation) {
 				this.pendingResponseGuidance.delete(session.sessionId);
@@ -485,8 +592,9 @@ export class PiRuntime {
 		const opening = this.buildSession(manager)
 			.then((session) => {
 				const unsubscribe = session.subscribe((event) => {
+					const version = advancePiProjectionVersion(session);
 					try {
-						this.options.sessionEvent?.({ sessionId: id, event });
+						this.options.sessionEvent?.(id, event, version);
 					} catch {
 						// A UI transport cannot interrupt Pi's event loop.
 					}
@@ -515,6 +623,7 @@ export class PiRuntime {
 		]
 			.filter((value): value is string => Boolean(value?.trim()))
 			.join("\n\n");
+		let hostTools: Record<string, AgentTool> = {};
 		const loader = new DefaultResourceLoader({
 			cwd: this.cwd,
 			agentDir: this.cwd,
@@ -527,13 +636,37 @@ export class PiRuntime {
 			systemPrompt: baseSystemPrompt,
 			extensionFactories: [
 				(pi) => {
+					pi.on("tool_result", (event) => {
+						if (!Object.hasOwn(hostTools, event.toolName)) return;
+						const details = event.details;
+						if (
+							typeof details === "object" &&
+							details !== null &&
+							"ok" in details &&
+							details.ok === false &&
+							"code" in details &&
+							typeof details.code === "string" &&
+							details.code.length > 0 &&
+							"message" in details &&
+							typeof details.message === "string"
+						) {
+							return { isError: true, content: event.content, details };
+						}
+					});
 					pi.on("before_agent_start", async (event) => {
-						const recall = await this.options.memory.recall(companionId, sessionId, event.prompt);
-						const additions = [
-							await this.options.context?.(sessionId, event.prompt),
-							recall.appendSystemContext,
-							recall.prependContext,
-						].filter((value): value is string => Boolean(value?.trim()));
+						const recall: RecallResult = this.options.memory.enabled(companionId)
+							? await this.runActivity(session, "memory_recall", () =>
+									this.options.memory.recall(companionId, sessionId, event.prompt),
+								)
+							: {};
+						const context = this.options.context
+							? await this.runActivity(session, "context", () =>
+									this.options.context!(sessionId, event.prompt),
+								)
+							: undefined;
+						const additions = [context, recall.appendSystemContext, recall.prependContext].filter(
+							(value): value is string => Boolean(value?.trim()),
+						);
 						if (!additions.length) return;
 						return {
 							systemPrompt: `${event.systemPrompt}\n\n${additions.join("\n\n")}`,
@@ -544,8 +677,12 @@ export class PiRuntime {
 						if (!guidance) return;
 						return { systemPrompt: `${event.systemPrompt}\n\n${guidance}` };
 					});
-					pi.on("agent_settled", () => {
-						return this.options.memory.capture(companionId, sessionId, session.messages);
+					pi.on("agent_settled", async () => {
+						if (!this.options.memory.enabled(companionId)) return;
+						// Report failure through the stage event, but let Pi deliver agent_settled.
+						await this.runActivity(session, "memory_capture", () =>
+							this.options.memory.capture(companionId, sessionId, session.messages),
+						).catch(() => undefined);
 					});
 				},
 			],
@@ -557,27 +694,30 @@ export class PiRuntime {
 			: this.options.defaultModel(companionId);
 		const model = route && models.getModel(route.providerId, route.modelId);
 		if (!model) throw { kind: "unavailable", reason: "provider_auth_required" };
+		hostTools = registerHostTools({
+			sessionId: () => sessionId,
+			entryId: () => manager.getLeafId() ?? sessionId,
+			character: () => character,
+			store: this.options.store,
+			delegate: this.options.delegate,
+			runRead: this.options.runRead,
+			runControl: this.options.runControl,
+			canon: (query, limit, moduleId) => this.options.canon(companionId, query, limit, moduleId),
+			memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
+			conversationSearch: (query, limit) =>
+				this.options.memory.searchConversations(companionId, sessionId, query, limit),
+			...(model.input?.includes("image")
+				? {}
+				: { imageRead: (path: string) => this.readImage(session, companionId, path) }),
+			explicitMemory: {
+				read: () => this.options.memory.explicit.read(companionId),
+				edit: (oldText, newText) =>
+					this.options.memory.explicit.edit(companionId, oldText, newText),
+			},
+		});
 		const tools = {
 			...Object.fromEntries(createReadOnlyTools(this.cwd).map((tool) => [tool.name, tool])),
-			...registerHostTools({
-				sessionId: () => sessionId,
-				entryId: () => manager.getLeafId() ?? sessionId,
-				character: () => character,
-				store: this.options.store,
-				delegate: this.options.delegate,
-				canon: (query, limit) => this.options.canon(companionId, query, limit),
-				memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
-				conversationSearch: (query, limit) =>
-					this.options.memory.searchConversations(companionId, sessionId, query, limit),
-				...(model.input?.includes("image")
-					? {}
-					: { imageRead: (path: string) => this.readImage(session, companionId, path) }),
-				explicitMemory: {
-					read: () => this.options.memory.explicit.read(companionId),
-					edit: (oldText, newText) =>
-						this.options.memory.explicit.edit(companionId, oldText, newText),
-				},
-			}),
+			...hostTools,
 		};
 		const pluginTools = await loadRolePluginTools(this.roleResources.pluginPaths);
 		for (const tool of pluginTools) {
@@ -598,6 +738,38 @@ export class PiRuntime {
 		});
 		session = created.session;
 		return session;
+	}
+
+	private async runActivity<T>(
+		session: AgentSession,
+		activity: Extract<LivePush, { type: "conversationActivity" }>["activity"],
+		run: () => T | Promise<T>,
+	): Promise<T> {
+		const operationId = randomUUID();
+		const emit = (status: "started" | "completed" | "failed", errorMessage?: string) => {
+			try {
+				this.options.sessionActivity?.({
+					type: "conversationActivity",
+					conversationId: session.sessionId,
+					operationId,
+					activity,
+					status,
+					live: projectPiLiveSnapshot(session),
+					...(errorMessage !== undefined ? { errorMessage } : {}),
+				});
+			} catch {
+				// A UI transport cannot interrupt actual stage execution.
+			}
+		};
+		emit("started");
+		try {
+			const result = await run();
+			emit("completed");
+			return result;
+		} catch (error) {
+			emit("failed", (error instanceof Error ? error.message : String(error)).slice(0, 4096));
+			throw error;
+		}
 	}
 
 	private async readImage(

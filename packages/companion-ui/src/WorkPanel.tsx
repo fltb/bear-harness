@@ -1,7 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import type { CharacterDisplay } from "./stores/companion.js";
+import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import type {
 	ArtifactActionResponse,
 	ArtifactIdentity,
@@ -10,11 +9,8 @@ import type {
 	RunPermissionRequest,
 } from "./stores/ipc.js";
 import { type SelectedArtifact, useShellWorkflowStore } from "./stores/shell-workflows.js";
-import { Button, Dialog, TextField } from "./ui/primitives.js";
+import { Button, Dialog } from "./ui/primitives.js";
 
-type WorkLabels = NonNullable<CharacterDisplay["character"]["work_presentation"]>["labels"];
-const active = (status: RunInfo["status"]) =>
-	status === "enqueued" || status === "running" || status === "needs_user";
 const ARTIFACT_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_ARTIFACT_PREVIEW_BYTES = 64 * 1024 * 1024;
 const MAX_BROWSER_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -180,158 +176,155 @@ function artifactIssue(cause: unknown): ArtifactIssue {
 		return "corrupted";
 	return "unavailable";
 }
-export function PermissionCard(props: { permission: RunPermissionRequest }) {
+export function PermissionCard(props: { permission: RunPermissionRequest; run?: RunInfo }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = useShellWorkflowStore();
 	const key = `${props.permission.runId}:${props.permission.requestId}`;
 	const state = workflow.permissionAction(key);
-	const act = (action: () => Promise<unknown>) => workflow.runPermissionAction(key, action);
-	const optionLabel = (option: RunPermissionRequest["options"][number]) => {
-		if (option.kind.includes("reject")) return t("work.timeline.permissionDeny");
-		if (option.optionId === "accept_execpolicy_amendment")
-			return t("work.timeline.permissionAllowCommand");
-		if (option.kind === "allow_always") return t("work.timeline.permissionAllowSession");
-		return t("work.timeline.permissionAllow");
+	const run = createMemo(
+		() => props.run ?? workflow.host.runs.find((item) => item.id === props.permission.runId),
+	);
+	const act = (action: () => Promise<unknown>) => {
+		if (!state.busy()) workflow.runPermissionAction(key, action);
 	};
 	return (
-		<div class="action-proposal needs-user" data-permission-request={props.permission.requestId}>
+		<div
+			class="action-proposal needs-user"
+			data-permission-request={props.permission.requestId}
+			aria-busy={state.busy()}
+		>
 			<span class="system-label">{t("work.timeline.needsYou")}</span>
 			<h3>{props.permission.prompt}</h3>
 			<Show when={state.error()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={state.busy()}>
+				<span role="status">{t("work.task.busy")}</span>
+			</Show>
 			<div class="work-actions">
 				<For each={props.permission.options}>
-					{(option) => (
-						<Button
-							type="button"
-							disabled={state.busy()}
-							onClick={() =>
-								act(() =>
-									workflow.host.run.respondPermission(
-										props.permission.runId,
-										props.permission.requestId,
-										option.optionId,
-									),
-								)
-							}
-						>
-							{optionLabel(option)}
-						</Button>
-					)}
+					{(option) => {
+						const id = createUniqueId();
+						return (
+							<Button
+								type="button"
+								class="permission-option"
+								aria-labelledby={`${id}-name`}
+								aria-describedby={`${id}-scope`}
+								disabled={state.busy() || !run()?.actions?.includes("respondPermission")}
+								onClick={() =>
+									act(() =>
+										workflow.host.run.respondPermission(
+											props.permission.runId,
+											props.permission.requestId,
+											option.optionId,
+										),
+									)
+								}
+							>
+								<span id={`${id}-name`}>{option.name}</span>
+								<small id={`${id}-scope`} class="permission-scope">
+									{option.kind}
+								</small>
+							</Button>
+						);
+					}}
 				</For>
-				<Button
-					type="button"
-					disabled={state.busy()}
-					onClick={() => act(() => workflow.host.run.cancel(props.permission.runId))}
-				>
-					{t("work.timeline.stopRun")}
-				</Button>
+				<Show when={run()?.actions?.includes("cancel")}>
+					<Button
+						type="button"
+						disabled={state.busy()}
+						onClick={() => act(() => workflow.host.run.cancel(props.permission.runId))}
+					>
+						{t("work.timeline.stopRun")}
+					</Button>
+				</Show>
 			</div>
 		</div>
 	);
 }
-export function WorkRunCard(props: { run: RunInfo; labels?: WorkLabels }) {
+
+export function WorkRunCard(props: { run: RunInfo }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = useShellWorkflowStore();
-	const state = workflow.runActionState(props.run.id);
-	const label = createMemo(() =>
-		props.run.status === "completed"
-			? (props.labels?.completed ?? t("work.timeline.completed"))
-			: props.run.status === "failed" ||
-					props.run.status === "cancelled" ||
-					props.run.status === "forced_termination"
-				? (props.labels?.failed ?? t("work.timeline.failed"))
-				: t(`work.timeline.runStatuses.${props.run.status}`),
+	const titleId = createUniqueId();
+	const artifactState = workflow.runActionState(`${props.run.id}:artifact`);
+	const origin = createMemo(
+		() =>
+			workflow.host.conversations?.find((item) => item.conversationId === props.run.conversationId)
+				?.name ?? props.run.conversationId,
 	);
-	const steer = async () => {
-		const text = state.steerText().trim();
-		if (
-			text &&
-			(await workflow.runRunAction(props.run.id, () => workflow.host.run.steer(props.run.id, text)))
-		)
-			state.setSteerText("");
-	};
 	return (
 		<article
-			class="action-proposal run-controls"
+			class="action-proposal run-controls task-row"
+			aria-labelledby={titleId}
 			data-run-id={props.run.id}
 			data-run-status={props.run.status}
-			aria-label={`${label()} · ${props.run.title}`}
 		>
-			<span class="system-label">{label()}</span>
-			<h3>{props.run.title}</h3>
+			<span class="system-label">{t(`work.timeline.runStatuses.${props.run.status}`)}</span>
+			<h3 id={titleId}>{props.run.title}</h3>
+			<small class="task-origin">
+				{t("work.task.origin")}: {origin()}
+			</small>
+			<Button type="button" class="task-inspect" onClick={() => workflow.openTask(props.run.id)}>
+				{t("work.timeline.revealDetails")}
+			</Button>
 			<Show when={props.run.artifacts.length > 0}>
-				<div class="artifact-results">
-					<span>{t("work.timeline.resultCount", { count: props.run.artifacts.length })}</span>
-					<ul class="artifact-list" aria-label={t("work.result.tabsLabel")}>
-						<For each={props.run.artifacts}>
-							{(artifact) => (
-								<li>
-									<Button
-										type="button"
-										class="artifact-row"
-										data-artifact-id={artifact.id}
-										aria-current={
-											workflow.selectedArtifact()?.run.id === props.run.id &&
-											workflow.selectedArtifact()?.artifact.id === artifact.id
-												? "true"
-												: undefined
-										}
-										aria-label={`${t("work.timeline.viewArtifacts")}: ${artifact.name}`}
-										onClick={() => workflow.selectArtifact(props.run.id, artifact.id)}
-									>
-										<div>
-											<strong>{artifact.name}</strong>
-											<span>
-												{artifact.mime} · {formatBytes(artifact.bytes)}
-											</span>
-										</div>
-										<span>{t("work.timeline.viewArtifacts")}</span>
-									</Button>
-								</li>
-							)}
-						</For>
-					</ul>
-				</div>
+				<ul class="artifact-list" aria-label={t("work.result.tabsLabel")}>
+					<For each={props.run.artifacts}>
+						{(artifact) => (
+							<li>
+								<Button
+									type="button"
+									class="artifact-row"
+									data-artifact-id={artifact.id}
+									disabled={artifactState.busy()}
+									aria-label={`${t("work.timeline.viewArtifacts")}: ${artifact.name}`}
+									onClick={() =>
+										void workflow.runRunAction(`${props.run.id}:artifact`, () =>
+											workflow.openRunArtifact(props.run, artifact.id),
+										)
+									}
+								>
+									<div>
+										<strong>{artifact.name}</strong>
+										<span>
+											{artifact.mime} · {formatBytes(artifact.bytes)}
+										</span>
+									</div>
+									<span>{t("work.timeline.viewArtifacts")}</span>
+								</Button>
+							</li>
+						)}
+					</For>
+				</ul>
 			</Show>
-			<Show when={state.error()}>{(error) => <span role="alert">{error()}</span>}</Show>
-			<Show when={props.run.status === "running" || props.run.status === "needs_user"}>
-				<div class="steer-row">
-					<TextField>
-						<TextField.Input
-							class="steer-input"
-							aria-label={t("work.steerInputLabel")}
-							value={state.steerText()}
-							onInput={(event) => state.setSteerText(event.currentTarget.value)}
-						/>
-					</TextField>
-					<Button type="button" onClick={() => void steer()}>
-						{t("work.timeline.steer")}
-					</Button>
-				</div>
+			<Show when={artifactState.busy()}>
+				<span role="status">{t("work.task.busy")}</span>
 			</Show>
-			<Show when={active(props.run.status)}>
-				<Button
-					type="button"
-					onClick={() =>
-						void workflow.runRunAction(props.run.id, () =>
-							workflow.host.run.interrupt(props.run.id),
-						)
-					}
-				>
-					{t("work.timeline.interrupt")}
-				</Button>
-			</Show>
-			<Show when={props.run.status === "interrupted"}>
-				<Button
-					type="button"
-					onClick={() =>
-						void workflow.runRunAction(props.run.id, () => workflow.host.run.resume(props.run.id))
-					}
-				>
-					{t("work.timeline.resume")}
-				</Button>
-			</Show>
+			<Show when={artifactState.error()}>{(error) => <span role="alert">{error()}</span>}</Show>
 		</article>
+	);
+}
+
+export function DelegatedRunCard(props: { runId: string }) {
+	const workflow = useShellWorkflowStore();
+	const [t] = useTranslation(undefined, { i18n });
+	const run = createMemo(() => workflow.host.runs.find((item) => item.id === props.runId));
+	return (
+		<Show
+			when={run()}
+			fallback={
+				<Button
+					type="button"
+					class="task-inspect"
+					data-run-id={props.runId}
+					onClick={() => workflow.openTask(props.runId)}
+				>
+					{t("work.timeline.revealDetails")} · {props.runId}
+				</Button>
+			}
+		>
+			{(current) => <WorkRunCard run={current()} />}
+		</Show>
 	);
 }
 
@@ -458,6 +451,7 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 				aria-label={props.selection.artifact.name}
 				onOpenAutoFocus={(event) => event.preventDefault()}
 				onCloseAutoFocus={(event) => event.preventDefault()}
+				onInteractOutside={(event) => event.preventDefault()}
 			>
 				<header>
 					<div class="attachment-preview-heading">
@@ -493,6 +487,7 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 					</ul>
 					<section
 						class="attachment-preview-media"
+						aria-label={props.selection.artifact.name}
 						aria-live="polite"
 						aria-busy={previewState() === "loading"}
 						data-preview-state={previewState()}
@@ -636,12 +631,49 @@ export function ArtifactPreview() {
 
 export function WorkTimelineItem(props: { messageId: string }) {
 	const workflow = useShellWorkflowStore();
-	const runs = workflow.runsForMessage(props.messageId);
-	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
+	const representedRunIds = createMemo(() => {
+		const ids = new Set<string>();
+		for (const item of workflow.host.activeTimeline ?? []) {
+			let details: unknown;
+			if (
+				item.kind === "entry" &&
+				item.entry.type === "message" &&
+				item.entry.message.role === "toolResult" &&
+				item.entry.message.toolName === "host_delegate"
+			) {
+				details = item.entry.message.details;
+			} else if (
+				item.kind === "tool-execution" &&
+				item.toolName === "host_delegate" &&
+				item.result &&
+				typeof item.result === "object" &&
+				"details" in item.result
+			) {
+				details = item.result.details;
+			}
+			if (!details || typeof details !== "object" || !("data" in details)) continue;
+			const data = details.data;
+			if (
+				data &&
+				typeof data === "object" &&
+				"accepted" in data &&
+				data.accepted === true &&
+				"executor" in data &&
+				data.executor === "pi" &&
+				"runId" in data &&
+				typeof data.runId === "string"
+			) {
+				ids.add(data.runId);
+			}
+		}
+		return ids;
+	});
+	const runsForMessage = workflow.runsForMessage(props.messageId);
+	const runs = createMemo(() => runsForMessage().filter((run) => !representedRunIds().has(run.id)));
 	return (
 		<Show when={runs().length}>
 			<div class="work-action-line" data-message-id={props.messageId}>
-				<For each={runs()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
+				<For each={runs()}>{(run) => <WorkRunCard run={run} />}</For>
 			</div>
 		</Show>
 	);
@@ -653,7 +685,11 @@ export function PermissionLayer() {
 	const permission = createMemo(() => {
 		const runIds = new Set(
 			workflow.host.runs
-				.filter((run) => run.conversationId === workflow.host.activeConversationId)
+				.filter(
+					(run) =>
+						run.conversationId === workflow.host.activeConversationId &&
+						run.actions?.includes("respondPermission"),
+				)
 				.map((run) => run.id),
 		);
 		return workflow.host.run.pendingPermissions().find((item) => runIds.has(item.runId));

@@ -225,10 +225,12 @@ export interface ProfileSyncRecord extends ProfileRecord {
  *
  * Implementations:
  * - `SqliteMemoryStore` (sqlite.ts) — local SQLite + sqlite-vec + FTS5
- * - `TcvdbMemoryStore` (tcvdb.ts) — Tencent Cloud VectorDB (future)
+ * - `TcvdbMemoryStore` (tcvdb.ts) — Tencent Cloud VectorDB
  *
- * All methods are fault-tolerant: they return empty results or `false` on
- * failure rather than throwing, unless explicitly documented otherwise.
+ * Supported L0/L1 reads, searches, and enumeration distinguish successful empty results
+ * from unavailable or failed retrieval by rejecting failures. Callers must respect
+ * advertised capabilities; unsupported capabilities are not successful queries.
+ * Write methods retain their documented boolean/count failure results.
  */
 /**
  * Helper type: a value that may be sync or async.

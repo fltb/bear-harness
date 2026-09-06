@@ -733,8 +733,16 @@ export const PiAgentSessionEvent = z.custom<AgentSessionEvent>(
 	isPiWireValue,
 	"Pi event is not serializable",
 );
+export const PiProjectionVersion = z.strictObject({
+	instanceId: z.string().min(1).max(256),
+	sequence: z.number().int().safe().nonnegative(),
+});
 export const PiLiveSnapshot = z.strictObject({
+	version: PiProjectionVersion.optional(),
 	isStreaming: z.boolean(),
+	isRetrying: z.boolean(),
+	retryAttempt: z.number().int().nonnegative(),
+	isCompacting: z.boolean(),
 	streamingMessage: PiAgentMessage.optional(),
 	pendingToolCallIds: z.array(z.string().min(1).max(256)).max(100),
 	steering: z.array(z.string().max(65536)).max(100),
@@ -1337,15 +1345,22 @@ export const ExternalAgentStatusResponse = z.strictObject({
 });
 export const RunSteerRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
-	instruction: z.string().min(1).max(MAX_STRING_LENGTH),
+	instruction: z.string().min(1).max(12000),
+});
+export const RunSteerResponse = z.strictObject({
+	outcome: z.enum(["injected", "startedNewTurn", "sent"]),
 });
 export const RunInterruptRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
 });
 export const RunResumeRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
+	instruction: z.string().min(1).max(12000).optional(),
 });
 export const RunCancelRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+});
+export const RunRetryDeliveryRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
 });
 export const RunRespondPermissionRequest = z.strictObject({
@@ -1367,6 +1382,15 @@ export const RunStatus = z.union([
 	z.literal("cancelled"),
 	z.literal("interrupted"),
 	z.literal("forced_termination"),
+]);
+export const ExecutorRecovery = z.enum(["attached", "unknown", "confirmed_lost"]);
+export const RunAction = z.enum([
+	"steer",
+	"interrupt",
+	"resume",
+	"cancel",
+	"respondPermission",
+	"retryDelivery",
 ]);
 export const ArtifactStatus = z.enum([
 	"created",
@@ -1417,6 +1441,9 @@ export const Run = z
 		permission: RunPermission.optional(),
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
+		resultReportedAt: WireTimestamp.optional(),
+		controller: ExecutorRecovery.optional(),
+		actions: z.array(RunAction).max(6).optional(),
 	})
 	.superRefine((run, context) => {
 		if (
@@ -1431,11 +1458,46 @@ export const Run = z
 			});
 		}
 	});
-export const RunListRequest = z.strictObject({});
+export const RunListRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
+	scope: z.enum(["unfinished", "history"]).optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	limit: z.number().int().min(1).max(100).optional(),
+});
 export const RunListResponse = z.strictObject({
-	runs: z.array(Run).max(10),
+	runs: z.array(Run).max(200),
+	nextCursor: z.string().min(1).max(256).optional(),
+});
+export const RunGetRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+	cursor: z.string().min(1).max(256).optional(),
+	limit: z.number().int().min(1).max(100).optional(),
+});
+export const RunGetResponse = z.strictObject({
+	run: Run,
+	instruction: z.string().max(12000),
+	inputPaths: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(MAX_ARRAY_LENGTH),
+	evidence: z
+		.array(
+			z.strictObject({
+				id: z.string().min(1).max(64),
+				kind: z.string().min(1).max(128),
+				createdAt: WireTimestamp,
+				data: BoundedJsonValue.refine((value) => {
+					try {
+						const encoded = JSON.stringify(value);
+						return encoded !== undefined && encoded.length <= 65536;
+					} catch {
+						return false;
+					}
+				}, "Run evidence exceeds its serialized size bound"),
+			}),
+		)
+		.max(100),
+	nextCursor: z.string().min(1).max(256).optional(),
 });
 export const RunResponse = Run;
+export const RunRetryDeliveryResponse = Run;
 
 // ---------------------------------------------------------------------------
 // Run-owned Artifacts
@@ -1806,13 +1868,23 @@ export const LivePush = z.discriminatedUnion("type", [
 		type: z.literal("pi"),
 		conversationId: ConversationId,
 		event: PiAgentSessionEvent,
+		version: PiProjectionVersion.optional(),
+	}),
+	z.strictObject({
+		type: z.literal("conversationActivity"),
+		conversationId: ConversationId,
+		operationId: z.string().min(1).max(256),
+		activity: z.enum(["memory_recall", "context", "memory_capture"]),
+		status: z.enum(["started", "completed", "failed"]),
+		live: PiLiveSnapshot,
+		errorMessage: z.string().max(4096).optional(),
 	}),
 	z.strictObject({
 		type: z.literal("companionState"),
 		conversationId: ConversationId,
 		state: CompanionStateResponse,
 	}),
-	z.strictObject({ type: z.literal("run"), run: Run }),
+	z.strictObject({ type: z.literal("run"), companionId: CharacterDisplay.shape.id, run: Run }),
 	z.strictObject({
 		type: z.literal("embeddingAcquisition"),
 		state: LocalEmbeddingAcquisitionState,
@@ -2244,10 +2316,17 @@ export const RPC = {
 	},
 	run: {
 		list: endpoint("run.list", RunListRequest, RunListResponse, "query"),
-		steer: endpoint("run.steer", RunSteerRequest, EmptyResponse, "mutation"),
+		get: endpoint("run.get", RunGetRequest, RunGetResponse, "query"),
+		steer: endpoint("run.steer", RunSteerRequest, RunSteerResponse, "mutation"),
 		interrupt: endpoint("run.interrupt", RunInterruptRequest, RunResponse, "mutation"),
 		resume: endpoint("run.resume", RunResumeRequest, RunResponse, "mutation"),
 		cancel: endpoint("run.cancel", RunCancelRequest, RunResponse, "mutation"),
+		retryDelivery: endpoint(
+			"run.retryDelivery",
+			RunRetryDeliveryRequest,
+			RunRetryDeliveryResponse,
+			"mutation",
+		),
 		respondPermission: endpoint(
 			"run.respondPermission",
 			RunRespondPermissionRequest,

@@ -1,14 +1,34 @@
+import { randomUUID } from "node:crypto";
 import type {
 	ConversationDetail,
 	ConversationHistoryResponse,
 	PiAgentSessionEvent,
 	PiLiveSnapshot,
+	PiProjectionVersion,
 } from "@bear-harness/protocol";
 import type { SessionTreeNode } from "@earendil-works/pi-coding-agent";
 import type { PiSnapshot } from "./pi-runtime.js";
 
 type Session = NonNullable<PiSnapshot>;
 const DEFAULT_PAGE_SIZE = 50;
+const versions = new WeakMap<Session, PiProjectionVersion>();
+
+/** Transport metadata belongs to the actual open Pi resource, never its durable session id. */
+export function currentPiProjectionVersion(session: Session): PiProjectionVersion {
+	let version = versions.get(session);
+	if (!version) {
+		version = { instanceId: randomUUID(), sequence: 0 };
+		versions.set(session, version);
+	}
+	return version;
+}
+
+export function advancePiProjectionVersion(session: Session): PiProjectionVersion {
+	const current = currentPiProjectionVersion(session);
+	const version = { instanceId: current.instanceId, sequence: current.sequence + 1 };
+	versions.set(session, version);
+	return version;
+}
 
 /** `agent_end.messages` duplicates the authoritative session transcript and has no UI projection. */
 export function projectPiTransientEvent(
@@ -119,7 +139,11 @@ export function projectPiConversationHistory(
 export function projectPiLiveSnapshot(session: Session): PiLiveSnapshot {
 	const streamingMessage = session.state.streamingMessage;
 	return {
+		version: currentPiProjectionVersion(session),
 		isStreaming: session.isStreaming,
+		isRetrying: session.isRetrying,
+		retryAttempt: session.retryAttempt,
+		isCompacting: session.isCompacting,
 		...(streamingMessage ? { streamingMessage } : {}),
 		pendingToolCallIds: [...session.state.pendingToolCalls],
 		steering: [...session.getSteeringMessages()],

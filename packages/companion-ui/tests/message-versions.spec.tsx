@@ -81,7 +81,15 @@ describe("Pi message actions", () => {
 				],
 				hasMoreBefore: false,
 			},
-			live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
+			live: {
+				isStreaming: false,
+				isCompacting: false,
+				isRetrying: false,
+				retryAttempt: 0,
+				pendingToolCallIds: [],
+				steering: [],
+				followUp: [],
+			},
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -105,6 +113,8 @@ describe("Pi message actions", () => {
 			ok: true;
 			data: never;
 		}>();
+		const editRequest = Promise.withResolvers<{ ok: true; data: never }>();
+		client.message.edit = vi.fn(() => editRequest.promise);
 		client.message.correct = vi.fn(() => correctionRequest.promise);
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({
@@ -144,12 +154,14 @@ describe("Pi message actions", () => {
 		await user.clear(historicalEditor);
 		await user.type(historicalEditor, "Revised first question");
 		await user.click(within(firstUser).getByRole("button", { name: zhCN.messages.save }));
+		const editFeedback = await screen.findByTestId("conversation-submission");
+		expect(editFeedback).toHaveAttribute("data-kind", "edit");
+		expect(editFeedback).toHaveAttribute("data-state", "submitting");
+		expect(editFeedback).toHaveTextContent("Revised first question");
+		expect(screen.queryByRole("textbox", { name: zhCN.messages.editLabel })).toBeNull();
+		editRequest.resolve({ ok: true, data: session as never });
 		await waitFor(() =>
-			expect(client.message.edit).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				entryId: "user-1",
-				text: "Revised first question",
-			}),
+			expect(within(firstUser).getByRole("button", { name: zhCN.messages.edit })).toBeEnabled(),
 		);
 		expect(screen.getByText("First question")).toBeVisible();
 		const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -168,7 +180,11 @@ describe("Pi message actions", () => {
 			conversationId: "conversation-1",
 			event: { type: "agent_start" },
 		});
-		await screen.findByRole("status", { name: zhCN.messages.responding });
+		expect(
+			await within(screen.getByRole("main")).findByRole("status", {
+				name: zhCN.messages.responding,
+			}),
+		).toBeVisible();
 		await waitFor(() => expect(document.body.contains(firstAssistant)).toBe(true));
 		pushPiEvent(client, {
 			type: "pi",
@@ -176,7 +192,11 @@ describe("Pi message actions", () => {
 			event: { type: "agent_settled" },
 		});
 		await waitFor(() =>
-			expect(screen.queryByRole("status", { name: zhCN.messages.responding })).toBeNull(),
+			expect(
+				within(screen.getByRole("main")).queryByRole("status", {
+					name: zhCN.messages.responding,
+				}),
+			).toBeNull(),
 		);
 		await waitFor(() =>
 			expect(
@@ -187,33 +207,22 @@ describe("Pi message actions", () => {
 		else Reflect.deleteProperty(navigator, "clipboard");
 		await user.click(within(message).getByRole("button", { name: "Correct" }));
 		await user.click(screen.getByRole("button", { name: "Voice" }));
-		await waitFor(() =>
-			expect(client.message.correct).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				entryId: "assistant-2",
-				feedback: "Voice",
-			}),
-		);
+		expect(screen.queryByRole("dialog", { name: "Correct" })).toBeNull();
+		const correctionFeedback = await screen.findByTestId("conversation-submission");
+		expect(correctionFeedback).toHaveAttribute("data-kind", "correct");
+		expect(correctionFeedback).toHaveAttribute("data-state", "submitting");
+		expect(correctionFeedback).toHaveTextContent("Voice");
+		expect(screen.getByText("Second reply")).toBeVisible();
 		expect(
-			within(firstUser).getByRole("button", { name: zhCN.messages.edit, hidden: true }),
-		).toBeDisabled();
-		expect(
-			within(message).getByRole("button", { name: zhCN.messages.branch, hidden: true }),
-		).toBeDisabled();
-		expect(
-			screen.getByRole("button", { name: zhCN.composer.attachLabel, hidden: true }),
-		).toBeDisabled();
+			screen.queryAllByTestId("timeline-message").some((entry) => entry.textContent === "Voice"),
+		).toBe(false);
+		expect(await screen.findByRole("button", { name: zhCN.composer.attachLabel })).toBeDisabled();
 		correctionRequest.resolve({ ok: true, data: session as never });
 		await waitFor(() =>
 			expect(within(message).getByRole("button", { name: zhCN.messages.branch })).toBeEnabled(),
 		);
 		await user.click(within(message).getByRole("button", { name: zhCN.messages.branch }));
-		await waitFor(() =>
-			expect(client.message.branch).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				entryId: "assistant-2",
-			}),
-		);
+		await waitFor(() => expect(screen.queryByTestId("conversation-submission")).toBeNull());
 		await waitFor(() => expect(screen.queryByText("Second reply")).toBeNull());
 
 		cleanup();
@@ -232,19 +241,98 @@ describe("Pi message actions", () => {
 		) as HTMLElement;
 		await user.click(within(sourceMessage).getByRole("button", { name: "Correct" }));
 		await user.click(screen.getByRole("button", { name: "Voice" }));
-		const correctionDialog = screen.getByRole("dialog", { name: "Correct" });
-		expect(await within(correctionDialog).findByRole("alert")).toHaveTextContent(
-			"correction unavailable",
-		);
+		expect(screen.queryByRole("dialog", { name: "Correct" })).toBeNull();
+		const failedCorrection = await screen.findByTestId("conversation-submission");
+		await waitFor(() => expect(failedCorrection).toHaveAttribute("data-state", "unknown"));
+		expect(failedCorrection).toHaveTextContent("correction unavailable");
+		expect(failedCorrection).toHaveTextContent("Voice");
 		expect(within(sourceMessage).getByText("Second reply")).toBeVisible();
-		expect(within(correctionDialog).getByRole("button", { name: "Voice" })).toBeVisible();
-		await user.keyboard("{Escape}");
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Correct" })).toBeNull());
+		expect(
+			await within(failedCorrection).findByRole("button", {
+				name: zhCN.messages.submission.refresh,
+			}),
+		).toBeEnabled();
+		expect(
+			within(failedCorrection).queryByRole("button", { name: zhCN.messages.retry }),
+		).toBeNull();
+		await user.click(
+			within(failedCorrection).getByRole("button", { name: zhCN.messages.submission.dismiss }),
+		);
+		expect(screen.queryByTestId("conversation-submission")).toBeNull();
 		const branchAction = await within(sourceMessage).findByRole("button", {
 			name: zhCN.messages.branch,
 		});
 		await user.click(branchAction);
 		expect(await within(sourceMessage).findByRole("alert")).toHaveTextContent("fork unavailable");
 		expect(screen.getByText("Second reply")).toBeVisible();
+	});
+
+	it("loads earlier native history on request and keeps current messages through a failed page", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		const older = {
+			type: "message" as const,
+			id: "older-user",
+			parentId: null,
+			timestamp: "2026-01-01T00:00:00.000Z",
+			message: { role: "user" as const, content: "Earlier native question", timestamp: 1 },
+		};
+		const current = {
+			type: "message" as const,
+			id: "current-user",
+			parentId: older.id,
+			timestamp: "2026-01-01T00:00:01.000Z",
+			message: { role: "user" as const, content: "Current native question", timestamp: 2 },
+		};
+		const session = {
+			conversationId: "conversation-1",
+			name: "History",
+			branch: {
+				entries: [current],
+				activeLeafId: current.id,
+				latestLeafIds: [current.id],
+				hasMoreBefore: true,
+			},
+			live: {
+				isStreaming: false,
+				isCompacting: false,
+				isRetrying: false,
+				retryAttempt: 0,
+				pendingToolCallIds: [],
+				steering: [],
+				followUp: [],
+			},
+		};
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					onboarding: { status: "complete" as const, stateData: { answers: {} } },
+					character: THEMED_CHARACTER,
+				},
+			}),
+		);
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { activeConversation: session } }),
+		);
+		client.conversation.history = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("History storage unavailable"))
+			.mockResolvedValueOnce({ ok: true, data: { entries: [older] } });
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await screen.findByText("Current native question");
+		expect(screen.queryByText("Earlier native question")).toBeNull();
+		await user.click(screen.getByRole("button", { name: zhCN.messages.native.loadOlder }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("History storage unavailable");
+		expect(screen.getByText("Current native question")).toBeVisible();
+		expect(screen.queryByText("Earlier native question")).toBeNull();
+		await user.click(screen.getByRole("button", { name: zhCN.messages.native.loadOlder }));
+		expect(await screen.findByText("Earlier native question")).toBeVisible();
+		expect(screen.getByText("Current native question")).toBeVisible();
+		const messages = screen.getAllByTestId("timeline-message");
+		expect(messages[0]).toHaveTextContent("Earlier native question");
+		expect(messages[1]).toHaveTextContent("Current native question");
+		expect(screen.queryByRole("button", { name: zhCN.messages.native.loadOlder })).toBeNull();
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 });

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +12,13 @@ const require = createRequire(import.meta.url);
 const _electronExecutable = require("electron") as string;
 
 test("source build loads from file:// with official identity and isolated diagnostics", async () => {
-	const { app: electronApp, tempRoot } = await launchSourceApp({});
+	const testInfo = test.info();
+	const { app: electronApp, tempRoot } = await test.step("launch source Electron", () =>
+		launchSourceApp({}));
 	try {
+		await electronApp
+			.context()
+			.tracing.start({ screenshots: true, snapshots: true, sources: true });
 		const setupWindow = await electronApp.firstWindow();
 		expect(
 			await electronApp.evaluate(({ BrowserWindow }) =>
@@ -23,8 +28,10 @@ test("source build loads from file:// with official identity and isolated diagno
 		await expect(
 			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).toBeVisible();
-		await provisionReplyModel(setupWindow);
-		const window = await assertProductWindow(electronApp, productConfig);
+		await test.step("complete both onboarding layers and create a conversation", () =>
+			provisionReplyModel(setupWindow));
+		const window = await test.step("assert product identity and native bridge controls", () =>
+			assertProductWindow(electronApp, productConfig));
 
 		// The page must come from the built file: HTML, not the dev server.
 		const pageUrl = window.url();
@@ -59,7 +66,26 @@ test("source build loads from file:// with official identity and isolated diagno
 			.poll(() => presenceAsset.evaluate((image: HTMLImageElement) => image.naturalWidth))
 			.toBeGreaterThan(0);
 	} finally {
-		await electronApp.close();
-		rmSync(tempRoot, { recursive: true, force: true });
+		try {
+			const logsDir = join(tempRoot, "logs");
+			if (existsSync(logsDir)) {
+				for (const name of readdirSync(logsDir)
+					.filter((name) => name.endsWith(".jsonl"))
+					.sort()) {
+					await testInfo.attach(`diagnostics-${name}`, {
+						path: join(logsDir, name),
+						contentType: "application/x-ndjson",
+					});
+				}
+			}
+			const tracePath = testInfo.outputPath("electron-trace.zip");
+			await electronApp.context().tracing.stop({ path: tracePath });
+			await testInfo.attach("electron-trace", { path: tracePath, contentType: "application/zip" });
+		} finally {
+			await test.step("close source Electron", () => electronApp.close());
+			if (testInfo.status === testInfo.expectedStatus) {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		}
 	}
 });

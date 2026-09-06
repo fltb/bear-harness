@@ -100,7 +100,13 @@ export function createDesktopArtifactPresenter(
 		safeOutcome(() =>
 			track(async () => {
 				const destination = await copyForPresentation(request);
-				const shellError = await dependencies.openPath(destination);
+				let shellError: string;
+				try {
+					shellError = await dependencies.openPath(destination);
+				} catch (error) {
+					await rm(destination, { force: true }).catch(() => undefined);
+					throw error;
+				}
 				if (shellError) {
 					await rm(destination, { force: true });
 					return unsupported();

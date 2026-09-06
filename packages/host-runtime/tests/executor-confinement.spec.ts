@@ -84,22 +84,6 @@ function thrownBy(operation: () => unknown): unknown {
 }
 
 describe("ACP process confinement", () => {
-	it("generates a deny-by-default macOS profile with distinct read and write roots", () => {
-		const { workspace, output, home, temp, spec } = fixture();
-		const profile = createMacOSSandboxProfile(spec);
-
-		expect(profile).toContain("(deny default)");
-		expect(profile).toContain("(allow network*)");
-		expect(profile).toContain("(allow dynamic-code-generation)");
-		expect(profile).toContain(`(subpath ${JSON.stringify(workspace)})`);
-		expect(profile).toContain(`(subpath ${JSON.stringify(output)})`);
-		expect(profile).toContain(`(subpath ${JSON.stringify(home)})`);
-		expect(profile).toContain(`(subpath ${JSON.stringify(temp)})`);
-		const writeSection = profile.slice(profile.indexOf("(allow file-write*"));
-		expect(writeSection).not.toContain(JSON.stringify(workspace));
-		expect(writeSection).toContain(JSON.stringify(output));
-	});
-
 	it("wraps the original argv directly rather than constructing a shell command", () => {
 		const { spec } = fixture();
 		spec.args = ["argument with spaces", "$(touch should-not-run)"];
@@ -121,23 +105,6 @@ describe("ACP process confinement", () => {
 		);
 		expect(executeSection).toContain(`(literal ${JSON.stringify(helper)})`);
 		expect(executeSection).not.toContain(`(subpath ${JSON.stringify(root)})`);
-	});
-
-	it("builds a read-only-root bwrap invocation only after a capability probe succeeds", () => {
-		const { workspace, output, spec } = fixture();
-		const wrapped = applyProcessConfinement(spec, {
-			platform: "linux",
-			bubblewrapCandidates: ["/verified/bwrap"],
-			verifyBubblewrap: (path) => path === "/verified/bwrap",
-		});
-
-		expect(wrapped.command).toBe("/verified/bwrap");
-		expect(wrapped.args).toContain("--unshare-all");
-		expect(wrapped.args).toContain("--share-net");
-		expect(wrapped.args).toContain("--tmpfs");
-		expect(wrapped.args).toEqual(expect.arrayContaining(["--ro-bind", workspace, workspace]));
-		expect(wrapped.args).toEqual(expect.arrayContaining(["--bind", output, output]));
-		expect(wrapped.args.slice(-2)).toEqual(["--", spec.command]);
 	});
 
 	it.each(["linux", "win32"] as const)(
@@ -199,19 +166,87 @@ describe("ACP process confinement", () => {
 	});
 
 	it("rejects writable roots inside snapshots before creating them", () => {
-		const { workspace, spec } = fixture();
-		const nestedOutput = join(workspace, "new-output");
+		const { root, spec } = fixture();
+		const snapshot = join(root, "input-snapshot");
+		mkdirSync(snapshot);
+		const nestedOutput = join(snapshot, "new-output");
 
 		expect(
 			thrownBy(() =>
 				createMacOSSandboxProfile({
 					...spec,
+					readOnlyPaths: [snapshot],
 					env: { ...spec.env, BEAR_OUTPUT_DIR: nestedOutput },
 				}),
 			),
 		).toEqual({ kind: "validation_failed", reason: "executor_confinement_path_invalid" });
 		expect(existsSync(nestedOutput)).toBe(false);
 	});
+
+	it("rejects read-only inputs equal to, containing, or inside the writable private cwd", () => {
+		const { root, workspace, spec } = fixture();
+		const nestedInput = join(workspace, "user-input");
+		mkdirSync(nestedInput);
+		for (const readOnlyPath of [workspace, root, nestedInput]) {
+			expect(
+				thrownBy(() =>
+					createMacOSSandboxProfile({
+						...spec,
+						readOnlyPaths: [readOnlyPath],
+					}),
+				),
+			).toEqual({ kind: "validation_failed", reason: "executor_confinement_path_invalid" });
+		}
+	});
+
+	it.skipIf(process.platform !== "linux")(
+		"keeps declared Linux inputs read-only while the private cwd is writable",
+		() => {
+			const { root, workspace, spec } = fixture();
+			const input = join(root, "declared-input");
+			const runtime = createRoot();
+			const script = join(runtime, "boundary.mjs");
+			mkdirSync(input);
+			const inputFile = join(input, "original.txt");
+			writeFileSync(inputFile, "preserve-user-input");
+			writeFileSync(
+				script,
+				`
+				import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+				const attempt = (fn) => { try { fn(); return true; } catch { return false; } };
+				const result = {
+					input: readFileSync(process.env.INPUT_FILE, "utf8"),
+					write: attempt(() => writeFileSync(process.env.INPUT_FILE, "changed")),
+					remove: attempt(() => unlinkSync(process.env.INPUT_FILE)),
+					cwd: attempt(() => writeFileSync("worker-result.txt", "private-result")),
+				};
+				process.stdout.write(JSON.stringify(result));
+			`,
+			);
+			const childSpec = {
+				...spec,
+				args: [script],
+				readOnlyPaths: [input],
+				env: { ...spec.env, INPUT_FILE: inputFile },
+			};
+			const confined = applyProcessConfinement(childSpec);
+			const result = spawnSync(confined.command, confined.args, {
+				cwd: workspace,
+				env: childSpec.env,
+				encoding: "utf8",
+				timeout: 10_000,
+			});
+			expect(result.status, result.stderr).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual({
+				input: "preserve-user-input",
+				write: false,
+				remove: false,
+				cwd: true,
+			});
+			expect(readFileSync(inputFile, "utf8")).toBe("preserve-user-input");
+			expect(readFileSync(join(workspace, "worker-result.txt"), "utf8")).toBe("private-result");
+		},
+	);
 
 	it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))(
 		"enforces the macOS data and executable boundaries in a real child",
@@ -248,7 +283,7 @@ describe("ACP process confinement", () => {
 			copyFileSync("/usr/bin/true", outsideExecutable);
 			writeFileSync(unrelatedHomeFile, "unrelated-home-secret");
 			writeFileSync(siblingTempFile, "sibling-temp-secret");
-			chmodSync(workspaceFile, 0o400);
+			chmodSync(snapshotOneFile, 0o400);
 			chmodSync(outsideExecutable, 0o555);
 			writeFileSync(
 				script,
@@ -268,9 +303,10 @@ const result = {
   sessionWrite: attempt(() => writeFileSync(process.env.SESSION_FILE, "session-ok")),
   homeWrite: attempt(() => writeFileSync(process.env.HOME_FILE, "home-ok")),
   tempWrite: attempt(() => writeFileSync(process.env.TEMP_FILE, "temp-ok")),
-  workspaceChmod: attempt(() => chmodSync(process.env.WORKSPACE_FILE, 0o600)),
-  workspaceWrite: attempt(() => writeFileSync(process.env.WORKSPACE_FILE, "changed")),
-  workspaceDelete: attempt(() => rmSync(process.env.WORKSPACE_FILE)),
+  workspaceWrite: attempt(() => writeFileSync(process.env.WORKSPACE_RESULT, "workspace-ok")),
+  snapshotChmod: attempt(() => chmodSync(process.env.SNAPSHOT_ONE_FILE, 0o600)),
+  snapshotWrite: attempt(() => writeFileSync(process.env.SNAPSHOT_ONE_FILE, "changed")),
+  snapshotDelete: attempt(() => rmSync(process.env.SNAPSHOT_ONE_FILE)),
   unrelatedHomeRead: attempt(() => readFileSync(process.env.UNRELATED_HOME_FILE, "utf8")),
   unrelatedHomeWrite: attempt(() => writeFileSync(process.env.UNRELATED_HOME_FILE, "changed")),
   siblingTempRead: attempt(() => readFileSync(process.env.SIBLING_TEMP_FILE, "utf8")),
@@ -292,6 +328,7 @@ process.stdout.write(JSON.stringify(result));\n`,
 					BEAR_OUTPUT_DIR: output,
 					BEAR_PI_SESSION_DIR: session,
 					WORKSPACE_FILE: workspaceFile,
+					WORKSPACE_RESULT: join(workspace, "result.txt"),
 					SNAPSHOT_ONE_FILE: snapshotOneFile,
 					SNAPSHOT_TWO_FILE: snapshotTwoFile,
 					OUTSIDE_EXECUTABLE: outsideExecutable,
@@ -331,9 +368,10 @@ process.stdout.write(JSON.stringify(result));\n`,
 				sessionWrite: true,
 				homeWrite: true,
 				tempWrite: true,
-				workspaceChmod: false,
-				workspaceWrite: false,
-				workspaceDelete: false,
+				workspaceWrite: true,
+				snapshotChmod: false,
+				snapshotWrite: false,
+				snapshotDelete: false,
 				unrelatedHomeRead: false,
 				unrelatedHomeWrite: false,
 				siblingTempRead: false,
@@ -341,7 +379,9 @@ process.stdout.write(JSON.stringify(result));\n`,
 				outsideExecution: false,
 			});
 			expect(readFileSync(workspaceFile, "utf8")).toBe("workspace-readable");
-			expect(statSync(workspaceFile).mode & 0o777).toBe(0o400);
+			expect(readFileSync(join(workspace, "result.txt"), "utf8")).toBe("workspace-ok");
+			expect(readFileSync(snapshotOneFile, "utf8")).toBe("snapshot-one-readable");
+			expect(statSync(snapshotOneFile).mode & 0o777).toBe(0o400);
 			expect(readFileSync(join(output, "result.txt"), "utf8")).toBe("output-ok");
 			expect(readFileSync(join(session, "state.json"), "utf8")).toBe("session-ok");
 			expect(readFileSync(join(home, "preferences.json"), "utf8")).toBe("home-ok");

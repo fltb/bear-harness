@@ -4,23 +4,32 @@ import {
 	faChevronLeft,
 	faChevronRight,
 	faCodeBranch,
+	faCompress,
 	faCopy,
+	faExpand,
+	faImage,
+	faMusic,
 	faPen,
+	faPlay,
 } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
-import type { AppLayoutMode } from "./layout.js";
 import {
 	installTimelineScrollProtection,
 	type TimelineScrollController,
 } from "./lib/timeline-scroll.js";
 import { MessageContent } from "./MessageContent.js";
-import { type TimelineProjectionItem, useCompanionStore } from "./stores/companion.js";
+import { NativeMessageContent, nativeRecord, nativeSource } from "./NativeMessageContent.js";
+import {
+	type ConversationSubmission,
+	type TimelineProjectionItem,
+	useCompanionStore,
+} from "./stores/companion.js";
 
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
-import { WorkTimelineItem } from "./WorkPanel.js";
+import { DelegatedRunCard, WorkTimelineItem } from "./WorkPanel.js";
 
 type PiSessionEntryId = PiSessionEntry["id"];
 
@@ -59,30 +68,6 @@ function hostChoices(payload: Record<string, unknown> | undefined) {
 	return items.length ? { prompt: payload.prompt, items } : undefined;
 }
 
-function toolActivityKey(toolName: string) {
-	switch (toolName) {
-		case "role_skill":
-			return "messages.toolActivity.read" as const;
-		case "host_state":
-			return "messages.toolActivity.state" as const;
-		case "host_media":
-		case "host_choices":
-			return "messages.toolActivity.generic" as const;
-		case "host_delegate":
-			return "messages.toolActivity.delegate" as const;
-		case "host_canon":
-			return "messages.toolActivity.canon" as const;
-		case "tdai_memory_search":
-			return "messages.toolActivity.memorySearch" as const;
-		case "tdai_conversation_search":
-			return "messages.toolActivity.conversationSearch" as const;
-		case "explicit_memory":
-			return "messages.toolActivity.explicitMemory" as const;
-		default:
-			return "messages.toolActivity.generic" as const;
-	}
-}
-
 function PiTimelineEntryView(props: {
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
@@ -99,10 +84,8 @@ function PiTimelineEntryView(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
 	const [editText, setEditText] = createSignal("");
-	const [editError, setEditError] = createSignal<string | null>(null);
 	const [correcting, setCorrecting] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
-	const [correctionError, setCorrectionError] = createSignal<string | null>(null);
 	const [actionBusy, setActionBusy] = createSignal(false);
 	const messageActionBusy = () => actionBusy() || store.conversationMutationBusy;
 	const [actionError, setActionError] = createSignal<string | null>(null);
@@ -115,62 +98,11 @@ function PiTimelineEntryView(props: {
 		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
 	});
 	const entry = props.entry;
-	if (entry.type !== "message") {
-		// Native Pi context entries describe internal session bookkeeping. Rendering
-		// each one as an unlabeled rule made model/level changes look like broken UI.
-		return null;
-	}
+	if (entry.type !== "message") return <NativeEntryNotice entry={entry} />;
 	const message = entry.message;
-	if (message.role === "toolResult") {
-		const toolPayload = hostToolPayload(message.details);
-		if (message.toolName === "explicit_memory" && toolPayload?.changed === false) return null;
-		const mediaId =
-			message.toolName === "host_media" && typeof toolPayload?.mediaId === "string"
-				? toolPayload.mediaId
-				: undefined;
-		const choices = message.toolName === "host_choices" ? hostChoices(toolPayload) : undefined;
-		const media =
-			message.toolName === "host_media" && mediaId
-				? store.character?.media.find((item) => item.id === mediaId)
-				: undefined;
-		if (media)
-			return <MediaTimelineCard media={media} onOpen={() => props.onPreviewMedia(media)} />;
-		if (message.toolName === "host_choices" && choices)
-			return (
-				<section class="message-choices" aria-label={choices.prompt}>
-					<strong>{choices.prompt}</strong>
-					<div class="message-choice-list">
-						<For each={choices.items}>
-							{(choice) => (
-								<Button
-									type="button"
-									class="message-choice"
-									disabled={store.pendingUserMessages.length > 0 || store.conversationMutationBusy}
-									onClick={() => void store.sendMessage(choice.message)}
-								>
-									{choice.label}
-								</Button>
-							)}
-						</For>
-					</div>
-				</section>
-			);
-		const label = t(toolActivityKey(message.toolName));
-		return (
-			<article
-				class="msg pi-tool-result"
-				data-pi-entry-id={entry.id}
-				aria-label={`${label} ${message.isError ? "failed" : "succeeded"}`}
-			>
-				<div class="msg-meta">
-					<span>{label}</span>
-				</div>
-				<span class="pi-tool-status">
-					{t(!message.isError ? "messages.toolActivity.completed" : "messages.toolActivity.failed")}
-				</span>
-			</article>
-		);
-	}
+	if (message.role === "toolResult") return null; // Rendered through the shared live/settled tool view.
+	if (message.role !== "user" && message.role !== "assistant")
+		return <NativeEntryNotice entry={entry} />;
 	const isUser = message.role === "user";
 	const characterName = () => store.character?.name ?? "";
 	const currentMessage = () => {
@@ -185,16 +117,32 @@ function PiTimelineEntryView(props: {
 		const current = currentMessage();
 		return "content" in current ? messageText(current.content) : "";
 	};
-	const failed = () => assistant()?.stopReason === "error" || assistant()?.stopReason === "aborted";
+	const failed = () =>
+		assistant()?.stopReason === "error" ||
+		assistant()?.stopReason === "aborted" ||
+		!!assistant()?.errorMessage;
+	const content = () => {
+		const current = currentMessage();
+		return "content" in current ? current.content : undefined;
+	};
 	const errorText = () =>
-		assistant()?.stopReason === "aborted"
+		assistant()?.errorMessage ||
+		(assistant()?.stopReason === "aborted"
 			? t("messages.responseStopped")
-			: assistant()?.errorMessage
+			: assistant()?.stopReason === "error"
 				? t("messages.responseFailedSaved")
-				: undefined;
-	if (!isUser && text().length === 0 && !failed()) {
+				: undefined);
+	if (
+		!isUser &&
+		Array.isArray(message.content) &&
+		message.content.every(
+			(part) =>
+				part.type === "toolCall" ||
+				(part.type === "thinking" && (!part.thinking || part.redacted === true)),
+		) &&
+		!failed()
+	)
 		return null;
-	}
 	const runAction = async (
 		action: () => Promise<void>,
 		setError: (value: string | null) => void = setActionError,
@@ -214,7 +162,6 @@ function PiTimelineEntryView(props: {
 	};
 	const dismissEdit = () => {
 		setEditing(false);
-		setEditError(null);
 		queueMicrotask(() => {
 			const focusTarget = editOpener?.isConnected
 				? editOpener
@@ -222,27 +169,38 @@ function PiTimelineEntryView(props: {
 			focusTarget?.focus();
 		});
 	};
-	const commitEdit = async () => {
+	const commitEdit = () => {
 		const value = editText().trim();
 		if (!value) return;
 		if (value === text()) {
 			dismissEdit();
 			return;
 		}
-		if (await runAction(() => store.editMessage(entry.id, value), setEditError)) dismissEdit();
+		const previousId = store.activeSubmission?.id;
+		const request = store.editMessage(entry.id, value);
+		const staged = store.activeSubmission?.id !== previousId;
+		if (staged) dismissEdit();
+		void request.catch((cause) => {
+			if (!staged) setActionError(cause instanceof Error ? cause.message : String(cause));
+		});
 	};
 	const dismissCorrection = () => {
 		if (messageActionBusy()) return;
 		setCorrecting(false);
-		setCorrectionError(null);
 	};
-	const submitCorrection = async (feedback: string) => {
+	const submitCorrection = (feedback: string) => {
 		const value = feedback.trim();
 		if (!value) return;
-		if (await runAction(() => store.correctMessage(entry.id, value), setCorrectionError)) {
-			setCorrectionDetail("");
+		const previousId = store.activeSubmission?.id;
+		const request = store.correctMessage(entry.id, value);
+		const staged = store.activeSubmission?.id !== previousId;
+		if (staged) {
 			setCorrecting(false);
+			setCorrectionDetail("");
 		}
+		void request.catch((cause) => {
+			if (!staged) setActionError(cause instanceof Error ? cause.message : String(cause));
+		});
 	};
 	const copyMessage = async () => {
 		if (typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -303,7 +261,6 @@ function PiTimelineEntryView(props: {
 									disabled={messageActionBusy()}
 									onClick={() => {
 										setEditText(text());
-										setEditError(null);
 										setEditing(true);
 									}}
 								>
@@ -322,8 +279,8 @@ function PiTimelineEntryView(props: {
 							</Button>
 						</div>
 					</div>
-					<Show when={text().length > 0 && !editing()}>
-						<MessageContent text={text()} format={isUser ? "plain" : "markdown"} />
+					<Show when={!editing()}>
+						<NativeMessageContent content={content()} format={isUser ? "plain" : "markdown"} />
 					</Show>
 					<Show when={editing() && isUser}>
 						<div class="message-inline-edit">
@@ -333,6 +290,15 @@ function PiTimelineEntryView(props: {
 									value={editText()}
 									onInput={(event) => setEditText(event.currentTarget.value)}
 									onKeyDown={(event) => {
+										if (
+											event.key === "Enter" &&
+											!event.shiftKey &&
+											!event.isComposing &&
+											!messageActionBusy()
+										) {
+											event.preventDefault();
+											void commitEdit();
+										}
 										if (event.key === "Escape" && !messageActionBusy()) {
 											event.preventDefault();
 											dismissEdit();
@@ -342,13 +308,7 @@ function PiTimelineEntryView(props: {
 									disabled={messageActionBusy()}
 								/>
 							</TextField>
-							<Show when={editError()}>
-								{(error) => (
-									<span class="stream-error" role="alert">
-										{error()}
-									</span>
-								)}
-							</Show>
+							<p class="message-edit-note">{t("messages.userEditBranchNote")}</p>
 							<div class="message-inline-edit-actions">
 								<Button type="button" disabled={messageActionBusy()} onClick={dismissEdit}>
 									{t("messages.cancel")}
@@ -379,7 +339,6 @@ function PiTimelineEntryView(props: {
 									disabled={messageActionBusy()}
 									onClick={() => {
 										setCorrectionDetail("");
-										setCorrectionError(null);
 										setCorrecting(true);
 									}}
 								>
@@ -466,13 +425,6 @@ function PiTimelineEntryView(props: {
 											{store.character?.character.correction.custom_label}
 										</Button>
 									</form>
-									<Show when={correctionError()}>
-										{(error) => (
-											<span class="stream-error" role="alert">
-												{error()}
-											</span>
-										)}
-									</Show>
 								</Dialog.Content>
 							</Dialog.Portal>
 						</Dialog>
@@ -519,54 +471,64 @@ function PiTimelineEntryView(props: {
 	);
 }
 
-function OptimisticUserProjection(props: {
-	item: Extract<TimelineProjectionItem, { kind: "optimistic-user" }>;
-}) {
+function SubmissionFeedback(props: { submission: ConversationSubmission }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const message = () => props.item.message;
 	return (
-		<div class="timeline-entry-row timeline-entry-enter" data-testid="pending-user-message">
-			<div class="user-message-column">
-				<article
-					class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}
-				>
-					<div class="msg-meta">{t("messages.you")}</div>
-					<MessageContent text={message().text} format="plain" />
-					<Show
-						when={message().state === "failed"}
-						fallback={
-							<span class="message-send-status" role="status">
-								<span class="streaming-status" aria-hidden="true" />
-								<span>{t("messages.sending")}</span>
-							</span>
-						}
+		<section
+			class="conversation-submission"
+			data-testid="conversation-submission"
+			data-kind={props.submission.kind}
+			data-state={props.submission.state}
+			aria-label={t(`messages.submission.${props.submission.kind}.label`)}
+		>
+			<strong>{t(`messages.submission.${props.submission.kind}.label`)}</strong>
+			<p class="submission-text">{props.submission.text}</p>
+			<p role="status" aria-live="polite" aria-atomic="true">
+				{t(`messages.submission.${props.submission.kind}.${props.submission.state}`)}
+				<Show when={props.submission.error}>
+					<span class="stream-error">{props.submission.error}</span>
+				</Show>
+			</p>
+			<Show when={props.submission.state === "failed" || props.submission.state === "unknown"}>
+				<div class="message-inline-actions">
+					<Button
+						type="button"
+						disabled={store.conversationMutationBusy}
+						onClick={() => void store.retrySubmission(props.submission.id).catch(() => undefined)}
 					>
-						<span class="stream-error" role="alert">
-							{t("messages.sendFailed")}
-						</span>
-						<div class="message-inline-actions">
-							<Button
-								type="button"
-								onClick={() => void store.retryPendingMessage(message().clientMessageId)}
-							>
-								{t("messages.retry")}
-							</Button>
-							<Button
-								type="button"
-								onClick={() => store.dismissPendingMessage(message().clientMessageId)}
-							>
-								{t("messages.discard")}
-							</Button>
-						</div>
+						{t(
+							props.submission.state === "unknown" && props.submission.kind !== "send"
+								? "messages.submission.refresh"
+								: "messages.retry",
+						)}
+					</Button>
+					<Button type="button" onClick={() => store.dismissSubmission(props.submission.id)}>
+						{t("messages.submission.dismiss")}
+					</Button>
+				</div>
+			</Show>
+			<Show when={props.submission.state === "accepted"}>
+				<div class="message-inline-actions">
+					<Show when={props.submission.error}>
+						<Button
+							type="button"
+							disabled={store.conversationMutationBusy}
+							onClick={() => void store.retrySubmission(props.submission.id).catch(() => undefined)}
+						>
+							{t("messages.submission.refresh")}
+						</Button>
 					</Show>
-				</article>
-			</div>
-		</div>
+					<Button type="button" onClick={() => store.dismissSubmission(props.submission.id)}>
+						{t("messages.submission.dismiss")}
+					</Button>
+				</div>
+			</Show>
+		</section>
 	);
 }
 
-function QueuedUserProjection(props: { text: string }) {
+function QueuedUserProjection(props: { text: string; queue: "steering" | "followUp" }) {
 	const [t] = useTranslation(undefined, { i18n });
 	return (
 		<div class="timeline-entry-row timeline-entry-enter" data-testid="pi-queued-user-message">
@@ -574,9 +536,8 @@ function QueuedUserProjection(props: { text: string }) {
 				<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
 					<div class="msg-meta">{t("messages.you")}</div>
 					<MessageContent text={props.text} format="plain" />
-					<span class="message-send-status" role="status">
-						<span class="streaming-status" aria-hidden="true" />
-						<span>{t("messages.queued")}</span>
+					<span class="message-send-status">
+						<span>{t(`messages.submission.queue.${props.queue}`)}</span>
 					</span>
 				</article>
 			</div>
@@ -584,34 +545,215 @@ function QueuedUserProjection(props: { text: string }) {
 	);
 }
 
-function ToolExecutionProjection(props: {
-	item: Extract<TimelineProjectionItem, { kind: "tool-execution" }>;
+function NativeToolView(props: {
+	toolName: string;
+	toolCallId: string;
+	status: "pending" | "running" | "completed" | "failed";
+	args?: unknown;
+	result?: unknown;
+	entryId?: string;
+	onPreviewMedia(media: CharacterMedia): void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const label = () => t(toolActivityKey(props.item.toolName));
-	const status = () =>
-		props.item.status === "running"
-			? t("messages.toolActivity.running")
-			: props.item.status === "completed"
-				? t("messages.toolActivity.completed")
-				: t("messages.toolActivity.failed");
+	const store = useCompanionStore();
+	const result = () => nativeRecord(props.result);
+	const payload = () => hostToolPayload(result()?.details);
+	const status = () => t(`messages.toolActivity.${props.status}`);
+	const summary = createMemo(() => {
+		const args = nativeRecord(props.args);
+		if (!args) return "";
+		for (const key of [
+			"command",
+			"path",
+			"file_path",
+			"query",
+			"instruction",
+			"runId",
+			"mediaId",
+		]) {
+			if (typeof args[key] === "string") {
+				const firstLine = (args[key] as string).split("\n", 1)[0] ?? "";
+				return `${firstLine.slice(0, 160)}${firstLine.length > 160 || (args[key] as string).includes("\n") ? "…" : ""}`;
+			}
+		}
+		return "";
+	});
+	const media = () =>
+		props.toolName === "host_media"
+			? store.character?.media.find((item) => item.id === payload()?.mediaId)
+			: undefined;
+	const choices = () => (props.toolName === "host_choices" ? hostChoices(payload()) : undefined);
+	const runId = () => {
+		const data = payload();
+		return props.toolName === "host_delegate" &&
+			data?.accepted === true &&
+			data.executor === "pi" &&
+			typeof data.runId === "string"
+			? data.runId
+			: undefined;
+	};
 	return (
 		<article
 			class="msg pi-tool-result"
-			aria-label={`${label()} ${status()}`}
-			data-status={props.item.status}
-			data-tool-call-id={props.item.toolCallId}
+			aria-label={`${props.toolName} ${status()}`}
+			data-status={props.status}
+			data-tool-call-id={props.toolCallId}
+			data-pi-entry-id={props.entryId}
 		>
-			<div class="msg-meta">
-				<span>{label()}</span>
-			</div>
-			<span class="pi-tool-status" role="status">
-				<Show when={props.item.status === "running"}>
-					<span class="streaming-status" aria-hidden="true" />
+			<details class="native-tool-disclosure">
+				<summary>
+					<strong>{props.toolName}</strong> <span>{summary()}</span>{" "}
+					<span class="pi-tool-status">{status()}</span>
+				</summary>
+				<h4>{t("messages.native.arguments")}</h4>
+				<Show when={props.args !== undefined} fallback={<p>{t("messages.native.noArguments")}</p>}>
+					<pre>{nativeSource(props.args)}</pre>
 				</Show>
-				{status()}
-			</span>
+				<h4>{t("messages.native.content")}</h4>
+				<Show
+					when={result()?.content !== undefined}
+					fallback={
+						<Show
+							when={props.result !== undefined}
+							fallback={<p>{t("messages.native.noResult")}</p>}
+						>
+							<pre>{nativeSource(props.result)}</pre>
+						</Show>
+					}
+				>
+					<NativeMessageContent content={result()?.content} format="plain" />
+				</Show>
+				<Show when={result()?.details !== undefined}>
+					<h4>{t("messages.native.details")}</h4>
+					<pre>{nativeSource(result()?.details)}</pre>
+				</Show>
+				<Show when={result()?.errorMessage !== undefined || result()?.error !== undefined}>
+					<pre role="alert">{nativeSource(result()?.errorMessage ?? result()?.error)}</pre>
+				</Show>
+			</details>
+			<Show when={media()}>
+				{(item) => <MediaTimelineCard media={item()} onOpen={() => props.onPreviewMedia(item())} />}
+			</Show>
+			<Show when={choices()}>
+				{(value) => (
+					<section class="message-choices" aria-label={value().prompt}>
+						<strong>{value().prompt}</strong>
+						<div class="message-choice-list">
+							<For each={value().items}>
+								{(choice) => (
+									<Button
+										type="button"
+										class="message-choice"
+										disabled={
+											store.activeSubmission?.state === "submitting" ||
+											store.conversationMutationBusy
+										}
+										onClick={() => void store.sendMessage(choice.message)}
+									>
+										{choice.label}
+									</Button>
+								)}
+							</For>
+						</div>
+					</section>
+				)}
+			</Show>
+			<Show when={runId()}>{(id) => <DelegatedRunCard runId={id()} />}</Show>
 		</article>
+	);
+}
+
+function NativeEntryNotice(props: { entry: PiSessionEntry }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const value = () =>
+		nativeRecord(props.entry.type === "message" ? props.entry.message : props.entry)!;
+	const kind = () => value().role ?? value().type;
+	const hidden = () =>
+		value().display === false || (kind() === "custom" && props.entry.type !== "message");
+	const label = () => {
+		switch (kind()) {
+			case "custom_message":
+			case "custom":
+				return String(value().customType ?? t("messages.native.notice"));
+			case "model_change":
+				return t("messages.native.model");
+			case "thinking_level_change":
+				return t("messages.native.thinkingLevel");
+			case "branch_summary":
+			case "compaction":
+			case "branchSummary":
+			case "compactionSummary":
+				return t("messages.native.summary");
+			case "bashExecution":
+				return t("messages.native.bash");
+			default:
+				return t("messages.native.notice");
+		}
+	};
+	return (
+		<Show when={!hidden()}>
+			<article
+				class="msg native-session-notice"
+				data-pi-entry-id={props.entry.id}
+				aria-label={label()}
+			>
+				<strong>{label()}</strong>
+				<Switch
+					fallback={
+						<>
+							<p>{t("messages.native.unsupported")}</p>
+							<pre>{nativeSource(value())}</pre>
+						</>
+					}
+				>
+					<Match when={kind() === "custom_message" || kind() === "custom"}>
+						<NativeMessageContent content={value().content} />
+						<Show when={value().details !== undefined}>
+							<details>
+								<summary>{t("messages.native.details")}</summary>
+								<pre>{nativeSource(value().details)}</pre>
+							</details>
+						</Show>
+					</Match>
+					<Match when={kind() === "model_change"}>
+						<p>
+							{String(value().provider)} / {String(value().modelId)}
+						</p>
+					</Match>
+					<Match when={kind() === "thinking_level_change"}>
+						<p>{String(value().thinkingLevel)}</p>
+					</Match>
+					<Match when={typeof value().summary === "string"}>
+						<NativeMessageContent content={value().summary} />
+					</Match>
+					<Match when={kind() === "bashExecution"}>
+						<pre>{String(value().command)}</pre>
+						<NativeMessageContent content={value().output} format="plain" />
+						<Show when={value().truncated === true}>
+							<p>{t("messages.native.truncatedOutput")}</p>
+						</Show>
+						<details>
+							<summary>{t("messages.native.details")}</summary>
+							<pre>
+								{nativeSource({
+									exitCode: value().exitCode,
+									cancelled: value().cancelled,
+									truncated: value().truncated,
+									fullOutputPath: value().fullOutputPath,
+									excludeFromContext: value().excludeFromContext,
+								})}
+							</pre>
+						</details>
+					</Match>
+					<Match when={kind() === "label"}>
+						<p>{String(value().label ?? "")}</p>
+					</Match>
+					<Match when={kind() === "session_info"}>
+						<p>{String(value().name ?? "")}</p>
+					</Match>
+				</Switch>
+			</article>
+		</Show>
 	);
 }
 
@@ -621,14 +763,18 @@ function StreamingAssistantProjection(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const message = () => props.item.message;
-	const text = () => ("content" in message() ? messageText(message().content) : "");
-	const failed = () => message().stopReason === "error" || message().stopReason === "aborted";
+	const content = () => message().content;
+	const failed = () =>
+		message().stopReason === "error" ||
+		message().stopReason === "aborted" ||
+		!!message().errorMessage;
 	const errorText = () =>
-		message().stopReason === "aborted"
+		message().errorMessage ||
+		(message().stopReason === "aborted"
 			? t("messages.responseStopped")
-			: message().errorMessage
+			: message().stopReason === "error"
 				? t("messages.responseFailedSaved")
-				: undefined;
+				: undefined);
 	const characterName = () => store.character?.name ?? "";
 	return (
 		<div class="timeline-entry-row timeline-entry-enter" data-testid="streaming-assistant-message">
@@ -647,8 +793,8 @@ function StreamingAssistantProjection(props: {
 					class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
 					aria-label={characterName()}
 				>
-					<MessageContent
-						text={text()}
+					<NativeMessageContent
+						content={content()}
 						format="markdown"
 						streaming={store.activePiLiveState?.isStreaming === true}
 					/>
@@ -676,7 +822,11 @@ function PiTimelineRenderer(props: {
 }) {
 	const store = useCompanionStore();
 	const turnActive = () =>
-		store.activePiLiveState?.isStreaming === true || store.pendingUserMessages.length > 0;
+		store.activePiLiveState?.isStreaming === true ||
+		store.activePiLiveState?.isCompacting === true ||
+		store.activePiLiveState?.isRetrying === true ||
+		store.activeSubmission?.state === "submitting" ||
+		(store.activeActivity !== undefined && store.activeActivity.errorMessage === undefined);
 	const latestAssistantId = createMemo(
 		() =>
 			[...props.items]
@@ -689,6 +839,17 @@ function PiTimelineRenderer(props: {
 				)?.id,
 	);
 	const itemIds = createMemo(() => props.items.map((item) => item.id));
+	const toolArgs = createMemo(() => {
+		const args = new Map<string, unknown>();
+		for (const item of props.items) {
+			const message =
+				item.kind === "entry" && item.entry.type === "message" ? item.entry.message : undefined;
+			if (message?.role !== "assistant") continue;
+			for (const part of message.content)
+				if (part.type === "toolCall") args.set(part.id, part.arguments);
+		}
+		return args;
+	});
 	return (
 		<For each={itemIds()}>
 			{(itemId) => {
@@ -697,9 +858,9 @@ function PiTimelineRenderer(props: {
 					const value = item();
 					return value?.kind === "entry" ? value : undefined;
 				};
-				const optimisticItem = () => {
+				const submissionItem = () => {
 					const value = item();
-					return value?.kind === "optimistic-user" ? value : undefined;
+					return value?.kind === "submission" ? value : undefined;
 				};
 				const queuedItem = () => {
 					const value = item();
@@ -707,7 +868,22 @@ function PiTimelineRenderer(props: {
 				};
 				const toolExecutionItem = () => {
 					const value = item();
-					return value?.kind === "tool-execution" ? value : undefined;
+					if (value?.kind === "tool-execution") return value;
+					if (
+						value?.kind !== "entry" ||
+						value.entry.type !== "message" ||
+						value.entry.message.role !== "toolResult"
+					)
+						return;
+					const message = value.entry.message;
+					return {
+						toolName: message.toolName,
+						toolCallId: message.toolCallId,
+						status: message.isError ? ("failed" as const) : ("completed" as const),
+						args: toolArgs().get(message.toolCallId),
+						result: message,
+						entryId: value.entry.id,
+					};
 				};
 				const streamingItem = () => {
 					const value = item();
@@ -715,6 +891,19 @@ function PiTimelineRenderer(props: {
 				};
 				return (
 					<Switch>
+						<Match when={toolExecutionItem()}>
+							{(execution) => (
+								<NativeToolView
+									toolName={execution().toolName}
+									toolCallId={execution().toolCallId}
+									status={execution().status}
+									args={execution().args}
+									result={execution().result}
+									entryId={entryItem()?.entry.id}
+									onPreviewMedia={props.onPreviewMedia}
+								/>
+							)}
+						</Match>
 						<Match when={entryItem()}>
 							{(entryItem) => (
 								<>
@@ -741,14 +930,11 @@ function PiTimelineRenderer(props: {
 								</>
 							)}
 						</Match>
-						<Match when={optimisticItem()}>
-							{(optimistic) => <OptimisticUserProjection item={optimistic()} />}
+						<Match when={submissionItem()}>
+							{(submission) => <SubmissionFeedback submission={submission().submission} />}
 						</Match>
 						<Match when={queuedItem()}>
-							{(queued) => <QueuedUserProjection text={queued().text} />}
-						</Match>
-						<Match when={toolExecutionItem()}>
-							{(execution) => <ToolExecutionProjection item={execution()} />}
+							{(queued) => <QueuedUserProjection text={queued().text} queue={queued().queue} />}
 						</Match>
 						<Match when={streamingItem()}>
 							{(streaming) => <StreamingAssistantProjection item={streaming()} />}
@@ -768,14 +954,47 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 	let threadRef: HTMLElement | undefined;
 	let jumpButtonRef: HTMLButtonElement | undefined;
 	let timelineScroll: TimelineScrollController | undefined;
-	const announcement = createMemo(() =>
-		store.activePiLiveState?.isStreaming === true ? t("messages.responding") : "",
-	);
+	let historyFrame: number | undefined;
+	let disposed = false;
+	const activityLabel = createMemo(() => {
+		const activity = store.activeActivity;
+		if (!activity) return "";
+		if (activity.kind === "tool")
+			return `${t("messages.activity.tool")}: ${activity.toolName ?? ""}`;
+		return t(`messages.activity.${activity.kind}`);
+	});
 	const connectTimelineScroll = () => {
 		if (!timelineScroll && threadRef && jumpButtonRef)
 			timelineScroll = installTimelineScrollProtection(threadRef, jumpButtonRef);
 	};
-	onCleanup(() => timelineScroll?.dispose());
+	onCleanup(() => {
+		disposed = true;
+		timelineScroll?.dispose();
+		if (historyFrame !== undefined) cancelAnimationFrame(historyFrame);
+	});
+	const loadOlder = async () => {
+		if (store.historyLoading) return;
+		const conversationId = store.activeConversationId;
+		const anchor = threadRef?.querySelector<HTMLElement>("[data-pi-entry-id]");
+		const top = anchor?.getBoundingClientRect().top;
+		await store.loadOlderHistory();
+		if (disposed) return;
+		if (historyFrame !== undefined) cancelAnimationFrame(historyFrame);
+		// Restore the same native entry after the store prepends its authoritative page.
+		// A frame runs after the existing mutation-based follow-to-latest observer.
+		historyFrame = requestAnimationFrame(() => {
+			historyFrame = undefined;
+			if (
+				store.activeConversationId !== conversationId ||
+				!anchor?.isConnected ||
+				top === undefined
+			)
+				return;
+			const scroller = document.scrollingElement ?? document.documentElement;
+			scroller.scrollTop += anchor.getBoundingClientRect().top - top;
+			window.dispatchEvent(new Event("scroll"));
+		});
+	};
 
 	return (
 		<>
@@ -795,6 +1014,29 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 					</div>
 				</Show>
 
+				<Show when={store.liveConnectionStatus !== "connected"}>
+					<div
+						class="conversation-connection-status"
+						data-testid="conversation-connection-status"
+						role="status"
+					>
+						{t(
+							`messages.connection.${store.liveConnectionStatus === "reconnecting" ? "reconnecting" : "connecting"}`,
+						)}
+					</div>
+				</Show>
+				<Show when={store.activePiBranch?.hasMoreBefore}>
+					<Button type="button" disabled={store.historyLoading} onClick={() => void loadOlder()}>
+						{t(
+							store.historyLoading ? "messages.native.loadingHistory" : "messages.native.loadOlder",
+						)}
+					</Button>
+				</Show>
+				<Show when={store.historyError}>
+					<p class="thread-error" role="alert">
+						{store.historyError}
+					</p>
+				</Show>
 				<Show when={hasThreadContent()}>
 					<PiTimelineRenderer
 						items={store.activeTimeline}
@@ -803,16 +1045,57 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 						onPreviewMedia={props.onPreviewMedia}
 					/>
 				</Show>
+				<Show when={store.activeSubmission?.kind !== "send" && store.activeSubmission}>
+					{(submission) => <SubmissionFeedback submission={submission()} />}
+				</Show>
+				<Show when={store.activeActivity}>
+					{(activity) => (
+						<div
+							class="conversation-activity"
+							data-testid="conversation-activity"
+							data-activity={activity().kind}
+							role="status"
+							data-failed={activity().kind !== "retry" && activity().errorMessage !== undefined}
+							aria-label={activityLabel()}
+							aria-live="polite"
+							aria-atomic="true"
+						>
+							<span data-testid="conversation-announcement">{activityLabel()}</span>
+							<Show when={activity().kind === "retry" ? activity().attempt : undefined}>
+								{(attempt) => (
+									<span>
+										{t("messages.activity.retryAttempt", {
+											attempt: attempt(),
+											maxAttempts: activity().maxAttempts ?? "?",
+										})}
+									</span>
+								)}
+							</Show>
+							<Show when={activity().kind === "retry" && activity().delayMs !== undefined}>
+								<span>
+									{t("messages.activity.retryDelay", {
+										seconds: Math.ceil((activity().delayMs ?? 0) / 1_000),
+									})}
+								</span>
+							</Show>
+							<Show when={activity().errorMessage}>
+								<span class="stream-error">
+									{t(
+										activity().kind === "memory_capture"
+											? "messages.activity.memoryCaptureFailed"
+											: activity().kind === "memory_recall"
+												? "messages.activity.memoryRecallFailed"
+												: activity().kind === "retry"
+													? "messages.activity.retryReason"
+													: "messages.activity.failed",
+									)}{" "}
+									{activity().errorMessage}
+								</span>
+							</Show>
+						</div>
+					)}
+				</Show>
 			</section>
-			<div
-				class="sr-only"
-				role="status"
-				aria-live="polite"
-				aria-atomic="true"
-				data-testid="conversation-announcement"
-			>
-				{announcement()}
-			</div>
 			<Button
 				type="button"
 				class="timeline-jump-latest"
@@ -831,29 +1114,76 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 
 function MediaTimelineCard(props: { media: CharacterMedia; onOpen(): void }) {
 	const [t] = useTranslation(undefined, { i18n });
+	const [thumbnailFailed, setThumbnailFailed] = createSignal(false);
+	const thumbnail = props.media.kind === "image" ? props.media.url : props.media.posterUrl;
+	const playable = props.media.kind === "audio" || props.media.kind === "video";
+	const action = createMemo(() => t(playable ? "messages.playMedia" : "messages.openMedia"));
 	return (
 		<section class="message-media-card" aria-label={props.media.label}>
-			<div>
-				<strong>{props.media.label}</strong>
-				<p>{props.media.description}</p>
-			</div>
-			<Button type="button" onClick={props.onOpen}>
-				{t("messages.openMedia")}
+			<Button
+				class="message-media-trigger"
+				type="button"
+				aria-label={action()}
+				onClick={props.onOpen}
+			>
+				<Show
+					when={thumbnail && !thumbnailFailed()}
+					fallback={
+						<span class="message-media-placeholder">
+							<Icon icon={props.media.kind === "audio" ? faMusic : playable ? faPlay : faImage} />
+						</span>
+					}
+				>
+					<img
+						class="message-media-thumbnail"
+						src={thumbnail}
+						alt={props.media.label}
+						loading="lazy"
+						decoding="async"
+						onError={() => setThumbnailFailed(true)}
+					/>
+				</Show>
+				<span class="message-media-caption">
+					<strong>{props.media.label}</strong>
+					<span>{action()}</span>
+				</span>
 			</Button>
 		</section>
 	);
 }
 
-function CharacterMediaContent(props: { media: CharacterMedia }) {
+function CharacterMediaContent(props: { media: CharacterMedia; onError(): void }) {
+	let player: HTMLMediaElement | undefined;
+	onCleanup(() => {
+		if (!player) return;
+		player.pause();
+		player.removeAttribute("src");
+		player.load();
+	});
 	if (props.media.kind === "audio")
 		return (
-			<audio controls loop={props.media.loop} src={props.media.url} aria-label={props.media.label}>
+			<audio
+				ref={(element) => {
+					player = element;
+				}}
+				controls
+				preload="metadata"
+				loop={props.media.loop}
+				src={props.media.url}
+				aria-label={props.media.label}
+				onError={props.onError}
+			>
 				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
 			</audio>
 		);
 	if (props.media.kind === "video")
 		return (
 			<video
+				ref={(element) => {
+					player = element;
+				}}
+				preload="metadata"
+				onError={props.onError}
 				controls
 				loop={props.media.loop}
 				poster={props.media.posterUrl}
@@ -870,137 +1200,74 @@ function CharacterMediaContent(props: { media: CharacterMedia }) {
 		window.matchMedia("(prefers-reduced-motion: reduce)").matches
 			? props.media.posterUrl
 			: props.media.url;
-	return <img src={source} alt={props.media.label} />;
+	return <img src={source} alt={props.media.label} onError={props.onError} />;
 }
 
-function MediaPreviewModalIsolation(props: { preview(): HTMLElement | undefined }) {
-	const isolated: Array<{
-		element: HTMLElement;
-		inert: boolean;
-		ariaHidden: string | null;
-	}> = [];
-	onMount(() => {
-		const preview = props.preview();
-		const shell = preview?.closest(".shell");
-		if (!preview || !shell) return;
-		for (const child of shell.children) {
-			if (
-				!(child instanceof HTMLElement) ||
-				child === preview ||
-				child.classList.contains("artifact-preview-backdrop")
-			)
-				continue;
-			isolated.push({
-				element: child,
-				inert: child.inert,
-				ariaHidden: child.getAttribute("aria-hidden"),
-			});
-			child.inert = true;
-			child.setAttribute("aria-hidden", "true");
-		}
-	});
-	onCleanup(() => {
-		for (const item of isolated) {
-			item.element.inert = item.inert;
-			if (item.ariaHidden === null) item.element.removeAttribute("aria-hidden");
-			else item.element.setAttribute("aria-hidden", item.ariaHidden);
-		}
-	});
-	return null;
-}
-
-export function MediaPreview(props: {
-	media: CharacterMedia;
-	layout: AppLayoutMode;
-	onClose(): void;
-}) {
+export function MediaViewer(props: { media: CharacterMedia; onClose(): void }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const modal = () => props.layout !== "fullscreen";
+	const [expanded, setExpanded] = createSignal(false);
+	const [originalSize, setOriginalSize] = createSignal(false);
+	const [failed, setFailed] = createSignal(false);
+	const image = props.media.kind === "image" || props.media.kind === "animation";
 	const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-	let preview: HTMLElement | undefined;
 	let closeButton: HTMLButtonElement | undefined;
-	let closed = false;
-	const close = () => {
-		if (closed) return;
-		closed = true;
-		props.onClose();
-		queueMicrotask(() => {
-			if (opener?.isConnected) opener.focus();
-		});
-	};
-	onMount(() => {
-		closeButton?.focus();
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				event.preventDefault();
-				close();
-				return;
-			}
-			if (!modal() || event.key !== "Tab" || !preview) return;
-			const focusable = Array.from(
-				preview.querySelectorAll<HTMLElement>(
-					'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-				),
-			).filter((element) => !element.hidden);
-			if (focusable.length === 0) return;
-			const first = focusable[0];
-			const last = focusable[focusable.length - 1];
-			if (event.shiftKey && document.activeElement === first) {
-				event.preventDefault();
-				last?.focus();
-			} else if (!event.shiftKey && document.activeElement === last) {
-				event.preventDefault();
-				first?.focus();
-			}
-		};
-		document.addEventListener("keydown", onKeyDown);
-		onCleanup(() => document.removeEventListener("keydown", onKeyDown));
-	});
 	return (
-		<>
-			<Show when={props.layout === "window"}>
-				<Button
-					type="button"
-					class="artifact-preview-backdrop media-preview-backdrop"
-					aria-label={t("messages.closeMedia")}
-					onClick={close}
-				/>
-			</Show>
-			<aside
-				ref={(element) => {
-					preview = element;
-				}}
-				class="attachment-preview-column media-preview-column"
-				role={modal() ? "dialog" : "complementary"}
-				{...(modal() ? { "aria-modal": "true" } : {})}
-				aria-label={props.media.label}
-			>
-				<header>
-					<div class="attachment-preview-heading">
-						<small>{props.media.kind}</small>
-						<strong>{props.media.label}</strong>
+		<Dialog open modal onOpenChange={(open) => !open && props.onClose()}>
+			<Dialog.Portal>
+				<Dialog.Overlay class="media-viewer-backdrop" />
+				<Dialog.Content
+					class="media-viewer"
+					data-expanded={expanded()}
+					onOpenAutoFocus={(event) => {
+						event.preventDefault();
+						closeButton?.focus();
+					}}
+					onCloseAutoFocus={(event) => {
+						event.preventDefault();
+						if (opener?.isConnected) opener.focus();
+					}}
+				>
+					<header class="media-viewer-header">
+						<Dialog.Title>{props.media.label}</Dialog.Title>
+						<div class="media-viewer-controls">
+							<Show when={image && !failed()}>
+								<Button
+									type="button"
+									aria-pressed={originalSize()}
+									onClick={() => setOriginalSize((value) => !value)}
+								>
+									{t(originalSize() ? "messages.fitMedia" : "messages.originalMediaSize")}
+								</Button>
+							</Show>
+							<Button
+								type="button"
+								class="media-viewer-expand"
+								aria-label={t(expanded() ? "messages.restoreMedia" : "messages.expandMedia")}
+								aria-pressed={expanded()}
+								onClick={() => setExpanded((value) => !value)}
+							>
+								<Icon icon={expanded() ? faCompress : faExpand} />
+							</Button>
+							<Button
+								ref={closeButton}
+								type="button"
+								aria-label={t("messages.closeMedia")}
+								onClick={props.onClose}
+							>
+								×
+							</Button>
+						</div>
+					</header>
+					<div class="media-viewer-content" data-original-size={originalSize()}>
+						<Show when={!failed()} fallback={<p role="alert">{t("messages.mediaUnavailable")}</p>}>
+							<CharacterMediaContent media={props.media} onError={() => setFailed(true)} />
+						</Show>
 					</div>
-					<Button
-						ref={(element) => {
-							closeButton = element;
-						}}
-						type="button"
-						aria-label={t("messages.closeMedia")}
-						onClick={close}
-					>
-						×
-					</Button>
-				</header>
-				<section class="attachment-preview-media media-preview-content">
-					<CharacterMediaContent media={props.media} />
-				</section>
-				<footer class="attachment-preview-actions">
-					<p>{props.media.description}</p>
-				</footer>
-			</aside>
-			<Show when={modal()}>
-				<MediaPreviewModalIsolation preview={() => preview} />
-			</Show>
-		</>
+					<Dialog.Description class="media-viewer-description">
+						{props.media.description}
+					</Dialog.Description>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog>
 	);
 }

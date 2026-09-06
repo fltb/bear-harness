@@ -228,7 +228,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				)}
 			</Show>
 			<Show
-				when={workflow.streaming()}
+				when={store.activePiLiveState?.isStreaming === true}
 				fallback={
 					<Button
 						type="submit"

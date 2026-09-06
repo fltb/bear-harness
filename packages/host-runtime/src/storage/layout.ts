@@ -123,6 +123,7 @@ export interface CompanionPaths {
 	readonly runs: string;
 	readonly artifacts: string;
 	readonly audit: string;
+	readonly diagnostics: string;
 }
 
 /** One authoritative path assembly point for all installation and character data. */
@@ -165,6 +166,7 @@ export class RuntimeLayout {
 			runs: contained(root, "runs"),
 			artifacts: contained(root, "artifacts"),
 			audit: contained(root, "audit"),
+			diagnostics: contained(root, "diagnostics"),
 		});
 	}
 
@@ -209,6 +211,7 @@ export class RuntimeLayout {
 			paths.runs,
 			paths.artifacts,
 			paths.audit,
+			paths.diagnostics,
 		]) {
 			assertRealDirectory(directory, "companion runtime directory");
 		}

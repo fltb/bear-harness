@@ -10,9 +10,16 @@ import {
 	statSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import type { Run as WireRun } from "@bear-harness/protocol";
+import type {
+	RunGetRequest,
+	RunGetResponse,
+	RunListRequest,
+	RunListResponse,
+	RunSteerResponse,
+	Run as WireRun,
+} from "@bear-harness/protocol";
 import { RunPermission } from "@bear-harness/protocol/schema";
-import { and, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import PQueue from "p-queue";
 import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
 import type {
@@ -71,13 +78,14 @@ export interface RunSummary {
 export interface DelegateParams {
 	conversationId: string;
 	triggerEntryId: string;
-	agent: "pi" | "codex";
+	toolCallId: string;
 	inputPaths: string[];
 	instruction: string;
 }
 export interface DelegateResult {
 	runId: string;
-	status: "enqueued" | "running";
+	accepted: true;
+	executor: "pi";
 }
 export interface TerminalRunResult {
 	run: RunSummary;
@@ -105,6 +113,13 @@ export class ExternalAgentRunService {
 	private readonly changeListeners = new Set<(run: WireRun) => void>();
 	private readonly reconciliationTasks = new Map<string, ReconciliationAttempt>();
 	private readonly detachedTasks = new Set<Promise<void>>();
+	private readonly admissions = new Set<Promise<DelegateResult>>();
+	private readonly controls = new Map<Promise<unknown>, string>();
+	private readonly launches = new Map<
+		string,
+		{ cancelled: boolean; started: boolean; promise: Promise<void> }
+	>();
+	private readonly deletingConversations = new Set<string>();
 	private closePromise: Promise<void> | undefined;
 	private closed = false;
 	constructor(
@@ -112,7 +127,6 @@ export class ExternalAgentRunService {
 		private readonly executorRouter: ExecutorRouter,
 		private readonly artifacts: ArtifactStore,
 		private readonly runRoot: string,
-		private readonly resolveProfile: (agent: "pi" | "codex") => Promise<string>,
 		private readonly resolvePiModel: (
 			conversationId: string,
 		) => Promise<{ providerId: string; modelId: string; apiKey?: string } | undefined>,
@@ -130,32 +144,59 @@ export class ExternalAgentRunService {
 		return () => this.changeListeners.delete(listener);
 	}
 
-	async delegate(params: DelegateParams): Promise<DelegateResult> {
+	delegate(params: DelegateParams): Promise<DelegateResult> {
+		const task = this.admit(params);
+		this.admissions.add(task);
+		void task.then(
+			() => this.admissions.delete(task),
+			() => this.admissions.delete(task),
+		);
+		return task;
+	}
+
+	private assertAdmissionOpen(conversationId: string): void {
+		if (this.closed) throw { kind: "unavailable", reason: "run_service_closed" };
+		if (this.deletingConversations.has(conversationId))
+			throw { kind: "conflict", reason: "conversation_deleting" };
+		if (
+			!this.db
+				.select({ id: conversations.id })
+				.from(conversations)
+				.where(eq(conversations.id, conversationId))
+				.get()
+		)
+			throw { kind: "not_found", reason: "conversation_not_found" };
+	}
+
+	private async admit(params: DelegateParams): Promise<DelegateResult> {
+		this.assertAdmissionOpen(params.conversationId);
+		if (!params.toolCallId || params.toolCallId.length > 256)
+			throw { kind: "validation_failed", reason: "tool_call_id_invalid" };
+		const existing = () =>
+			this.db
+				.select({ id: runs.id })
+				.from(runs)
+				.where(
+					and(
+						eq(runs.conversationId, params.conversationId),
+						eq(runs.toolCallId, params.toolCallId),
+					),
+				)
+				.get();
+		const admitted = existing();
+		if (admitted) return { accepted: true, runId: admitted.id, executor: "pi" };
 		const instruction = params.instruction.trim();
 		if (!instruction || instruction.length > 12_000)
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const inputPaths = validateInputPaths(params.inputPaths);
-		const owner = this.db
-			.select({ id: conversations.id })
-			.from(conversations)
-			.where(eq(conversations.id, params.conversationId))
-			.get();
-		if (!owner) throw { kind: "not_found", reason: "conversation_not_found" };
-		const profile = await this.resolveProfile(params.agent);
-		this.executorRouter.validateProfile(profile);
-		const modelRoute =
-			params.agent === "pi" ? await this.resolvePiModel(params.conversationId) : undefined;
-		if (params.agent === "pi" && !modelRoute)
-			throw { kind: "unavailable", reason: "pi_model_unavailable" };
-		const runId = randomUUID();
-		const runDirectory = join(this.runRoot, runId);
-		const title =
-			instruction
-				.split(/\r?\n/)
-				.find((line) => line.trim())
-				?.trim()
-				.slice(0, 80) ?? "External agent task";
-		const prepared = await this.enqueueEvent(() => {
+		this.executorRouter.validateProfile("pi-default", "pi");
+		const modelRoute = await this.resolvePiModel(params.conversationId);
+		if (!modelRoute) throw { kind: "unavailable", reason: "pi_model_unavailable" };
+		return this.enqueueEvent(() => {
+			this.assertAdmissionOpen(params.conversationId);
+			const duplicate = existing();
+			if (duplicate)
+				return { accepted: true as const, runId: duplicate.id, executor: "pi" as const };
 			const resourceOwners = this.db
 				.select({ n: count() })
 				.from(runs)
@@ -163,79 +204,104 @@ export class ExternalAgentRunService {
 				.get();
 			if (Number(resourceOwners?.n ?? 0) >= MAX_CONCURRENT_RUNS)
 				throw { kind: "conflict", reason: "max_concurrent_runs" };
-			const directories = prepareRunDirectories(runDirectory, inputPaths);
+			const runId = randomUUID();
 			this.db
 				.insert(runs)
 				.values({
 					id: runId,
 					conversationId: params.conversationId,
 					triggerEntryId: params.triggerEntryId,
-					executorProfile: profile,
-					title,
+					toolCallId: params.toolCallId,
+					executorProfile: "pi-default",
+					title:
+						instruction
+							.split(/\r?\n/)
+							.find((line) => line.trim())
+							?.trim()
+							.slice(0, 80) ?? "Pi task",
 					instruction,
 					inputPaths,
 					status: "enqueued",
 				})
 				.run();
-			this.changed(runId);
-			return directories;
-		});
-		const run: ExecutorRun = {
-			runId,
-			triggerEntryId: params.triggerEntryId,
-			executorProfile: profile,
-		};
-		const pathReplacements = [
-			...prepared.inputs.map((input) => input.path),
-			prepared.workspace,
-			prepared.outputDirectory,
-		];
-		try {
-			await this.executorRouter.launch(
-				run,
-				{
-					instruction: executionInstruction(instruction, prepared.inputs, prepared.outputDirectory),
-					workspace: prepared.workspace,
-					outputDirectory: prepared.outputDirectory,
-					readOnlyPaths: prepared.inputs.map((input) => input.path),
-					...(modelRoute ? { modelRoute } : {}),
-				},
-				(event) => {
-					if (this.closed) return;
-					const task = this.enqueueEvent(() =>
-						this.applyExecutorEvent(
-							runId,
-							event,
-							prepared.outputDirectory,
-							prepared.canonicalOutputDirectory,
-							pathReplacements,
-						),
-					).catch(async (error) => {
-						if (this.closed) return;
-						try {
-							await this.enqueueEvent(() => {
-								this.recordEvidence(runId, "executor.event_failed", {
-									reason: reconciliationError(error),
-								});
-							});
-						} catch {
-							// Executor callbacks are detached; diagnostics failure
-							// must not become an unhandled rejection.
-						}
+			const launch = { cancelled: false, started: false, promise: Promise.resolve() };
+			launch.promise = new Promise<void>((resolve) => setImmediate(resolve))
+				.then(async () => {
+					if (
+						launch.cancelled ||
+						this.closed ||
+						this.deletingConversations.has(params.conversationId)
+					) {
+						launch.cancelled = true;
+						return;
+					}
+					const row = this.getRun(runId);
+					if (row.completedAt) return;
+					const prepared = prepareRunDirectories(join(this.runRoot, runId), inputPaths);
+					const paths = [...inputPaths, prepared.workspace, prepared.outputDirectory];
+					launch.started = true;
+					await this.executorRouter.launch(
+						this.executorRun(row),
+						{
+							instruction: executionInstruction(
+								instruction,
+								prepared.inputs,
+								prepared.outputDirectory,
+							),
+							workspace: prepared.workspace,
+							outputDirectory: prepared.outputDirectory,
+							readOnlyPaths: inputPaths,
+							modelRoute,
+						},
+						(event) => {
+							if (
+								this.closed ||
+								launch.cancelled ||
+								this.deletingConversations.has(params.conversationId)
+							)
+								return;
+							this.trackDetached(
+								this.enqueueEvent(() =>
+									this.applyExecutorEvent(
+										runId,
+										event,
+										prepared.outputDirectory,
+										prepared.canonicalOutputDirectory,
+										paths,
+									),
+								).catch(() => {
+									if (!this.closed && !this.deletingConversations.has(params.conversationId))
+										this.recordEvidence(runId, "executor.event_failed", {
+											reason: "executor_event_failed",
+										});
+								}),
+							);
+						},
+					);
+				})
+				.catch(async (error) => {
+					if (
+						launch.cancelled ||
+						this.closed ||
+						this.deletingConversations.has(params.conversationId)
+					)
+						return;
+					await this.enqueueEvent(() => {
+						if (this.getRun(runId).completedAt) return;
+						const reason = safeExecutorFailureReason(safeReason(error, inputPaths));
+						this.recordEvidence(runId, "executor.launch_failed", { reason });
+						this.terminate(runId, "failed", reason, []);
 					});
-					this.trackDetached(task);
-				},
-			);
-		} catch (error) {
-			const reason = safeReason(error, pathReplacements);
-			await this.enqueueEvent(async () => {
-				this.recordEvidence(runId, "executor.launch_failed", { reason });
-				this.terminate(runId, "failed", reason, []);
-			});
-			throw error;
-		}
-		const persisted = this.getRun(runId);
-		return { runId, status: persisted.status === "running" ? "running" : "enqueued" };
+				})
+				.finally(() => {
+					if (!launch.cancelled) this.launches.delete(runId);
+				});
+			this.launches.set(runId, launch);
+			// Startup failures stay attached to the admitted identity, never reject its receipt.
+			void launch.promise.catch(() => undefined);
+			this.changed(runId);
+			return { accepted: true as const, runId, executor: "pi" as const };
+		});
 	}
 
 	private async applyExecutorEvent(
@@ -259,7 +325,7 @@ export class ExternalAgentRunService {
 				this.changed(runId);
 				return;
 			case "evidence":
-				this.recordEvidence(runId, event.kind, sanitizeValue(event.data, paths));
+				this.recordEvidence(runId, event.kind, boundedEvidence(event.data, paths));
 				return;
 			case "needs_user":
 				if (run.status === "running") {
@@ -322,6 +388,20 @@ export class ExternalAgentRunService {
 	project(run: RunSummary): WireRun {
 		const row = this.getRun(run.id);
 		const permission = row.permissionJson ? RunPermission.safeParse(row.permissionJson) : undefined;
+		const runtime = this.executorRouter.runtime(this.executorRun(row));
+		const actions: NonNullable<WireRun["actions"]> = row.completedAt
+			? []
+			: runtime.actions.filter(
+					(action) =>
+						action === "cancel" ||
+						(action === "resume" && row.status === "interrupted") ||
+						(action === "respondPermission" && row.status === "needs_user") ||
+						((action === "steer" || action === "interrupt") &&
+							(row.status === "running" || row.status === "needs_user")),
+				);
+		if (!row.completedAt && this.launches.has(row.id) && !actions.includes("cancel"))
+			actions.push("cancel");
+		if (row.completedAt && !row.resultReportedAt && this.onTerminal) actions.push("retryDelivery");
 		return {
 			id: run.id,
 			conversationId: run.conversationId,
@@ -329,7 +409,10 @@ export class ExternalAgentRunService {
 			executorProfile: run.executorProfile,
 			title: run.title,
 			status: run.status,
-			artifacts: run.artifacts.map((artifact) => ({
+			controller: runtime.controller,
+			actions,
+			...(row.resultReportedAt ? { resultReportedAt: row.resultReportedAt } : {}),
+			artifacts: this.artifacts.list(row.id).map((artifact) => ({
 				id: artifact.id,
 				name: artifact.logicalName,
 				mime: artifact.mime,
@@ -362,7 +445,7 @@ export class ExternalAgentRunService {
 	}
 
 	private changed(runId: string): void {
-		const wire = this.project(summarize(this.getRun(runId), this.artifacts.list(runId)));
+		const wire = this.project(summarize(this.getRun(runId)));
 		for (const listener of [...this.changeListeners]) {
 			try {
 				listener(wire);
@@ -403,20 +486,18 @@ export class ExternalAgentRunService {
 					return;
 				}
 				const needsResultReport = !row.resultReportedAt;
-				const outcome = await waitForReconciliationAttempt(
-					Promise.resolve(
-						this.onTerminal(
-							{
-								run: summarize(row),
-								outputs: capturedOutputs ?? this.artifacts.list(row.id),
-								needsResultReport,
-							},
-							controller.signal,
-						),
+				const delivery = Promise.resolve(
+					this.onTerminal(
+						{
+							run: summarize(row),
+							outputs: capturedOutputs ?? this.artifacts.list(row.id),
+							needsResultReport,
+						},
+						controller.signal,
 					),
-					controller.signal,
-					timeoutMs,
 				);
+				this.trackDetached(delivery.then(() => undefined));
+				const outcome = await waitForReconciliationAttempt(delivery, controller.signal, timeoutMs);
 				if (controller.signal.aborted || this.closed) return;
 				const update: { resultReportedAt?: string } = {};
 				const now = new Date().toISOString();
@@ -428,6 +509,7 @@ export class ExternalAgentRunService {
 							.set(update)
 							.where(and(eq(runs.id, runId), isNull(runs.resultReportedAt)))
 							.run();
+						this.changed(runId);
 					});
 			} catch (error) {
 				// Null reconciliation timestamps are the durable pending state. Keep
@@ -493,7 +575,7 @@ export class ExternalAgentRunService {
 		const evidenceId = randomUUID();
 		this.db
 			.insert(evidence)
-			.values({ id: evidenceId, runId, kind: kind.slice(0, 128), data })
+			.values({ id: evidenceId, runId, kind: kind.slice(0, 128), data: boundedEvidence(data) })
 			.run();
 		this.changed(runId);
 	}
@@ -515,24 +597,69 @@ export class ExternalAgentRunService {
 		this.changed(runId);
 		return summarize(this.getRun(runId));
 	}
-	async steerRun(runId: string, instruction: string): Promise<void> {
+	private ownControl<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+		if (this.closed) return Promise.reject({ kind: "unavailable", reason: "run_service_closed" });
+		const task = operation();
+		this.controls.set(task, runId);
+		void task.then(
+			() => this.controls.delete(task),
+			() => this.controls.delete(task),
+		);
+		return task;
+	}
+
+	steerRun(runId: string, instruction: string): Promise<RunSteerResponse> {
+		return this.ownControl(runId, () => this.performSteer(runId, instruction));
+	}
+	interruptRun(runId: string): Promise<RunSummary> {
+		return this.ownControl(runId, () => this.performInterrupt(runId));
+	}
+	resumeRun(runId: string, instruction?: string): Promise<RunSummary> {
+		return this.ownControl(runId, () => this.performResume(runId, instruction));
+	}
+	respondToExecutorPermission(
+		runId: string,
+		requestId: string,
+		optionId: string,
+	): Promise<RunSummary> {
+		return this.ownControl(runId, () => this.performPermissionResponse(runId, requestId, optionId));
+	}
+	cancelRun(runId: string): Promise<RunSummary> {
+		return this.ownControl(runId, () => this.performCancel(runId));
+	}
+	retryDelivery(runId: string): Promise<RunSummary> {
+		return this.ownControl(runId, () => this.performRetryDelivery(runId));
+	}
+
+	private async performSteer(runId: string, instruction: string): Promise<RunSteerResponse> {
+		if (!instruction.trim() || instruction.length > 12_000)
+			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
 			if (current.status !== "running" && current.status !== "needs_user")
 				throw { kind: "conflict", reason: "run_not_steerable" };
+			this.assertAction(current, "steer");
 			return current;
 		});
-		await this.executorRouter.steer(this.executorRun(run), instruction);
+		const receipt = await this.executorRouter.steer(this.executorRun(run), instruction);
 		this.changed(runId);
+		return receipt;
 	}
-	async interruptRun(runId: string): Promise<RunSummary> {
+	private async performInterrupt(runId: string): Promise<RunSummary> {
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
 			if (current.status !== "running" && current.status !== "needs_user")
 				throw { kind: "conflict", reason: "run_not_interruptible" };
+			this.assertAction(current, "interrupt");
 			return current;
 		});
-		await this.executorRouter.interrupt(this.executorRun(run));
+		try {
+			await this.executorRouter.interrupt(this.executorRun(run));
+		} catch (error) {
+			const current = await this.enqueueEvent(() => this.getRun(runId));
+			if (current.completedAt) return summarize(current, this.artifacts.list(runId));
+			throw error;
+		}
 		return this.enqueueEvent(() => {
 			const update = this.db
 				.update(runs)
@@ -549,14 +676,17 @@ export class ExternalAgentRunService {
 			return summarize(this.getRun(runId));
 		});
 	}
-	async resumeRun(runId: string): Promise<RunSummary> {
+	private async performResume(runId: string, instruction?: string): Promise<RunSummary> {
+		if (instruction !== undefined && (!instruction.trim() || instruction.length > 12_000))
+			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
 			if (current.status !== "interrupted" || current.completedAt)
 				throw { kind: "conflict", reason: "run_not_resumable" };
+			this.assertAction(current, "resume");
 			return current;
 		});
-		await this.executorRouter.resume(this.executorRun(run));
+		await this.executorRouter.resume(this.executorRun(run), undefined, instruction);
 		return this.enqueueEvent(() => {
 			const update = this.db
 				.update(runs)
@@ -567,7 +697,7 @@ export class ExternalAgentRunService {
 			return summarize(this.getRun(runId));
 		});
 	}
-	async respondToExecutorPermission(
+	private async performPermissionResponse(
 		runId: string,
 		requestId: string,
 		optionId: string,
@@ -576,6 +706,7 @@ export class ExternalAgentRunService {
 			const current = this.getRun(runId);
 			if (current.status !== "needs_user" || current.completedAt)
 				throw { kind: "conflict", reason: "run_not_awaiting_permission" };
+			this.assertAction(current, "respondPermission");
 			const permission = RunPermission.parse(current.permissionJson);
 			if (
 				permission.requestId !== requestId ||
@@ -605,7 +736,7 @@ export class ExternalAgentRunService {
 			return summarize(this.getRun(runId));
 		});
 	}
-	async cancelRun(runId: string): Promise<RunSummary> {
+	private async performCancel(runId: string): Promise<RunSummary> {
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
 			if (
@@ -613,10 +744,173 @@ export class ExternalAgentRunService {
 				!["enqueued", "running", "needs_user", "interrupted"].includes(current.status)
 			)
 				throw { kind: "conflict", reason: "run_not_cancellable" };
+			this.assertAction(current, "cancel");
+			const launch = this.launches.get(runId);
+			if (launch) launch.cancelled = true;
 			return current;
 		});
-		await this.executorRouter.cancel(this.executorRun(run));
+		const launch = this.launches.get(runId);
+		try {
+			if (!launch || launch.started) await this.executorRouter.cancel(this.executorRun(run));
+			if (launch) await launch.promise;
+		} catch (error) {
+			if (launch) launch.cancelled = false;
+			throw error;
+		}
+		this.launches.delete(runId);
 		return this.enqueueEvent(() => this.terminate(runId, "cancelled", null, []));
+	}
+
+	private assertAction(row: RunRow, action: NonNullable<WireRun["actions"]>[number]): void {
+		if (this.closed || this.deletingConversations.has(row.conversationId))
+			throw { kind: "unavailable", reason: "run_service_unavailable" };
+		if (!this.project(summarize(row)).actions?.includes(action))
+			throw { kind: "conflict", reason: `run_${action}_unavailable` };
+	}
+
+	assertConversationRun(conversationId: string, runId: string): void {
+		if (this.getRun(runId).conversationId !== conversationId)
+			throw { kind: "not_found", reason: "run_not_found" };
+	}
+
+	assertCharacterRun(companionId: string, runId: string): void {
+		const row = this.getRun(runId);
+		const owner = this.db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(
+				and(eq(conversations.id, row.conversationId), eq(conversations.companionId, companionId)),
+			)
+			.get();
+		if (!owner) throw { kind: "not_found", reason: "run_not_found" };
+	}
+
+	private async performRetryDelivery(runId: string): Promise<RunSummary> {
+		const row = this.getRun(runId);
+		this.assertAction(row, "retryDelivery");
+		await this.reconcileRun(runId);
+		if (!this.getRun(runId).resultReportedAt)
+			throw { kind: "unavailable", reason: "run_result_delivery_pending" };
+		return summarize(this.getRun(runId), this.artifacts.list(runId));
+	}
+
+	getDetail(runId: string, request: Partial<RunGetRequest> = {}): RunGetResponse {
+		const row = this.getRun(runId);
+		const limit = pageLimit(request.limit);
+		const cursor = decodeCursor(request.cursor);
+		const rows = this.db
+			.select()
+			.from(evidence)
+			.where(
+				and(
+					eq(evidence.runId, runId),
+					cursor
+						? or(
+								lt(evidence.createdAt, cursor.createdAt),
+								and(eq(evidence.createdAt, cursor.createdAt), lt(evidence.id, cursor.id)),
+							)
+						: undefined,
+				),
+			)
+			.orderBy(desc(evidence.createdAt), desc(evidence.id))
+			.limit(limit + 1)
+			.all();
+		const page = rows.slice(0, limit);
+		return {
+			run: this.project(summarize(row)),
+			instruction: safeRunText(row.instruction, 12_000),
+			inputPaths: row.inputPaths.map((path) => safeRunText(basename(path), 1_024)),
+			evidence: page.map((item) => ({
+				id: item.id,
+				kind: safeRunText(item.kind, 128),
+				createdAt: item.createdAt,
+				data: boundedEvidence(item.data),
+			})),
+			...(rows.length > limit && page.length
+				? { nextCursor: encodeCursor(page[page.length - 1]!) }
+				: {}),
+		};
+	}
+
+	listPage(companionId: string, request: RunListRequest = {}): RunListResponse {
+		if (request.conversationId) {
+			const owner = this.db
+				.select({ id: conversations.id })
+				.from(conversations)
+				.where(
+					and(
+						eq(conversations.id, request.conversationId),
+						eq(conversations.companionId, companionId),
+					),
+				)
+				.get();
+			if (!owner) throw { kind: "not_found", reason: "conversation_not_found" };
+		}
+		const page = this.listRows(companionId, request);
+		return {
+			runs: page.rows.map((row) => this.project(summarize(row))),
+			...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+		};
+	}
+
+	private listRows(
+		companionId?: string,
+		request: RunListRequest = {},
+	): { rows: RunRow[]; nextCursor?: string } {
+		const limit = pageLimit(request.limit);
+		const cursor = decodeCursor(request.cursor);
+		const owner = and(
+			companionId ? eq(conversations.companionId, companionId) : undefined,
+			request.conversationId ? eq(runs.conversationId, request.conversationId) : undefined,
+		);
+		const unfinished =
+			request.scope === "history"
+				? []
+				: this.db
+						.select({ run: runs })
+						.from(runs)
+						.innerJoin(conversations, eq(runs.conversationId, conversations.id))
+						.where(
+							and(
+								owner,
+								isNull(runs.completedAt),
+								inArray(runs.status, EXECUTOR_RESOURCE_STATUSES),
+							),
+						)
+						.orderBy(desc(runs.createdAt), desc(runs.id))
+						.limit(101)
+						.all()
+						.map(({ run }) => run);
+		if (unfinished.length > 100)
+			throw { kind: "conflict", reason: "unfinished_run_capacity_exceeded" };
+		if (request.scope === "unfinished") return { rows: unfinished };
+		const history = this.db
+			.select({ run: runs })
+			.from(runs)
+			.innerJoin(conversations, eq(runs.conversationId, conversations.id))
+			.where(
+				and(
+					owner,
+					isNotNull(runs.completedAt),
+					cursor
+						? or(
+								lt(runs.createdAt, cursor.createdAt),
+								and(eq(runs.createdAt, cursor.createdAt), lt(runs.id, cursor.id)),
+							)
+						: undefined,
+				),
+			)
+			.orderBy(desc(runs.createdAt), desc(runs.id))
+			.limit(limit + 1)
+			.all()
+			.map(({ run }) => run);
+		const page = history.slice(0, limit);
+		return {
+			rows: [...unfinished, ...page],
+			...(history.length > limit && page.length
+				? { nextCursor: encodeCursor(page[page.length - 1]!) }
+				: {}),
+		};
 	}
 	pendingPermissions(companionId: string) {
 		return this.list(companionId)
@@ -628,35 +922,30 @@ export class ExternalAgentRunService {
 	}
 
 	list(companionId?: string): RunSummary[] {
-		const rows = companionId
-			? this.db
-					.select({ run: runs })
-					.from(runs)
-					.innerJoin(conversations, eq(runs.conversationId, conversations.id))
-					.where(eq(conversations.companionId, companionId))
-					.orderBy(desc(runs.createdAt))
-					.limit(10)
-					.all()
-					.map((row) => row.run)
-			: this.db.select().from(runs).orderBy(desc(runs.createdAt)).limit(10).all();
-		return rows.map((row) => summarize(row, this.artifacts.list(row.id)));
+		return this.listRows(companionId).rows.map((row) =>
+			summarize(row, this.artifacts.list(row.id)),
+		);
 	}
 	private trackDetached(task: Promise<void>): void {
 		let trackedTask: Promise<void>;
-		trackedTask = task.finally(() => {
-			this.detachedTasks.delete(trackedTask);
-		});
+		trackedTask = task
+			.catch(() => undefined)
+			.finally(() => {
+				this.detachedTasks.delete(trackedTask);
+			});
 		this.detachedTasks.add(trackedTask);
 	}
 
 	close(): Promise<void> {
 		if (this.closePromise) return this.closePromise;
 		this.closed = true;
+		for (const launch of this.launches.values()) launch.cancelled = true;
 		this.closePromise = this.stopExecutorsAndDrain();
 		return this.closePromise;
 	}
 
 	private async stopExecutorsAndDrain(): Promise<void> {
+		await Promise.allSettled([...this.admissions]);
 		const unfinished = await this.enqueueEvent(() =>
 			this.db
 				.select()
@@ -666,7 +955,12 @@ export class ExternalAgentRunService {
 		);
 		const attached = new Set<string>();
 		const confirmedLost = new Set<string>();
+		const ownedStartups = new Set(this.launches.keys());
 		for (const row of unfinished) {
+			if (ownedStartups.has(row.id)) {
+				if (this.launches.get(row.id)?.started === false) confirmedLost.add(row.id);
+				continue;
+			}
 			try {
 				const recovery = await this.executorRouter.recover(this.executorRun(row));
 				if (recovery === "attached") attached.add(row.id);
@@ -682,12 +976,16 @@ export class ExternalAgentRunService {
 		} catch (error) {
 			failure = error;
 		}
+		await Promise.allSettled([...this.launches.values()].map((launch) => launch.promise));
+		this.launches.clear();
+		for (const attempt of this.reconciliationTasks.values()) attempt.controller.abort();
+		await Promise.allSettled([...this.controls.keys()]);
 		await this.drainDetachedTasks();
 		const stoppableIds = [
 			...confirmedLost,
-			// A successful close proves that handles attached to this Host were
-			// stopped. If close failed, their final process state is unknown.
-			...(failure ? [] : attached),
+			// Successful close proves release of attached handles and locally
+			// owned startups, including those still awaiting an ACP session.
+			...(failure ? [] : [...attached, ...ownedStartups]),
 		];
 		await this.enqueueEvent(() => {
 			const stopped =
@@ -738,6 +1036,7 @@ export class ExternalAgentRunService {
 	private async drainDetachedTasks(): Promise<void> {
 		const attempts = [...this.reconciliationTasks.values()];
 		for (const attempt of attempts) attempt.controller.abort();
+		await this.events.onIdle();
 		await Promise.allSettled([
 			...attempts.map((attempt) => attempt.promise),
 			...this.detachedTasks,
@@ -793,45 +1092,152 @@ export class ExternalAgentRunService {
 	}
 
 	async prepareConversationDeletion(conversationId: string): Promise<void> {
+		this.deletingConversations.add(conversationId);
+		await Promise.allSettled([...this.admissions]);
 		const owned = await this.enqueueEvent(() =>
 			this.db.select().from(runs).where(eq(runs.conversationId, conversationId)).all(),
 		);
 		const unfinished = owned.filter(
 			(row) => !row.completedAt && UNRECOVERABLE_AFTER_RESTART.includes(row.status as RunStatus),
 		);
-		for (const row of unfinished) {
-			const run = this.executorRun(row);
-			try {
-				await this.executorRouter.cancel(run);
-			} catch {
-				// A missing live handle is still stopped idempotently below.
-			}
-			await this.executorRouter.stop(run);
-		}
-		await this.events.onIdle();
-		await this.enqueueEvent(() => {
-			if (unfinished.length > 0) {
+		const recordStopped = async (runId: string) => {
+			await this.enqueueEvent(() => {
 				this.db
 					.update(runs)
 					.set({
 						status: "cancelled",
+						permissionJson: null,
 						completedAt: new Date().toISOString(),
-						summary: "External agent execution stopped because its conversation was deleted.",
+						summary: "External agent execution stopped for conversation deletion.",
 					})
-					.where(
-						and(
-							inArray(
-								runs.id,
-								unfinished.map(({ id }) => id),
-							),
-							isNull(runs.completedAt),
-						),
-					)
+					.where(and(eq(runs.id, runId), isNull(runs.completedAt)))
 					.run();
+				this.changed(runId);
+			});
+		};
+		try {
+			for (const row of unfinished) {
+				const launch = this.launches.get(row.id);
+				if (launch) launch.cancelled = true;
+				if (launch?.started) {
+					// A pending local launch owns its controller even before ACP
+					// session creation makes recovery report attached.
+					await this.executorRouter.cancel(this.executorRun(row));
+					await this.executorRouter.stop(this.executorRun(row));
+				} else if (!launch) {
+					const run = this.executorRun(row);
+					const recovery = await this.executorRouter.recover(run);
+					if (recovery === "unknown") throw { kind: "conflict", reason: "run_controller_unknown" };
+					if (recovery === "attached") await this.executorRouter.cancel(run);
+					await this.executorRouter.stop(run);
+				}
+				if (launch) await launch.promise;
+				this.launches.delete(row.id);
+				await recordStopped(row.id);
 			}
+		} catch (error) {
+			for (const row of unfinished) {
+				const launch = this.launches.get(row.id);
+				if (!launch) continue;
+				if (launch.started) {
+					launch.cancelled = false;
+				} else {
+					launch.cancelled = true;
+					await launch.promise;
+					this.launches.delete(row.id);
+					await recordStopped(row.id);
+				}
+			}
+			this.deletingConversations.delete(conversationId);
+			throw error;
+		}
+		for (const row of owned) {
+			const pending = this.reconciliationTasks.get(row.id);
+			if (pending) {
+				pending.controller.abort();
+				await pending.promise;
+			}
+		}
+		const ownedIds = new Set(owned.map((row) => row.id));
+		await Promise.allSettled(
+			[...this.controls].filter(([, id]) => ownedIds.has(id)).map(([task]) => task),
+		);
+		await this.events.onIdle();
+		await this.enqueueEvent(() => {
 			for (const { id } of owned) removeExternalAgentRunRoot(join(this.runRoot, id));
 		});
 	}
+}
+
+function pageLimit(limit: number | undefined): number {
+	if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 100))
+		throw { kind: "validation_failed", reason: "run_page_limit_invalid" };
+	return limit ?? 20;
+}
+
+function encodeCursor(row: { id: string; createdAt: string }): string {
+	return Buffer.from(JSON.stringify([row.createdAt, row.id])).toString("base64url");
+}
+
+function decodeCursor(cursor: string | undefined): { createdAt: string; id: string } | undefined {
+	if (cursor === undefined) return undefined;
+	try {
+		if (!cursor || cursor.length > 256 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error();
+		const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+		if (
+			!Array.isArray(value) ||
+			value.length !== 2 ||
+			typeof value[0] !== "string" ||
+			typeof value[1] !== "string" ||
+			value[0].length > 40 ||
+			!Number.isFinite(Date.parse(value[0])) ||
+			!value[1] ||
+			value[1].length > 128
+		)
+			throw new Error();
+		return { createdAt: value[0], id: value[1] };
+	} catch {
+		throw { kind: "validation_failed", reason: "run_cursor_invalid" };
+	}
+}
+
+function boundedEvidence(
+	value: unknown,
+	paths: string[] = [],
+): RunGetResponse["evidence"][number]["data"] {
+	type Json = RunGetResponse["evidence"][number]["data"];
+	let nodes = 0;
+	let remaining = 16_000;
+	const seen = new Set<object>();
+	const visit = (item: unknown, depth: number): Json => {
+		if (++nodes > 256 || depth > 8 || remaining <= 0) return "[truncated]";
+		if (item === null || typeof item === "boolean") return item;
+		if (typeof item === "number") return Number.isFinite(item) ? item : null;
+		if (typeof item === "string") {
+			const text = safeRunText(sanitizeText(item, paths), Math.min(remaining, 4_096)).replace(
+				/(?:[A-Za-z]:[\\/]|\/)[\w.-]+(?:[\\/][^\s"'<>]*)/g,
+				"<redacted-path>",
+			);
+			remaining -= text.length;
+			return text;
+		}
+		if (!item || typeof item !== "object") return null;
+		if (seen.has(item)) return "[circular]";
+		seen.add(item);
+		if (Array.isArray(item)) return item.slice(0, 32).map((child) => visit(child, depth + 1));
+		const result: Record<string, Json> = {};
+		for (const [key, child] of Object.entries(item).slice(0, 32)) {
+			const safeKey = safeRunText(key, 128);
+			if (!safeKey || safeKey === "__proto__" || safeKey === "constructor") continue;
+			remaining -= safeKey.length;
+			result[safeKey] =
+				/authorization|api.?key|token|secret|password|credential|environment|signature/i.test(key)
+					? "<redacted>"
+					: visit(child, depth + 1);
+		}
+		return result;
+	};
+	return visit(value, 0);
 }
 
 /**
@@ -912,6 +1318,7 @@ export function externalAgentResultMessage(
 	return sanitizeExternalAgentMemoryText(
 		[
 			`External work ${result.run.status}: ${title}`,
+			`Run: ${safeRunText(result.run.id, 128)} · Executor: ${safeRunText(result.run.executorProfile, 128)}`,
 			summary,
 			...artifacts.map((name) => `Artifact: ${name}`),
 		].join("\n\n"),
@@ -961,7 +1368,19 @@ export function sanitizeExternalAgentMemoryText(value: string, maxBytes: number)
 	return sanitized.slice(0, end);
 }
 
-const SAFE_EVIDENCE_KEYS = ["kind", "name", "status", "title", "used", "size", "cost"] as const;
+const SAFE_EVIDENCE_KEYS = [
+	"kind",
+	"name",
+	"status",
+	"title",
+	"text",
+	"message",
+	"reason",
+	"toolName",
+	"used",
+	"size",
+	"cost",
+] as const;
 
 function summarizeEvidence(data: unknown): string | undefined {
 	if (typeof data === "string" || typeof data === "number" || typeof data === "boolean")
@@ -1185,17 +1604,6 @@ function sanitizeText(value: string, paths: string[]): string {
 	for (const path of [...paths].sort((a, b) => b.length - a.length))
 		text = text.split(path).join(path.endsWith("outputs") ? "<outputs>" : "<workspace>");
 	return text;
-}
-function sanitizeValue(value: unknown, paths: string[]): unknown {
-	if (typeof value === "string") return sanitizeText(value, paths);
-	if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeValue(item, paths));
-	if (value && typeof value === "object")
-		return Object.fromEntries(
-			Object.entries(value)
-				.slice(0, 100)
-				.map(([key, item]) => [key, sanitizeValue(item, paths)]),
-		);
-	return value;
 }
 function safeReason(error: unknown, paths: string[]): string {
 	if (typeof error === "string") return sanitizeText(error, paths).slice(0, 512);

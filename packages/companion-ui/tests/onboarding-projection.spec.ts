@@ -129,7 +129,10 @@ describe("onboarding projection", () => {
 		const doorClosed = onboarding("door_closed");
 		const introduced = onboarding("introduced");
 		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { onboarding: doorClosed } }),
+			Promise.resolve({
+				ok: true as const,
+				data: { character: THEMED_CHARACTER, onboarding: doorClosed },
+			}),
 		);
 		let current = doorClosed;
 		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: current }));

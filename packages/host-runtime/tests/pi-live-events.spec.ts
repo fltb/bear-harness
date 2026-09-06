@@ -1,8 +1,11 @@
 import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
+	advancePiProjectionVersion,
+	currentPiProjectionVersion,
 	projectPiConversationDetail,
 	projectPiConversationHistory,
+	projectPiLiveSnapshot,
 	projectPiTransientEvent,
 } from "../src/companion/pi-live-events.js";
 
@@ -19,6 +22,9 @@ function session() {
 		sessionId: sessionManager.getSessionId(),
 		sessionName: "Native Pi session",
 		isStreaming: true,
+		isRetrying: true,
+		retryAttempt: 2,
+		isCompacting: false,
 		state: {
 			streamingMessage: undefined,
 			errorMessage: undefined,
@@ -43,7 +49,11 @@ describe("native Pi conversation projection", () => {
 		expect(detail.branch.latestLeafIds).toEqual([entries[59]?.id]);
 		expect(detail.branch.hasMoreBefore).toBe(true);
 		expect(detail.live).toEqual({
+			version: currentPiProjectionVersion(current),
 			isStreaming: true,
+			isRetrying: true,
+			retryAttempt: 2,
+			isCompacting: false,
 			pendingToolCallIds: ["tool-1"],
 			steering: ["steer"],
 			followUp: ["follow"],
@@ -65,5 +75,19 @@ describe("native Pi conversation projection", () => {
 		).toBeUndefined();
 		const settled = { type: "agent_settled" as const };
 		expect(projectPiTransientEvent(settled)).toBe(settled);
+	});
+
+	it("orders snapshots against immutable event versions and replaces reopened instances", () => {
+		const current = session();
+		const before = projectPiLiveSnapshot(current).version!;
+		const eventVersion = advancePiProjectionVersion(current);
+		const after = projectPiLiveSnapshot(current).version!;
+		expect(after).toEqual(eventVersion);
+		expect(after.instanceId).toBe(before.instanceId);
+		expect(after.sequence).toBeGreaterThan(before.sequence);
+		expect(before.sequence).toBe(0);
+		const reopened = { ...current } as AgentSession;
+		expect(projectPiLiveSnapshot(reopened).version!.instanceId).not.toBe(after.instanceId);
+		expect(projectPiLiveSnapshot(reopened).version!.sequence).toBe(0);
 	});
 });

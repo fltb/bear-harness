@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createMemo, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
 import { Composer } from "./Composer";
-import { ConversationPanel, MediaPreview } from "./ConversationPanel";
+import { ConversationPanel, MediaViewer } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
 import { Icon } from "./Icon.js";
@@ -96,16 +96,6 @@ function DesktopFrame() {
 	});
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
-	const [mediaSelection, setMediaSelection] = createSignal<{
-		conversationId: string;
-		media: CharacterMedia;
-	}>();
-	const previewMedia = createMemo(() => {
-		const selection = mediaSelection();
-		return !workflow.selectedArtifact() && selection?.conversationId === store.activeConversationId
-			? selection.media
-			: undefined;
-	});
 	let appRef: HTMLDivElement | undefined;
 	let mobileNavigationTriggerRef: HTMLButtonElement | undefined;
 	let backstageReturnFocus: HTMLElement | undefined;
@@ -146,12 +136,21 @@ function DesktopFrame() {
 			onCleanup(() => window.removeEventListener("resize", onResize));
 			return;
 		}
+		let resizeFrame: number | undefined;
 		const observer = new ResizeObserver((entries) => {
 			const width = entries[0]?.contentRect.width;
-			if (width !== undefined) update(width);
+			if (width === undefined) return;
+			if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
+			resizeFrame = requestAnimationFrame(() => {
+				resizeFrame = undefined;
+				update(width);
+			});
 		});
 		observer.observe(appRef);
-		onCleanup(() => observer.disconnect());
+		onCleanup(() => {
+			observer.disconnect();
+			if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
+		});
 	});
 	onMount(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -172,12 +171,6 @@ function DesktopFrame() {
 	onCleanup(() => {
 		delete document.documentElement.dataset.appLayout;
 	});
-	const openMedia = (media: CharacterMedia) => {
-		const conversationId = store.activeConversationId;
-		if (!conversationId) return;
-		workflow.closeArtifact();
-		setMediaSelection({ conversationId, media });
-	};
 
 	return (
 		<div
@@ -245,34 +238,42 @@ function DesktopFrame() {
 							</Button>
 						</section>
 					</Show>
-					<SceneBackdrop scene={workflow.scene()} />
-					<CharacterPresence
-						character={workflow.character()}
-						visualState={workflow.visualState() ?? activityVisualState()}
-						layout={presenceLayout()}
-					/>
+					<Show when={layoutMode() !== "fullscreen" || !workflow.selectedArtifact()}>
+						<SceneBackdrop scene={workflow.scene()} />
+						<CharacterPresence
+							character={workflow.character()}
+							visualState={workflow.visualState() ?? activityVisualState()}
+							layout={presenceLayout()}
+						/>
+					</Show>
 					<Show
-						when={store.activeConversationId !== null}
+						when={store.activeConversationId}
+						keyed
 						fallback={<EmptyConversationState onCreate={() => void store.createConversation()} />}
 					>
-						<ConversationPanel onPreviewMedia={openMedia} />
-						<Composer
-							placeholder={workflow.composerPlaceholder()}
-							onOpenModelSettings={() => openBackstage("settings")}
-						/>
+						{(_conversationId) => {
+							// A keyed conversation owns only its local viewer selection.
+							const [media, setMedia] = createSignal<CharacterMedia>();
+							return (
+								<>
+									<ConversationPanel onPreviewMedia={setMedia} />
+									<Composer
+										placeholder={workflow.composerPlaceholder()}
+										onOpenModelSettings={() => openBackstage("settings")}
+									/>
+									<Show when={media()} keyed>
+										{(selection) => (
+											<MediaViewer media={selection} onClose={() => setMedia(undefined)} />
+										)}
+									</Show>
+								</>
+							);
+						}}
 					</Show>
 					<PermissionLayer />
 					<FirstMeeting />
 				</main>
-				<Show when={previewMedia()} fallback={<ArtifactPreview />}>
-					{(media) => (
-						<MediaPreview
-							media={media()}
-							layout={layoutMode()}
-							onClose={() => setMediaSelection(undefined)}
-						/>
-					)}
-				</Show>
+				<ArtifactPreview />
 			</div>
 			<Backstage
 				open={workflow.backstageOpen()}

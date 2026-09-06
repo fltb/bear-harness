@@ -186,7 +186,7 @@ test("presented role choices send ordinary messages and advance generic schema s
 	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
 	await expect(mediaCard).toBeVisible();
 	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	await expect(page.getByRole("complementary", { name: "极昼的来处" })).toBeVisible();
+	await expect(page.getByRole("dialog", { name: "极昼的来处" })).toBeVisible();
 	const choiceTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
 		prompts: string[];
 	};

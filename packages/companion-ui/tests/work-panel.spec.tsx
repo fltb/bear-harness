@@ -1,10 +1,11 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
-import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { createQuery, QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import type { RunInfo } from "../src/stores/ipc.js";
+import { ThreadHead } from "../src/ThreadHead.js";
 import { ArtifactPreview, PermissionLayer, WorkTimelineItem } from "../src/WorkPanel.js";
 
 const timestamp = "2026-08-31T00:00:00.000Z";
@@ -31,19 +32,31 @@ const run = (id: string, status: RunInfo["status"]): RunInfo => ({
 	executorProfile: "pi-default",
 	title: `${status} task`,
 	status,
+	controller: "attached",
+	actions:
+		status === "running"
+			? ["steer", "interrupt", "cancel"]
+			: status === "needs_user"
+				? ["respondPermission", "cancel"]
+				: status === "interrupted"
+					? ["resume", "cancel"]
+					: [],
 	artifacts: [],
 	evidence: [],
 });
 
 function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = false) {
-	const steer = vi.fn(() => Promise.resolve());
+	const steer = vi.fn(() => Promise.resolve({ outcome: "injected" as const }));
 	const interrupt = vi.fn(() => Promise.resolve());
 	const resume = vi.fn(() => Promise.resolve());
 	const cancel = vi.fn(() => Promise.resolve());
 	const respondPermission = vi.fn(() => Promise.resolve());
-	const store = {
+	const { run: runOverrides, ...storeOverrides } = overrides;
+	const store: CompanionStore = {
 		activeConversationId: "conversation-1",
 		errorMetadata: null,
+		conversations: [],
+		activeTimeline: [],
 		runs: [
 			run("running", "running"),
 			run("needs-user", "needs_user"),
@@ -59,6 +72,22 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 			resume,
 			cancel,
 			respondPermission,
+			observeDetail: (runId: () => string, cursor?: () => string | undefined) =>
+				createQuery(() => ({
+					queryKey: ["test-run", runId(), cursor?.()],
+					queryFn: async () => ({
+						run: store.runs.find((item) => item.id === runId())!,
+						instruction: "Inspect the declared inputs and produce a report",
+						inputPaths: [],
+						evidence: [],
+					}),
+				})),
+			observeHistory: () =>
+				createQuery(() => ({
+					queryKey: ["test-run-history"],
+					queryFn: async () => ({ runs: [] }),
+				})),
+			retryDelivery: vi.fn(async () => store.runs[0]!),
 			pendingPermissions: () => [
 				{
 					runId: "needs-user",
@@ -76,8 +105,9 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 					],
 				},
 			],
+			...runOverrides,
 		},
-		...overrides,
+		...storeOverrides,
 	} as unknown as CompanionStore;
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -85,6 +115,7 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 	const view = render(() => (
 		<QueryClientProvider client={queryClient}>
 			<DesktopProvider store={store}>
+				<ThreadHead sceneLabel="Scene" />
 				<WorkTimelineItem messageId="message-1" />
 				<ArtifactPreview />
 				{showPermission ? <PermissionLayer /> : null}
@@ -95,40 +126,187 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 }
 
 describe("work timeline controls", () => {
-	it("renders every terminal state and drives steer, interrupt, resume and permissions", async () => {
+	it("keeps terminal states distinct and exposes supported controls in task details", async () => {
 		const user = userEvent.setup();
 		const actions = renderWork();
-		expect(screen.getByText(zhCN.work.timeline.completed)).toBeVisible();
-		expect(screen.getAllByText(zhCN.work.timeline.failed)).toHaveLength(3);
-
-		const steerInputs = screen.getAllByRole("textbox", { name: zhCN.work.steerInputLabel });
-		await user.type(steerInputs[0]!, "continue carefully");
-		await user.click(screen.getAllByRole("button", { name: zhCN.work.timeline.steer })[0]!);
-		await waitFor(() =>
-			expect(actions.steer).toHaveBeenCalledWith("running", "continue carefully"),
+		for (const status of ["completed", "failed", "cancelled", "forced_termination"] as const) {
+			const card = screen.getByRole("article", { name: `${status} task` });
+			expect(within(card).getByText(zhCN.work.timeline.runStatuses[status])).toBeVisible();
+		}
+		const running = screen.getByRole("article", { name: "running task" });
+		await user.click(
+			within(running).getByRole("button", { name: zhCN.work.timeline.revealDetails }),
 		);
-		expect(steerInputs[0]).toHaveValue("");
-
-		await user.click(screen.getAllByRole("button", { name: zhCN.work.timeline.interrupt })[0]!);
+		const detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		const input = await within(detail).findByRole("textbox", { name: zhCN.work.steerInputLabel });
+		await user.type(input, "continue carefully");
+		await user.click(within(detail).getByRole("button", { name: zhCN.work.timeline.steer }));
+		await waitFor(() => expect(input).toHaveValue(""));
+		expect(within(detail).getByRole("status")).toHaveTextContent(
+			zhCN.work.task.steerOutcomes.injected,
+		);
+		await user.click(within(detail).getByRole("button", { name: zhCN.work.timeline.interrupt }));
 		expect(actions.interrupt).toHaveBeenCalledWith("running");
-		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.resume }));
-		expect(actions.resume).toHaveBeenCalledWith("interrupted");
+		expect(
+			within(detail).queryByRole("button", { name: zhCN.work.timeline.resume }),
+		).not.toBeInTheDocument();
+	});
+
+	it("makes text-only results inspectable without claiming files were delivered", async () => {
+		const user = userEvent.setup();
+		renderWork({
+			runs: [
+				{
+					...run("completed", "completed"),
+					summary: "The analysis is ready; no report was saved.",
+				},
+			],
+		});
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+		const detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		expect(
+			await within(detail).findByText("The analysis is ready; no report was saved."),
+		).toBeVisible();
+		expect(within(detail).getByText(zhCN.work.task.noArtifacts)).toBeVisible();
+		expect(within(detail).getByText(zhCN.work.task.completionNotice)).toBeVisible();
+		expect(within(detail).getByText(zhCN.work.task.deliveryPending)).toBeVisible();
+		expect(
+			within(detail).queryByRole("button", { name: zhCN.work.timeline.resume }),
+		).not.toBeInTheDocument();
+		expect(
+			within(detail).queryByRole("button", { name: zhCN.work.task.retryDelivery }),
+		).not.toBeInTheDocument();
+	});
+
+	it("preserves in-flight instruction drafts and exposes a real control failure after reopening", async () => {
+		const user = userEvent.setup();
+		let rejectSteer!: (reason: Error) => void;
+		const pending = new Promise<never>((_resolve, reject) => {
+			rejectSteer = reject;
+		});
+		renderWork({
+			runs: [run("running", "running")],
+			run: { steer: vi.fn(() => pending) } as unknown as CompanionStore["run"],
+		});
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+		let detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		const input = await within(detail).findByRole("textbox", { name: zhCN.work.steerInputLabel });
+		await user.type(input, "Keep the original source");
+		await user.click(within(detail).getByRole("button", { name: zhCN.work.timeline.steer }));
+		expect(
+			within(detail).getByRole("button", { name: zhCN.work.timeline.interrupt }),
+		).toBeDisabled();
+		await user.type(input, " and include references");
+		rejectSteer(new Error("executor_controller_unavailable"));
+		expect(await within(detail).findByRole("alert")).toHaveTextContent(
+			"executor_controller_unavailable",
+		);
+		await user.click(screen.getByRole("button", { name: zhCN.work.task.close }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+		detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		expect(
+			await within(detail).findByRole("textbox", { name: zhCN.work.steerInputLabel }),
+		).toHaveValue("Keep the original source and include references");
+		expect(within(detail).getByRole("alert")).toHaveTextContent("executor_controller_unavailable");
+	});
+
+	it("suppresses only the fallback task already represented by a native delegate receipt", () => {
+		renderWork({
+			runs: [
+				run("represented", "running"),
+				{ ...run("pending", "enqueued"), title: "Pending admission projection" },
+			],
+			activeTimeline: [
+				{
+					kind: "entry",
+					id: "receipt-entry",
+					entry: {
+						type: "message",
+						id: "receipt-entry",
+						parentId: null,
+						timestamp,
+						message: {
+							role: "toolResult",
+							toolCallId: "native-call",
+							toolName: "host_delegate",
+							content: [],
+							details: { ok: true, data: { accepted: true, runId: "represented", executor: "pi" } },
+							isError: false,
+							timestamp: Date.parse(timestamp),
+						},
+					},
+				},
+			] as CompanionStore["activeTimeline"],
+		});
+		expect(screen.queryByText("running task")).not.toBeInTheDocument();
+		expect(screen.getByText("Pending admission projection")).toBeVisible();
+	});
+
+	it("keeps an interrupted background task discoverable without changing conversations", async () => {
+		const user = userEvent.setup();
+		const actions = renderWork({
+			runs: [{ ...run("paused", "interrupted"), conversationId: "origin-background" }],
+			conversations: [
+				{
+					conversationId: "origin-background",
+					name: "Background research",
+					created: timestamp,
+					modified: timestamp,
+					messageCount: 0,
+					firstMessage: "",
+					isStreaming: false,
+				},
+			],
+		});
+		expect(screen.queryByText("interrupted task")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /1/ }));
+		const panel = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
+		expect(within(panel).getByText(/Background research/)).toBeVisible();
+		await user.click(within(panel).getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+		const detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		await user.click(
+			await within(detail).findByRole("button", { name: zhCN.work.timeline.resume }),
+		);
+		expect(actions.resume).toHaveBeenCalledWith("paused", undefined);
+		expect(actions.store.activeConversationId).toBe("conversation-1");
 	});
 
 	it("keeps permission decisions in a blocking system-action card", async () => {
 		const user = userEvent.setup();
 		const actions = renderWork({}, true);
 		expect(screen.getByRole("dialog", { name: zhCN.work.timeline.needsYou })).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionAllow }));
-		expect(actions.respondPermission).toHaveBeenCalledWith("needs-user", "permission-1", "allow");
-		expect(
-			screen.getByRole("button", { name: zhCN.work.timeline.permissionAllowSession }),
-		).toBeVisible();
-		expect(
-			screen.getByRole("button", { name: zhCN.work.timeline.permissionAllowCommand }),
-		).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionDeny }));
-		expect(actions.respondPermission).toHaveBeenCalledWith("needs-user", "permission-1", "deny");
+		const allowOnce = screen.getByRole("button", { name: "Allow" });
+		expect(allowOnce).toHaveAccessibleDescription("allow_once");
+		await user.click(allowOnce);
+		expect(actions.respondPermission).toHaveBeenLastCalledWith(
+			"needs-user",
+			"permission-1",
+			"allow",
+		);
+		const allowSession = screen.getByRole("button", { name: "Allow for session" });
+		expect(allowSession).toHaveAccessibleDescription("allow_always");
+		await user.click(allowSession);
+		expect(actions.respondPermission).toHaveBeenLastCalledWith(
+			"needs-user",
+			"permission-1",
+			"allow_always",
+		);
+		const allowPattern = screen.getByRole("button", { name: "Allow command pattern" });
+		expect(allowPattern).toHaveAccessibleDescription("allow_always");
+		await user.click(allowPattern);
+		expect(actions.respondPermission).toHaveBeenLastCalledWith(
+			"needs-user",
+			"permission-1",
+			"accept_execpolicy_amendment",
+		);
+		const deny = screen.getByRole("button", { name: "Deny" });
+		expect(deny).toHaveAccessibleDescription("reject_once");
+		await user.click(deny);
+		expect(actions.respondPermission).toHaveBeenLastCalledWith(
+			"needs-user",
+			"permission-1",
+			"deny",
+		);
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.stopRun }));
 		expect(actions.cancel).toHaveBeenCalledWith("needs-user");
 	});
