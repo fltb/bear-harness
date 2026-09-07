@@ -261,9 +261,10 @@ P0、P1、P2-1、P2-3 和 P2-4 已解除，并补齐滚动、Composer、可访�
 ## 本轮验证结果
 
 - lint、clean-checkout 自举 typecheck、全仓 build：通过。
-- 全量单测：905 项通过、3 项按条件跳过；没有失败。显式启用 GC 后，100 次 Pi Session open/close 与超大 Markdown 卸载资源专项另行 2/2 通过。
-- Coverage：Host 78.72%/67.38%/80.36%/81.98%，UI 82.97%/72.52%/82.88%/86.28%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
+- 全量单测：909 项通过、3 项按条件跳过；没有失败。显式启用 GC 后，100 次 Pi Session open/close 与超大 Markdown 卸载资源专项另行 2/2 通过。
+- Coverage：Host 78.78%/67.41%/80.39%/82.04%，UI 82.94%/72.46%/82.88%/86.26%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
 - 后台 Web required E2E：55 通过、2 个真实模型条件项按设计跳过，0 失败；含 10,000 条权威历史虚拟列表、500 次 A/B 会话切换、内置 Pi Worker/Run/Artifact 与三档结果布局。
+- 30 分钟后台长稳：固定提交 `e7990b3` 完成 6,296 个流式启动/首段/Stop/权威刷新循环；最终虚拟 DOM 13 行，245,515 个交互样本 p95=32ms，31 个堆样本折算增长约 659KiB/10分钟，最长任务 0、页面错误 0。此前失败被定位为 8,573 层 Pi 会话树的递归投影栈溢出；10,000 层线性树、10,000 层深分支和 120 个版本叶子的确定性回归均已转绿。
 - 隐藏 Electron E2E：通过 `CI=1` 保证窗口不显示，3/3 通过。
 - Recovery：Host 49/49、Desktop 23/23 通过。
 - 真实模型 E2E：使用 Pi 配置中的 `deepseek-v4-pro` 与 `deepseek-v4-flash`，同一次整套运行 5/5 通过；覆盖基础往返、角色/显式记忆、双模型会话隔离、编辑/纠正/分支/复制/刷新、自然剧情的 CG/场景/表情/Choices，以及 Markdown/表格/代码/公式自然输出。
@@ -274,5 +275,5 @@ P0、P1、P2-1、P2-3 和 P2-4 已解除，并补齐滚动、Composer、可访�
 ## 关键模块规模与所有权
 
 - 提交前统计：53 个受版本控制文件，新增 1,730 行、删除 831 行；其中实现 21 文件（+462/-139）、测试 18 文件（+517/-678）、文档与截图 12 文件（文本 +725/-14），另含根级构建脚本/锁文件。
-- 关键模块当前规模：`ConversationPanel.tsx` 1,353 行、`MessageContent.tsx` 141 行、`NativeMessageContent.tsx` 202 行、conversation workflow 185 行、Pi runtime 893 行、ACP client 436 行、confinement 354 行、真实模型验收 802 行、完整矩阵报告 621 行。
+- 关键模块当前规模：`ConversationPanel.tsx` 1,549 行、`MessageContent.tsx` 157 行、`NativeMessageContent.tsx` 202 行、timeline scroll 140 行、Pi runtime 889 行、Pi live projection 172 行、ACP client 436 行、confinement 356 行、真实模型验收 1,044 行、完整矩阵报告 621 行。
 - Pi 继续拥有消息、流、settled 与会话权威；`MessageContent` 只投影上层响应式文本；新增尺寸与滚动控制器只操作当前 DOM，分会话位置表只存在于控制器生命周期内，`dispose()` 会清空并解绑全部监听，不进入 Store、Host 或持久化。

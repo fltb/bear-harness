@@ -560,7 +560,7 @@
 | --- | --- | --- |
 | K-01 | PASS | 启用显式 GC 的 Pi Registry 专项完成 100 次预热和 100 次 open/close；每轮 listener 1→0、handle 快照清零、dispose 恰好一次，堆增长满足 10MiB/5% 上限 |
 | K-02 | PASS | 后台浏览器完成 500 次 A/B 切换；草稿/会话隔离、p95≤250ms、显式 GC 后堆增长≤15MiB/10% |
-| K-03 | RUNNING | 修正测试 Provider 响应 ID 与真实页面滚动后，2 分钟预检 654 个流式启动/首段/Stop 循环通过；最终 30 分钟 CI 耐久门禁正在执行，2 小时仅在正式 RC clean commit 执行 |
+| K-03 | PASS | 固定提交 `e7990b3` 的后台 Chromium 连续运行 30 分钟，完成 6,296 个流式启动/首段/Stop/权威刷新循环；最终 DOM 13 行，245,515 个交互样本 p95=32ms，31 个显式 GC 堆样本折算斜率约 659KiB/10分钟，最长任务 0、页面错误 0。该验证先稳定复现旧实现于第 4,284 次后因 8,573 层 Pi 树递归投影栈溢出而失败；修复为迭代遍历并增加 10,000 层线性/深分支及 120 版本叶子回归后，已越过原故障规模。2 小时仅在正式 RC clean commit 执行 |
 | K-04 | PASS | 复制反馈 timer 单例与卸载清理组件测试 |
 | K-05 | PASS | Run/permission action state 保持 32 项上限，历史分页与发布 UI 路径均通过 |
 | K-06 | PASS | UI controller、Observer/listener 与 Host close 清理单测 |
@@ -589,7 +589,7 @@
 - Web required：55 通过、2 个 live-model 条件项按设计跳过，0 失败；后台运行且不抢占用户焦点。
 - Web live-model：本次针对虚拟时间线重跑 J-11/J-12，2/2 通过；真实 `deepseek-v4-pro` / `deepseek-v4-flash` 共 20 个自然语言富内容回合。
 - Electron E2E：3/3，使用 `CI=1`，窗口不显示。
-- Unit：905 通过、3 个条件项跳过；两个显式 GC 资源专项另行启用后 2/2 通过。Coverage、lint、typecheck、build、recovery 均通过。
+- Unit：909 通过、3 个条件项跳过；两个显式 GC 资源专项另行启用后 2/2 通过。Coverage、lint、typecheck、build、recovery 均通过。
 - Security：0 vulnerabilities；1000 个 registry signatures、315 个 attestations 验证通过。
 - OpenAI/Codex 路由：Pi 配置与协议已修正，但上游三种模型均返回 HTTP 502；这是外部可用性阻塞，不计为本地 PASS。
 - 公开发布：仍为 **NO-GO**。缺 fresh platform packages、签名/notarization、packaged smoke、正式 RC 的 2 小时耐久跑，以及上表真实设备/辅助技术 BLOCKED 项。
