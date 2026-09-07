@@ -143,6 +143,28 @@ describe("RecoveryController", () => {
 		expect(readFileSync(external, "utf8")).toBe("not owned by the data tree");
 	});
 
+	it("rejects a recovery export whose source tree exceeds the supported depth", async () => {
+		const root = temporaryRoot();
+		const dataRoot = join(root, "data");
+		const destination = join(root, "export");
+		mkdirSync(dataRoot);
+		let nested = dataRoot;
+		for (let depth = 0; depth < 130; depth += 1) {
+			nested = join(nested, "d");
+			mkdirSync(nested);
+		}
+		writeFileSync(join(nested, "state"), "too deep");
+
+		expect(
+			await controller({ root, dataRoot, native: native({ destination }) }).execute("export_data"),
+		).toEqual({
+			status: "failed",
+			action: "export_data",
+			message: "Recovery data tree is too deep",
+		});
+		expect(existsSync(destination)).toBe(false);
+	});
+
 	it("opens the current journal location without resolving the incident", async () => {
 		const root = temporaryRoot();
 		const dataRoot = join(root, "data");

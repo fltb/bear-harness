@@ -48,6 +48,13 @@ import { createModelProviderApis } from "./model-provider-api.js";
 import { withRpcMutations } from "./mutation-client.js";
 import { createOnboardingStore } from "./onboarding.js";
 import {
+	listAllCanonModules,
+	listAllCanonSources,
+	listAllCharacters,
+	listAllModels,
+	listAllProviders,
+} from "./paged-rpc.js";
+import {
 	createRpcMutation,
 	createRpcQuery,
 	hydrateRpcQuery,
@@ -431,7 +438,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const charactersQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.characters,
-		request: () => invoke(client, () => client.character.list()),
+		request: () => listAllCharacters(client),
 	});
 	const currentCharacterId = createMemo(
 		() =>
@@ -471,12 +478,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const providersQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.providers,
-		request: () => invoke(client, () => client.provider.list()),
+		request: () => listAllProviders(client),
 	});
 	const poolQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.modelPool,
-		request: () => invoke(client, () => client.model.poolGet()),
+		request: () => listAllModels(client),
 	});
 	const defaultsQuery = createRpcQuery({
 		client: queryClient,
@@ -525,12 +532,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const canonSources = createRpcQuery({
 		client: queryClient,
 		key: () => queryKeys.canonSources(currentCharacterId()),
-		request: () => invoke(client, () => client.canon.listSources({})),
+		request: () => listAllCanonSources(client),
 	});
 	const canonModules = createRpcQuery({
 		client: queryClient,
 		key: () => queryKeys.canonModules(currentCharacterId()),
-		request: () => invoke(client, () => client.canon.listModules({})),
+		request: () => listAllCanonModules(client),
 	});
 	const inventoryQuery = createRpcQuery({
 		client: queryClient,
@@ -858,19 +865,19 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.characters,
-			request: () => invoke(client, () => client.character.list()),
+			request: () => listAllCharacters(client),
 		});
 	const refreshCanonSources = () =>
 		refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.canonSources(currentCharacterId()),
-			request: () => invoke(client, () => client.canon.listSources({})),
+			request: () => listAllCanonSources(client),
 		});
 	const refreshCanonModules = () =>
 		refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.canonModules(currentCharacterId()),
-			request: () => invoke(client, () => client.canon.listModules({})),
+			request: () => listAllCanonModules(client),
 		});
 	const requireConversation = () => {
 		const id = activeConversationId();
@@ -1553,12 +1560,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						refreshRpcQuery({
 							client: queryClient,
 							key: queryKeys.providers,
-							request: () => invoke(client, () => client.provider.list()),
+							request: () => listAllProviders(client),
 						}),
 						refreshRpcQuery({
 							client: queryClient,
 							key: queryKeys.modelPool,
-							request: () => invoke(client, () => client.model.poolGet()),
+							request: () => listAllModels(client),
 						}),
 						refreshRpcQuery({
 							client: queryClient,

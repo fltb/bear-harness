@@ -28,6 +28,7 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -65,7 +66,11 @@ import {
 	CharacterStateSchema,
 	characterStatePrompt,
 } from "./state-schema.js";
+
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
+
+const MAX_CHARACTER_TREE_DEPTH = 64;
+const MAX_CHARACTER_TREE_ENTRIES = 10_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -214,7 +219,7 @@ export interface CharacterSummary {
 	id: string;
 	name: string;
 	subtitle: string;
-	avatarUrl: string;
+	avatarUrl?: string;
 	active: boolean;
 }
 
@@ -559,22 +564,6 @@ export class CharacterLoader {
 		return resolvedPath;
 	}
 
-	/**
-	 * Refuse symlinks anywhere in role-package resources passed from the Host
-	 * to Pi. These resources remain package-owned storage and are not memory
-	 * records or automatic memory-capture input.
-	 */
-	private ensureContainedTree(characterId: string, path: string): void {
-		const stat = lstatSync(path);
-		if (stat.isSymbolicLink()) {
-			throw new Error(`character package ${characterId}: Pi resource symlinks are not allowed`);
-		}
-		if (!stat.isDirectory()) return;
-		for (const entry of readdirSync(path, { withFileTypes: true })) {
-			this.ensureContainedTree(characterId, join(path, entry.name));
-		}
-	}
-
 	private ensureImageAsset(characterId: string, assetPath: string): void {
 		if (!IMAGE_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()]) {
 			throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
@@ -583,23 +572,35 @@ export class CharacterLoader {
 	}
 
 	private collectPluginFiles(characterId: string, pluginsDir: string): string[] {
-		this.ensureContainedTree(characterId, pluginsDir);
 		const pluginPaths: string[] = [];
-		const visit = (directory: string): void => {
-			for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+		const pending: Array<{ directory: string; depth: number }> = [
+			{ directory: pluginsDir, depth: 0 },
+		];
+		let entriesSeen = 0;
+		while (pending.length > 0) {
+			const current = pending.pop();
+			if (!current) break;
+			if (current.depth > MAX_CHARACTER_TREE_DEPTH)
+				throw new Error(`character package ${characterId}: Pi resource tree is too deep`);
+			const entries = readdirSync(current.directory, { withFileTypes: true }).sort((left, right) =>
 				left.name.localeCompare(right.name),
-			)) {
-				const path = join(directory, entry.name);
+			);
+			for (let index = entries.length - 1; index >= 0; index -= 1) {
+				const entry = entries[index];
+				if (!entry) continue;
+				entriesSeen += 1;
+				if (entriesSeen > MAX_CHARACTER_TREE_ENTRIES)
+					throw new Error(`character package ${characterId}: Pi resource tree is too large`);
+				const path = join(current.directory, entry.name);
 				const stat = lstatSync(path);
-				if (stat.isDirectory()) {
-					visit(path);
-				} else if (stat.isFile() && [".cjs", ".js", ".mjs", ".ts"].includes(extname(entry.name))) {
+				if (stat.isSymbolicLink())
+					throw new Error(`character package ${characterId}: Pi resource symlinks are not allowed`);
+				if (stat.isDirectory()) pending.push({ directory: path, depth: current.depth + 1 });
+				else if (stat.isFile() && [".cjs", ".js", ".mjs", ".ts"].includes(extname(entry.name)))
 					pluginPaths.push(path);
-				}
 			}
-		};
-		visit(pluginsDir);
-		return pluginPaths;
+		}
+		return pluginPaths.sort((left, right) => left.localeCompare(right));
 	}
 
 	/**
@@ -614,6 +615,15 @@ export class CharacterLoader {
 			throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
 		}
 		return `data:${mime};base64,${readFileSync(this.characterPackagePath(characterId, assetPath)).toString("base64")}`;
+	}
+
+	private characterSummaryAvatarDataUrl(
+		characterId: string,
+		assetPath: string,
+	): string | undefined {
+		const path = this.characterPackagePath(characterId, assetPath);
+		if (statSync(path).size > 64 * 1024) return undefined;
+		return this.characterAssetDataUrl(characterId, assetPath);
 	}
 
 	/**
@@ -1128,12 +1138,22 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		return removed || registered;
 	}
 
-	list(db: AppDatabase, defaultCharacterId: string): CharacterSummary[] {
+	list(
+		db: AppDatabase,
+		defaultCharacterId: string,
+		query: { cursor?: string; limit?: number } = {},
+	): { characters: CharacterSummary[]; nextCursor?: string } {
 		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
 		const ids = readdirSync(this.libraryRoot, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-			.map((entry) => entry.name);
-		return ids
+			.map((entry) => entry.name)
+			.sort((left, right) => left.localeCompare(right));
+		const cursorIndex = query.cursor === undefined ? -1 : ids.indexOf(query.cursor);
+		if (query.cursor !== undefined && cursorIndex < 0)
+			throw { kind: "not_found", reason: "character_cursor_not_found" };
+		const limit = query.limit ?? 50;
+		const pageIds = ids.slice(cursorIndex + 1, cursorIndex + 1 + limit);
+		const characters = pageIds
 			.map((id) => {
 				try {
 					return this.load(id);
@@ -1142,13 +1162,19 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 				}
 			})
 			.filter((character): character is CharacterPackage => character !== null)
-			.map((character) => ({
-				id: character.id,
-				name: character.name,
-				subtitle: character.character.subtitle,
-				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
-				active: character.id === activeId,
-			}));
+			.map((character) => {
+				const avatarUrl = this.characterSummaryAvatarDataUrl(character.id, character.visual.avatar);
+				return {
+					id: character.id,
+					name: character.name,
+					subtitle: character.character.subtitle,
+					...(avatarUrl ? { avatarUrl } : {}),
+					active: character.id === activeId,
+				};
+			});
+		const hasMore = cursorIndex + 1 + pageIds.length < ids.length;
+		const last = pageIds.at(-1);
+		return { characters, ...(hasMore && last ? { nextCursor: last } : {}) };
 	}
 
 	install(files: Array<{ path: string; base64: string }>): CharacterPackage {

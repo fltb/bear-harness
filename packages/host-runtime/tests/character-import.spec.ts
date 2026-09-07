@@ -4,6 +4,7 @@ import {
 	appendFileSync,
 	cpSync,
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
@@ -78,6 +79,48 @@ function persistImportedRecoveryCopy(
 describe("character package import", () => {
 	afterEach(() => {
 		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	it("keeps oversized avatar bytes out of the lightweight character list", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-list-avatar-"));
+		roots.push(dataDir);
+		const runtime = createHostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		await runtime.start();
+		appendFileSync(
+			join(dataDir, "characters", "jizhou", "assets", "avatar.png"),
+			Buffer.alloc(70_000),
+		);
+
+		const response = await runtime.dispatch("character.list", { limit: 100 });
+		expect(response).toMatchObject({ ok: true });
+		if (!response.ok) throw new Error("character list failed");
+		expect(response.data.characters.find((character) => character.id === "jizhou")?.avatarUrl).toBe(
+			undefined,
+		);
+		await runtime.close();
+	});
+
+	it("rejects a character plugin tree deeper than the package traversal contract", () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-depth-"));
+		roots.push(dataDir);
+		const libraryRoot = join(dataDir, "characters");
+		cpSync(join(characterRoot, "jizhou"), join(libraryRoot, "jizhou"), { recursive: true });
+		let nested = join(libraryRoot, "jizhou", "plugins");
+		mkdirSync(nested, { recursive: true });
+		for (let depth = 0; depth < 66; depth += 1) {
+			nested = join(nested, "d");
+			mkdirSync(nested);
+		}
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		const character = loader.load("jizhou");
+		if (!character) throw new Error("test character was not loaded");
+
+		expect(() => loader.piResources(character)).toThrow("Pi resource tree is too deep");
 	});
 
 	it("edits a local package with revision protection and rejects an immutable id change", async () => {

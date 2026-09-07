@@ -144,6 +144,23 @@ export interface HostCompositionContext {
 	auditStore: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
 
+function pageAfter<T>(
+	items: readonly T[],
+	cursor: string | undefined,
+	limit: number,
+	key: (item: T) => string,
+	notFoundReason: string,
+): { items: T[]; nextCursor?: string } {
+	const cursorIndex = cursor === undefined ? -1 : items.findIndex((item) => key(item) === cursor);
+	if (cursor !== undefined && cursorIndex < 0) {
+		throw { kind: "not_found", reason: notFoundReason };
+	}
+	const page = items.slice(cursorIndex + 1, cursorIndex + 1 + limit);
+	if (cursorIndex + 1 + page.length >= items.length) return { items: page };
+	const last = page.at(-1);
+	return last ? { items: page, nextCursor: key(last) } : { items: page };
+}
+
 function oauthWire(state: OAuthSessionState): ProviderLoginResponse {
 	return {
 		...state,
@@ -281,9 +298,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		return { character: s.characterLoader.display(character) };
 	});
-	dispatcher.registerHandler(RPC.character.list, async () => ({
-		characters: s.characterLoader.list(s.systemOrm, s.defaultCharacterId),
-	}));
+	dispatcher.registerHandler(RPC.character.list, async ({ cursor, limit }) => {
+		return s.characterLoader.list(s.systemOrm, s.defaultCharacterId, {
+			...(cursor ? { cursor } : {}),
+			limit,
+		});
+	});
 	dispatcher.registerHandler(RPC.character.activate, async ({ characterId }) => {
 		const character = s.characterLoader.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
@@ -622,9 +642,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { settings: await projectSettings(app) };
 	});
 	// --- canon hub (advanced authoring) ---------------------------------------------
-	dispatcher.registerHandler(RPC.canon.listSources, async () => ({
-		sources: s.canon.listSources(getCompanionId(s)),
-	}));
+	dispatcher.registerHandler(RPC.canon.listSources, async ({ cursor, limit }) => {
+		const result = pageAfter(
+			s.canon.listSources(getCompanionId(s)),
+			cursor,
+			limit,
+			(source) => source.id,
+			"canon_source_cursor_not_found",
+		);
+		return {
+			sources: result.items,
+			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+		};
+	});
 	dispatcher.registerHandler(RPC.canon.addSource, async ({ logicalName, content }) => {
 		return {
 			source: s.canon.addSource(getCompanionId(s), logicalName, content),
@@ -637,9 +667,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.canon.removeSource(getCompanionId(s), sourceId);
 		return {};
 	});
-	dispatcher.registerHandler(RPC.canon.listModules, async () => ({
-		modules: s.canon.listModules(getCompanionId(s)),
-	}));
+	dispatcher.registerHandler(RPC.canon.listModules, async ({ cursor, limit }) => {
+		const result = pageAfter(
+			s.canon.listModules(getCompanionId(s)),
+			cursor,
+			limit,
+			(module) => module.id,
+			"canon_module_cursor_not_found",
+		);
+		return {
+			modules: result.items,
+			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+		};
+	});
 	dispatcher.registerHandler(RPC.canon.upsertModule, async (_p) => ({
 		module: s.canon.upsertModule({
 			..._p,
@@ -652,8 +692,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- provider ------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.provider.list, async () => {
-		return { providers: await s.providers.listProviders() };
+	dispatcher.registerHandler(RPC.provider.list, async ({ cursor, limit }) => {
+		const result = pageAfter(
+			(await s.providers.listProviders()).sort((left, right) => left.id.localeCompare(right.id)),
+			cursor,
+			limit,
+			(provider) => provider.id,
+			"provider_cursor_not_found",
+		);
+		return {
+			providers: result.items,
+			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+		};
 	});
 	dispatcher.registerHandler(RPC.provider.customUpsert, async (input) => {
 		await s.providers.upsertCustomProvider(input);
@@ -663,7 +713,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.provider.importPiConfig, async ({ configJson }) => {
 		await s.providers.importPiConfig(configJson);
 		const models = await syncAllProviderModels(s.providers, s.models);
-		return { models };
+		return { importedCount: models.length };
 	});
 	dispatcher.registerHandler(RPC.provider.overrideBaseUrl, async (input) => {
 		await s.providers.overrideProviderBaseUrl(input);
@@ -714,9 +764,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- configured models ------------------------------------------------------------
-	dispatcher.registerHandler(RPC.model.poolGet, async () => {
+	dispatcher.registerHandler(RPC.model.poolGet, async ({ cursor, limit }) => {
 		await s.providers.listProviders();
-		return { models: s.models.list(s.providers.modelProjectionFacts()) };
+		const result = pageAfter(
+			s.models.list(s.providers.modelProjectionFacts()),
+			cursor ? `${cursor.providerId}\u0000${cursor.modelId}` : undefined,
+			limit,
+			(model) => `${model.providerId}\u0000${model.modelId}`,
+			"model_cursor_not_found",
+		);
+		const last = result.items.at(-1);
+		return {
+			models: result.items,
+			...(result.nextCursor && last
+				? { nextCursor: { providerId: last.providerId, modelId: last.modelId } }
+				: {}),
+		};
 	});
 	dispatcher.registerHandler(RPC.model.enable, async ({ providerId, modelId, label }) => {
 		const provider = (await s.providers.listProviders()).find((item) => item.id === providerId);

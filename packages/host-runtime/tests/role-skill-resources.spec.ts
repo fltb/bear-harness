@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,6 +26,18 @@ if (!story) throw new Error("missing undelivered-report Skill");
 const state = (active: boolean, chapter: number) => ({ story: { active, chapter } });
 
 describe("state-gated role Skill resources", () => {
+	it("rejects a resource tree deeper than the bounded traversal contract", () => {
+		const directory = mkdtempSync(join(tmpdir(), "bear-role-skill-depth-"));
+		temporaryDirectories.push(directory);
+		let nested = directory;
+		for (let depth = 0; depth < 66; depth += 1) {
+			nested = join(nested, "d");
+			mkdirSync(nested);
+		}
+
+		expect(() => loadRoleSkills([directory])).toThrow("role resource tree is too deep");
+	});
+
 	it("derives Skill activity from package metadata without role-name branches", () => {
 		expect(roleSkillStatus(story, state(false, 0))).toBe("eligible");
 		expect(roleSkillStatus(story, state(true, 1))).toBe("active");

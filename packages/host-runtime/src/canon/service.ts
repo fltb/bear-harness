@@ -136,7 +136,7 @@ export class CanonHubService {
 			.leftJoin(canonChunks, eq(canonChunks.sourceId, canonSources.id))
 			.where(eq(canonSources.companionId, companionId))
 			.groupBy(canonSources.id)
-			.orderBy(desc(canonSources.createdAt))
+			.orderBy(desc(canonSources.createdAt), asc(canonSources.id))
 			.all();
 	}
 
@@ -476,7 +476,7 @@ export class CanonHubService {
 			.select()
 			.from(storyModules)
 			.where(eq(storyModules.companionId, companionId))
-			.orderBy(asc(storyModules.createdAt))
+			.orderBy(asc(storyModules.createdAt), asc(storyModules.id))
 			.all()
 			.map((row) => ({
 				id: row.id,

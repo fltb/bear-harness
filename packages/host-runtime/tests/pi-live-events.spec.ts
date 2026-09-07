@@ -1,3 +1,4 @@
+import { RPC } from "@bear-harness/protocol/schema";
 import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
@@ -160,5 +161,19 @@ describe("native Pi conversation projection", () => {
 		const reopened = { ...current } as AgentSession;
 		expect(projectPiLiveSnapshot(reopened).version!.instanceId).not.toBe(after.instanceId);
 		expect(projectPiLiveSnapshot(reopened).version!.sequence).toBe(0);
+	});
+
+	it("preserves more than one hundred Pi-owned queued messages across the RPC boundary", () => {
+		const current = session();
+		const steering = Array.from({ length: 101 }, (_, index) => `steering ${index}`);
+		const followUp = Array.from({ length: 101 }, (_, index) => `follow-up ${index}`);
+		current.getSteeringMessages = () => steering;
+		current.getFollowUpMessages = () => followUp;
+
+		const detail = projectPiConversationDetail(current);
+		expect(RPC.conversation.open.response.parse(detail).live).toMatchObject({
+			steering,
+			followUp,
+		});
 	});
 });

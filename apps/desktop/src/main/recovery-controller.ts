@@ -23,6 +23,9 @@ import type {
 	RecoveryVerifiedResolution,
 } from "./recovery-state.js";
 
+const MAX_RECOVERY_TREE_DEPTH = 128;
+const MAX_RECOVERY_TREE_ENTRIES = 1_000_000;
+
 export type RecoveryAction =
 	| "retry"
 	| "repair_database"
@@ -226,8 +229,15 @@ function hashFile(path: string): { size: number; sha256: string } {
 
 function scanTree(root: string): TreeManifest {
 	const manifest: TreeManifest = new Map();
-	const visit = (directory: string, relativeDirectory: string): void => {
-		const handle = opendirSync(directory);
+	const pending: Array<{ directory: string; relativeDirectory: string; depth: number }> = [
+		{ directory: root, relativeDirectory: "", depth: 0 },
+	];
+	let entriesSeen = 0;
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) break;
+		if (current.depth > MAX_RECOVERY_TREE_DEPTH) throw new Error("Recovery data tree is too deep");
+		const handle = opendirSync(current.directory);
 		const entries: string[] = [];
 		try {
 			for (;;) {
@@ -239,13 +249,22 @@ function scanTree(root: string): TreeManifest {
 			handle.closeSync();
 		}
 		entries.sort();
-		for (const name of entries) {
-			const absolute = join(directory, name);
-			const relativePath = relativeDirectory ? join(relativeDirectory, name) : name;
+		for (let index = entries.length - 1; index >= 0; index -= 1) {
+			const name = entries[index];
+			if (!name) continue;
+			entriesSeen += 1;
+			if (entriesSeen > MAX_RECOVERY_TREE_ENTRIES)
+				throw new Error("Recovery data tree is too large");
+			const absolute = join(current.directory, name);
+			const relativePath = current.relativeDirectory ? join(current.relativeDirectory, name) : name;
 			const stat = lstatSync(absolute);
 			if (stat.isDirectory()) {
 				manifest.set(relativePath, { kind: "directory" });
-				visit(absolute, relativePath);
+				pending.push({
+					directory: absolute,
+					relativeDirectory: relativePath,
+					depth: current.depth + 1,
+				});
 			} else if (stat.isFile()) {
 				manifest.set(relativePath, { kind: "file", ...hashFile(absolute) });
 			} else if (stat.isSymbolicLink()) {
@@ -254,8 +273,7 @@ function scanTree(root: string): TreeManifest {
 				throw new Error("Recovery data contains an unsupported filesystem entry");
 			}
 		}
-	};
-	visit(root, "");
+	}
 	return manifest;
 }
 
@@ -281,30 +299,52 @@ function manifestsEqual(left: TreeManifest, right: TreeManifest): boolean {
 function copyTree(source: string, destination: string): void {
 	const sourceStat = lstatSync(source);
 	mkdirSync(destination, { mode: sourceStat.mode & 0o777 });
-	const handle = opendirSync(source);
-	try {
-		for (;;) {
-			const entry = handle.readSync();
-			if (!entry) break;
-			const sourcePath = join(source, entry.name);
-			const destinationPath = join(destination, entry.name);
-			const stat = lstatSync(sourcePath);
-			if (stat.isDirectory()) {
-				copyTree(sourcePath, destinationPath);
-			} else if (stat.isFile()) {
-				copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
-				chmodSync(destinationPath, stat.mode & 0o777);
-				syncFile(destinationPath);
-			} else if (stat.isSymbolicLink()) {
-				symlinkSync(readlinkSync(sourcePath), destinationPath);
-			} else {
-				throw new Error("Recovery data contains an unsupported filesystem entry");
+	const pending: Array<{ source: string; destination: string; depth: number }> = [
+		{ source, destination, depth: 0 },
+	];
+	const directories = [destination];
+	let entriesSeen = 0;
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) break;
+		if (current.depth > MAX_RECOVERY_TREE_DEPTH) throw new Error("Recovery data tree is too deep");
+		const handle = opendirSync(current.source);
+		try {
+			for (;;) {
+				const entry = handle.readSync();
+				if (!entry) break;
+				entriesSeen += 1;
+				if (entriesSeen > MAX_RECOVERY_TREE_ENTRIES)
+					throw new Error("Recovery data tree is too large");
+				const sourcePath = join(current.source, entry.name);
+				const destinationPath = join(current.destination, entry.name);
+				const stat = lstatSync(sourcePath);
+				if (stat.isDirectory()) {
+					mkdirSync(destinationPath, { mode: stat.mode & 0o777 });
+					directories.push(destinationPath);
+					pending.push({
+						source: sourcePath,
+						destination: destinationPath,
+						depth: current.depth + 1,
+					});
+				} else if (stat.isFile()) {
+					copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
+					chmodSync(destinationPath, stat.mode & 0o777);
+					syncFile(destinationPath);
+				} else if (stat.isSymbolicLink()) {
+					symlinkSync(readlinkSync(sourcePath), destinationPath);
+				} else {
+					throw new Error("Recovery data contains an unsupported filesystem entry");
+				}
 			}
+		} finally {
+			handle.closeSync();
 		}
-	} finally {
-		handle.closeSync();
 	}
-	syncDirectory(destination);
+	for (let index = directories.length - 1; index >= 0; index -= 1) {
+		const directory = directories[index];
+		if (directory) syncDirectory(directory);
+	}
 }
 
 export function verifySqliteDatabase(path: string): boolean {

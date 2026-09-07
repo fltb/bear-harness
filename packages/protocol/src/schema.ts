@@ -27,6 +27,8 @@ const MAX_STRING_LENGTH = 4096;
 const MAX_PATH_LENGTH = 1024;
 const MAX_ARRAY_LENGTH = 100;
 const MAX_RECORD_ENTRIES = MAX_ARRAY_LENGTH;
+export const MAX_PI_LIVE_ITEMS = 10_000;
+export const MAX_PI_QUEUE_CHARACTERS = 2_000_000;
 export const MAX_EVENT_PAYLOAD_DEPTH = 32;
 export const MAX_EVENT_PAYLOAD_NODES = 1024;
 const MAX_SAFE_INT = 9007199254740991;
@@ -228,12 +230,16 @@ export const CharacterSummary = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
 	subtitle: z.string().max(MAX_STRING_LENGTH),
-	avatarUrl: CharacterMediaUrl,
+	avatarUrl: z.string().min(1).max(100_000).optional(),
 	active: z.boolean(),
 });
-export const CharacterListRequest = z.strictObject({});
+export const CharacterListRequest = z.strictObject({
+	cursor: z.string().min(1).max(64).optional(),
+	limit: z.number().int().min(1).max(100).default(50),
+});
 export const CharacterListResponse = z.strictObject({
 	characters: z.array(CharacterSummary).max(100),
+	nextCursor: z.string().min(1).max(64).optional(),
 });
 
 const CharacterCopy = z.string().min(1).max(MAX_STRING_LENGTH);
@@ -737,18 +743,30 @@ export const PiProjectionVersion = z.strictObject({
 	instanceId: z.string().min(1).max(256),
 	sequence: z.number().int().safe().nonnegative(),
 });
-export const PiLiveSnapshot = z.strictObject({
-	version: PiProjectionVersion.optional(),
-	isStreaming: z.boolean(),
-	isRetrying: z.boolean(),
-	retryAttempt: z.number().int().nonnegative(),
-	isCompacting: z.boolean(),
-	streamingMessage: PiAgentMessage.optional(),
-	pendingToolCallIds: z.array(z.string().min(1).max(256)).max(100),
-	steering: z.array(z.string().max(65536)).max(100),
-	followUp: z.array(z.string().max(65536)).max(100),
-	errorMessage: z.string().max(4096).optional(),
-});
+export const PiLiveSnapshot = z
+	.strictObject({
+		version: PiProjectionVersion.optional(),
+		isStreaming: z.boolean(),
+		isRetrying: z.boolean(),
+		retryAttempt: z.number().int().nonnegative(),
+		isCompacting: z.boolean(),
+		streamingMessage: PiAgentMessage.optional(),
+		pendingToolCallIds: z.array(z.string().min(1).max(256)).max(MAX_PI_LIVE_ITEMS),
+		steering: z.array(z.string().max(65536)).max(MAX_PI_LIVE_ITEMS),
+		followUp: z.array(z.string().max(65536)).max(MAX_PI_LIVE_ITEMS),
+		errorMessage: z.string().max(4096).optional(),
+	})
+	.superRefine((snapshot, context) => {
+		let characters = 0;
+		for (const message of snapshot.steering) characters += message.length;
+		for (const message of snapshot.followUp) characters += message.length;
+		if (characters > MAX_PI_QUEUE_CHARACTERS) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: `Pi queue must contain at most ${MAX_PI_QUEUE_CHARACTERS} characters`,
+			});
+		}
+	});
 export const ConversationDetail = z.strictObject({
 	conversationId: ConversationId,
 	name: z.string().max(MAX_STRING_LENGTH).optional(),
@@ -978,7 +996,10 @@ export const CanonChunk = z
 			});
 		}
 	});
-export const CanonListSourcesRequest = z.strictObject({});
+export const CanonListSourcesRequest = z.strictObject({
+	cursor: z.string().min(1).max(64).optional(),
+	limit: z.number().int().min(1).max(100).default(50),
+});
 export const CanonAddSourceRequest = z.strictObject({
 	logicalName: z.string().min(1).max(255),
 	content: z.string().min(1).max(1_048_576),
@@ -1011,7 +1032,10 @@ export const CanonModule = z.strictObject({
 	stableKey: z.string().max(64).optional(),
 	triggers: z.array(z.string().max(200)).max(40),
 });
-export const CanonListModulesRequest = z.strictObject({});
+export const CanonListModulesRequest = z.strictObject({
+	cursor: z.string().min(1).max(64).optional(),
+	limit: z.number().int().min(1).max(100).default(50),
+});
 export const CanonUpsertModuleRequest = z.strictObject({
 	id: z.string().min(1).max(64).optional(),
 	parentId: z.string().min(1).max(64).optional(),
@@ -1025,6 +1049,7 @@ export const CanonDeleteModuleRequest = z.strictObject({
 });
 export const CanonListSourcesResponse = z.strictObject({
 	sources: z.array(CanonSource).max(MAX_ARRAY_LENGTH),
+	nextCursor: z.string().min(1).max(64).optional(),
 });
 export const CanonAddSourceResponse = z.strictObject({
 	source: CanonSource,
@@ -1034,6 +1059,7 @@ export const CanonSearchResponse = z.strictObject({
 });
 export const CanonListModulesResponse = z.strictObject({
 	modules: z.array(CanonModule).max(MAX_ARRAY_LENGTH),
+	nextCursor: z.string().min(1).max(64).optional(),
 });
 export const CanonUpsertModuleResponse = z.strictObject({
 	module: CanonModule,
@@ -1111,9 +1137,13 @@ export const ProviderInfo = z.strictObject({
 		.max(1000),
 	unavailable: z.array(z.string().min(1).max(64)).max(30),
 });
-export const ProviderListRequest = z.strictObject({});
+export const ProviderListRequest = z.strictObject({
+	cursor: z.string().min(1).max(64).optional(),
+	limit: z.number().int().min(1).max(30).default(30),
+});
 export const ProviderListResponse = z.strictObject({
 	providers: z.array(ProviderInfo).max(30),
+	nextCursor: z.string().min(1).max(64).optional(),
 });
 export const ProviderSetApiKeyRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
@@ -1236,11 +1266,15 @@ export const ConfiguredModel = z.strictObject({
 	readiness: ModelReadiness,
 });
 export const ProviderImportPiConfigResponse = z.strictObject({
-	models: z.array(ConfiguredModel).max(100),
+	importedCount: z.number().int().safe().nonnegative(),
 });
-export const ModelPoolGetRequest = z.strictObject({});
+export const ModelPoolGetRequest = z.strictObject({
+	cursor: ModelRoute.optional(),
+	limit: z.number().int().min(1).max(100).default(100),
+});
 export const ModelPoolGetResponse = z.strictObject({
 	models: z.array(ConfiguredModel).max(100),
+	nextCursor: ModelRoute.optional(),
 });
 export const VisionModelDefault = z.discriminatedUnion("mode", [
 	z.strictObject({ mode: z.literal("auto") }),

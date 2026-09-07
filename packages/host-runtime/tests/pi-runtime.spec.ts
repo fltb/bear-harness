@@ -827,6 +827,40 @@ describe("PiRuntime session registry", () => {
 		);
 	});
 
+	it("rejects a user turn before Pi's native queue can exceed the transport bound", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Full user queue");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		const prompt = vi.fn(async () => undefined);
+		Object.assign(session, { pendingMessageCount: 10_000, prompt });
+
+		await expect(runtime.send(id, "one more turn")).rejects.toMatchObject({
+			kind: "unavailable",
+			reason: "pi_message_queue_full",
+		});
+		expect(prompt).not.toHaveBeenCalled();
+		expect(built.get(id)?.sendCustomMessage).not.toHaveBeenCalled();
+		await runtime.closeAll();
+	});
+
+	it("rejects an external result before Pi's native queue can exceed the transport bound", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Full result queue");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		Object.assign(session, { pendingMessageCount: 10_000 });
+
+		await expect(
+			runtime.deliverExternalResult(id, "run-full", "one more result"),
+		).rejects.toMatchObject({
+			kind: "unavailable",
+			reason: "pi_message_queue_full",
+		});
+		expect(built.get(id)?.sendCustomMessage).not.toHaveBeenCalled();
+		await runtime.closeAll();
+	});
+
 	it("does not acknowledge busy enqueue or unrelated leaves, and deduplicates pending attempts", async () => {
 		const dataDir = root();
 		const id = persistedSession(dataDir, "Busy");

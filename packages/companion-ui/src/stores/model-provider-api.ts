@@ -2,6 +2,7 @@ import type { CompanionClient } from "@bear-harness/companion-client";
 import type { QueryClient } from "@tanstack/solid-query";
 import type { ConfiguredModel, ModelRouteData, ProviderLoginResult, SettingsData } from "./ipc.js";
 import { invoke } from "./ipc.js";
+import { listAllModels, listAllProviders } from "./paged-rpc.js";
 import { hydrateRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 import type { ModelApi, ProviderApi, SettingsApi } from "./supplementary-api.js";
 
@@ -30,7 +31,7 @@ export function createModelProviderApis(c: {
 		refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.modelPool,
-			request: () => invoke(client, () => client.model.poolGet()),
+			request: () => listAllModels(client),
 		});
 	const refreshDefaults = () =>
 		refreshRpcQuery({
@@ -78,15 +79,14 @@ export function createModelProviderApis(c: {
 			refreshRpcQuery({
 				client: queryClient,
 				key: queryKeys.providers,
-				request: () => invoke(client, () => client.provider.list()),
+				request: () => listAllProviders(client),
 			}),
 		customUpsert: async (params) => {
 			await invoke(client, () => client.provider.customUpsert(params));
 		},
 		importPiConfig: async (configJson) => {
-			const result = await invoke(client, () => client.provider.importPiConfig({ configJson }));
-			await refreshPool();
-			return result.models;
+			await invoke(client, () => client.provider.importPiConfig({ configJson }));
+			return (await refreshPool()).models;
 		},
 		overrideBaseUrl: async (params) => {
 			await invoke(client, () => client.provider.overrideBaseUrl(params));

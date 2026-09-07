@@ -202,6 +202,36 @@ describe("provider catalog model synchronization", () => {
 			existsSync(durableFileTransactionMarkerPath(dirname(marker.target), marker.target)),
 		).toBe(false);
 	});
+
+	it("pages more than one hundred configured models through validated Host responses", async () => {
+		const runtime = makeRuntime();
+		await runtime.start();
+		await data(runtime, "provider.customUpsert", {
+			providerId: "large-catalog",
+			name: "Large Catalog",
+			baseUrl: "http://127.0.0.1:11434/v1",
+			models: Array.from({ length: 205 }, (_, index) => ({
+				id: `model-${String(index).padStart(3, "0")}`,
+			})),
+		});
+
+		const found: Array<{ providerId: string; modelId: string }> = [];
+		let cursor: { providerId: string; modelId: string } | undefined;
+		do {
+			const page = (await data(runtime, "model.pool.get", {
+				...(cursor ? { cursor } : {}),
+				limit: 100,
+			})) as {
+				models: Array<{ providerId: string; modelId: string }>;
+				nextCursor?: { providerId: string; modelId: string };
+			};
+			found.push(...page.models.filter((model) => model.providerId === "large-catalog"));
+			cursor = page.nextCursor;
+		} while (cursor);
+
+		expect(found).toHaveLength(205);
+		expect(new Set(found.map((model) => model.modelId)).size).toBe(205);
+	});
 	it("imports every catalog model idempotently when a provider fragment has no explicit routes", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();

@@ -11,6 +11,7 @@ import type {
 	CharacterSummary,
 } from "./ipc.js";
 import { invoke } from "./ipc.js";
+import { listAllCharacters } from "./paged-rpc.js";
 import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 import type { CanonApi, CharacterApi } from "./supplementary-api.js";
 
@@ -95,7 +96,7 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			refreshRpcQuery({
 				client: queryClient,
 				key: queryKeys.characters,
-				request: () => invoke(client, () => client.character.list()),
+				request: () => listAllCharacters(client),
 			}),
 		activate: async (characterId) => {
 			await invoke(client, () => client.character.activate({ characterId }));

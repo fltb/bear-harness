@@ -170,7 +170,12 @@ function RoleRow(props: { character: CharacterSummary }) {
 	let pluginTrustOpener: HTMLElement | undefined;
 	return (
 		<div class="role-row">
-			<img src={props.character.avatarUrl} alt="" aria-hidden="true" />
+			<Show
+				when={props.character.avatarUrl}
+				fallback={<span class="role-row-avatar-fallback" aria-hidden="true" />}
+			>
+				{(avatarUrl) => <img src={avatarUrl()} alt="" aria-hidden="true" />}
+			</Show>
 			<div>
 				<strong>{props.character.name}</strong>
 				<span>{props.character.subtitle}</span>

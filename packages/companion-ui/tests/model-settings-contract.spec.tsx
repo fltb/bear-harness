@@ -674,19 +674,7 @@ describe("breaking provider and model settings contract", () => {
 		client.provider.importPiConfig = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: {
-					models: [
-						{
-							providerId: "pi-local",
-							modelId: "local",
-							label: "Local",
-							supportsImages: false,
-							createdAt: "2026-01-01",
-							enabled: true,
-							readiness: "ready" as const,
-						},
-					],
-				},
+				data: { importedCount: 1 },
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);

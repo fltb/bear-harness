@@ -302,4 +302,22 @@ describe("companion state", () => {
 			"may not override its partition x-scope",
 		);
 	});
+
+	it("rejects an excessively deep state schema before recursive library compilation", () => {
+		let child: CharacterStateDefinition = { fields: {}, type: "string", default: "" };
+		for (let depth = 0; depth < 100; depth += 1) {
+			child = { fields: {}, type: "object", properties: { child } };
+		}
+		const definition = {
+			fields: {},
+			$schema: "https://json-schema.org/draft/2020-12/schema",
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				root: { ...child, "x-scope": "conversation" as const },
+			},
+		} as CharacterStateDefinition;
+
+		expect(() => compileCharacterStateSchema(definition)).toThrow("state_schema exceeds depth 64");
+	});
 });

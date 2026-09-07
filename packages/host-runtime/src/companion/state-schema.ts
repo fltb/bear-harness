@@ -21,6 +21,8 @@ type CompiledSchema = {
 const Ajv2020 = Ajv2020Module.default;
 const ajv = new Ajv2020({ strict: false, addUsedSchema: false });
 const cache = new WeakMap<object, CompiledSchema>();
+const MAX_STATE_SCHEMA_DEPTH = 64;
+const MAX_STATE_SCHEMA_NODES = 4096;
 export const CharacterStateSchema = {
 	parse(input: unknown): CharacterStateDefinition {
 		if (!record(input)) throw new Error("state_schema must be an object");
@@ -64,13 +66,22 @@ export function compileCharacterStateSchema(definition: CharacterStateDefinition
 
 export function characterStatePrompt(definition: CharacterStateDefinition): string {
 	const lines: string[] = [];
-	const walk = (node: CharacterStateDefinition, path: string): void => {
+	const pending: Array<{ node: CharacterStateDefinition; path: string }> = [
+		{ node: definition, path: "" },
+	];
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) break;
+		const { node, path } = current;
 		if (node.type === "object" || node.properties) {
-			for (const [name, child] of Object.entries(node.properties ?? {}))
-				walk(child, `${path}/${pointerEscape(name)}`);
-			return;
+			const children = Object.entries(node.properties ?? {});
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index];
+				if (child) pending.push({ node: child[1], path: `${path}/${pointerEscape(child[0])}` });
+			}
+			continue;
 		}
-		if (node["x-model-readable"] === false) return;
+		if (node["x-model-readable"] === false) continue;
 		const type = Array.isArray(node.type) ? node.type.join(" | ") : node.type;
 		const title = typeof node.title === "string" ? node.title : path;
 		const description = typeof node.description === "string" ? node.description.trim() : "";
@@ -95,8 +106,7 @@ export function characterStatePrompt(definition: CharacterStateDefinition): stri
 				.filter(Boolean)
 				.join("\n"),
 		);
-	};
-	walk(definition, "");
+	}
 	return `<character_state_contract>\n${lines.join("\n\n")}\n</character_state_contract>`;
 }
 const PatchPath = z.string().min(1).max(512);
@@ -122,23 +132,69 @@ export function applyCharacterStateChanges(input: {
 	return next;
 }
 function visit(fields: Set<string>, node: CharacterStateDefinition, pointer: string): JsonValue {
-	if (node.type === "object" || node.properties) {
-		const defaults: JsonObject = {};
-		for (const [name, child] of Object.entries(node.properties ?? {})) {
-			const path = `${pointer}/${pointerEscape(name)}`;
-			defaults[name] = visit(fields, child, path);
+	type Frame = {
+		node: CharacterStateDefinition;
+		pointer: string;
+		parent?: JsonObject;
+		key?: string;
+	};
+	const pending: Frame[] = [{ node, pointer }];
+	let result: JsonValue | undefined;
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) break;
+		if (current.node.type === "object" || current.node.properties) {
+			const value: JsonObject = {};
+			if (current.parent && current.key !== undefined) current.parent[current.key] = value;
+			else result = value;
+			const children = Object.entries(current.node.properties ?? {});
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index];
+				if (!child) continue;
+				pending.push({
+					node: child[1],
+					pointer: `${current.pointer}/${pointerEscape(child[0])}`,
+					parent: value,
+					key: child[0],
+				});
+			}
+			continue;
 		}
-		return defaults;
+		fields.add(current.pointer);
+		if (current.node.default === undefined)
+			throw new Error(`state field ${current.pointer} must declare a default`);
+		const value = structuredClone(current.node.default) as JsonValue;
+		if (current.parent && current.key !== undefined) current.parent[current.key] = value;
+		else result = value;
 	}
-	fields.add(pointer);
-	if (node.default === undefined) throw new Error(`state field ${pointer} must declare a default`);
-	return structuredClone(node.default) as JsonValue;
+	if (result === undefined) throw new Error("state schema produced no default document");
+	return result;
 }
 function inspect(value: unknown, scoped: ReadonlySet<object>): void {
-	if (!value || typeof value !== "object") return;
-	if (record(value) && Object.hasOwn(value, "x-scope") && !scoped.has(value))
-		throw new Error("state field may not override its partition x-scope");
-	for (const child of Object.values(value)) inspect(child, scoped);
+	const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+	const seen = new Set<object>();
+	let nodes = 0;
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) break;
+		nodes += 1;
+		if (nodes > MAX_STATE_SCHEMA_NODES)
+			throw new Error(`state_schema exceeds ${MAX_STATE_SCHEMA_NODES} nodes`);
+		if (current.depth > MAX_STATE_SCHEMA_DEPTH)
+			throw new Error(`state_schema exceeds depth ${MAX_STATE_SCHEMA_DEPTH}`);
+		if (!current.value || typeof current.value !== "object") continue;
+		if (seen.has(current.value)) throw new Error("state_schema must not contain cycles");
+		seen.add(current.value);
+		if (
+			record(current.value) &&
+			Object.hasOwn(current.value, "x-scope") &&
+			!scoped.has(current.value)
+		)
+			throw new Error("state field may not override its partition x-scope");
+		for (const child of Object.values(current.value)) {
+			pending.push({ value: child, depth: current.depth + 1 });
+		}
+	}
 }
 const pointerEscape = (value: string) => value.replaceAll("~", "~0").replaceAll("/", "~1");
 const record = (value: unknown): value is Record<string, unknown> =>

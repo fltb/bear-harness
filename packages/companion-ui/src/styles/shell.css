@@ -539,6 +539,10 @@
 .role-row img {
 	@apply size-10 object-contain;
 }
+.role-row-avatar-fallback {
+	@apply size-10 shrink-0 rounded-full border border-line;
+	background: var(--sys-surface-raised);
+}
 .role-row strong {
 	@apply text-xs;
 	--semantic-fg-role: default;
