@@ -52,6 +52,18 @@ interface ResponseHold {
 	release?: () => void;
 }
 const responseHolds = new Map<string, ResponseHold>();
+const longRichContent = `# 长回复验收
+
+${Array.from(
+	{ length: 22 },
+	(_, index) =>
+		`## 第 ${index + 1} 节\n\n这是用于验证长回复阅读导航与稳定滚动的第 ${index + 1} 段内容。`,
+).join("\n\n")}
+
+\`\`\`ts
+const exactSource = "<safe>";
+\`\`\`
+`;
 
 function text(value: unknown): string {
 	if (typeof value === "string") return value;
@@ -417,14 +429,16 @@ function reply(payload: {
 	}
 	const content = image(messages)
 		? "VISUAL_OBSERVATION: a red square\n"
-		: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
-			? "E2E_CONTEXT_EDITED_OK\n"
-			: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
-				? "E2E_CONTEXT_TWO_TURNS_OK\n"
-				: prompt.includes("VISUAL_OBSERVATION: a red square")
-					? "MAIN_USED_VISUAL_OBSERVATION\n"
-					: prompt.includes("RICH_CONTENT_STREAM")
-						? `# 交接结果
+		: prompt.includes("LONG_RICH_CONTENT")
+			? longRichContent
+			: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
+				? "E2E_CONTEXT_EDITED_OK\n"
+				: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
+					? "E2E_CONTEXT_TWO_TURNS_OK\n"
+					: prompt.includes("VISUAL_OBSERVATION: a red square")
+						? "MAIN_USED_VISUAL_OBSERVATION\n"
+						: prompt.includes("RICH_CONTENT_STREAM")
+							? `# 交接结果
 
 **状态：完成**
 
@@ -444,26 +458,26 @@ $$
 E = mc^2
 $$
 `
-						: directMemoryText !== undefined
-							? `${directMemoryText}\n`
-							: memoryContextCheck
-								? current.includes("南星") && hostContext.includes("南星")
-									? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-									: current.includes("北辰") && hostContext.includes("北辰")
-										? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
-										: "MEMORY_CONTEXT:ABSENT\n"
-								: current.includes("规则：回复 EDITED_OK") ||
-										prompt.includes("规则：回复 EDITED_OK")
-									? "EDITED_OK\n"
-									: prompt.includes("STREAM_HOLD_A")
-										? "HOLD_ONE HOLD_TWO\n"
-										: prompt.includes("STREAM_CHECK")
-											? "STREAM_ONE STREAM_TWO\n"
-											: prompt.includes("你是谁")
-												? "我是 E2E Rule Provider。\n"
-												: prompt.includes("E2E_OK")
-													? "E2E_OK\n"
-													: "RULE_OK\n";
+							: directMemoryText !== undefined
+								? `${directMemoryText}\n`
+								: memoryContextCheck
+									? current.includes("南星") && hostContext.includes("南星")
+										? "MEMORY_CONTEXT:我们约定暗号是南星\n"
+										: current.includes("北辰") && hostContext.includes("北辰")
+											? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
+											: "MEMORY_CONTEXT:ABSENT\n"
+									: current.includes("规则：回复 EDITED_OK") ||
+											prompt.includes("规则：回复 EDITED_OK")
+										? "EDITED_OK\n"
+										: prompt.includes("STREAM_HOLD_A")
+											? "HOLD_ONE HOLD_TWO\n"
+											: prompt.includes("STREAM_CHECK")
+												? "STREAM_ONE STREAM_TWO\n"
+												: prompt.includes("你是谁")
+													? "我是 E2E Rule Provider。\n"
+													: prompt.includes("E2E_OK")
+														? "E2E_OK\n"
+														: "RULE_OK\n";
 	return { content };
 }
 

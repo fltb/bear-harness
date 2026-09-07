@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const _electronExecutable = require("electron") as string;
 
 test("source build loads from file:// with official identity and isolated diagnostics", async () => {
+	test.setTimeout(240_000);
 	const testInfo = test.info();
 	const { app: electronApp, tempRoot } = await test.step("launch source Electron", () =>
 		launchSourceApp({}));

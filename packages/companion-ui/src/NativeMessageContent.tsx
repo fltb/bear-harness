@@ -8,23 +8,46 @@ export function nativeRecord(value: unknown): Record<string, unknown> | undefine
 		: undefined;
 }
 
+const privateNativeKeys = new Set([
+	"signature",
+	"thinkingsignature",
+	"textsignature",
+	"thoughtsignature",
+	"encrypted_content",
+]);
+
 /** Native signatures are opaque provider state, never public message content. */
 export function nativeSource(value: unknown): string {
-	return (
+	const source =
 		JSON.stringify(
 			value,
-			(key, item: unknown) =>
-				/^(?:signature|thinkingSignature|textSignature|thoughtSignature|encrypted_content)$/i.test(
-					key,
-				)
-					? undefined
-					: item,
+			(key, item: unknown) => {
+				if (privateNativeKeys.has(key.toLocaleLowerCase())) return undefined;
+				if (key === "data" && typeof item === "string")
+					return `[binary data omitted: ${item.length} characters]`;
+				if (typeof item === "string" && item.length > 4_096)
+					return `${item.slice(0, 4_096)}… [truncated: ${item.length} characters total]`;
+				return item;
+			},
 			2,
-		) ?? ""
-	);
+		) ?? "";
+	return source.length <= 32_768
+		? source
+		: `${source.slice(0, 32_768)}\n… [native source truncated]`;
 }
 
-function NativePart(props: { part: unknown; format: "plain" | "markdown"; streaming?: boolean }) {
+type CopiedCode = { partIndex: number; codeIndex: number };
+
+function NativePart(props: {
+	part: unknown;
+	partIndex: number;
+	format: "plain" | "markdown";
+	streaming?: boolean;
+	codeCopyLabel?: string;
+	codeCopiedLabel?: string;
+	copiedCode?: CopiedCode;
+	onCopyCode?(code: string, partIndex: number, codeIndex: number): void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [imageFailed, setImageFailed] = createSignal(false);
 	const part = () => nativeRecord(props.part);
@@ -57,6 +80,16 @@ function NativePart(props: { part: unknown; format: "plain" | "markdown"; stream
 					text={part()?.text as string}
 					format={props.format}
 					streaming={props.streaming}
+					codeCopyLabel={props.codeCopyLabel}
+					codeCopiedLabel={props.codeCopiedLabel}
+					copiedCodeIndex={
+						props.copiedCode?.partIndex === props.partIndex ? props.copiedCode.codeIndex : undefined
+					}
+					onCopyCode={
+						props.onCopyCode
+							? (code, codeIndex) => props.onCopyCode?.(code, props.partIndex, codeIndex)
+							: undefined
+					}
 				/>
 			</Match>
 			<Match when={type() === "thinking"}>
@@ -106,6 +139,10 @@ export function NativeMessageContent(props: {
 	content: unknown;
 	format?: "plain" | "markdown";
 	streaming?: boolean;
+	codeCopyLabel?: string;
+	codeCopiedLabel?: string;
+	copiedCode?: CopiedCode;
+	onCopyCode?(code: string, partIndex: number, codeIndex: number): void;
 }) {
 	return (
 		<Show
@@ -115,6 +152,16 @@ export function NativeMessageContent(props: {
 					text={props.content as string}
 					format={props.format ?? "markdown"}
 					streaming={props.streaming}
+					codeCopyLabel={props.codeCopyLabel}
+					codeCopiedLabel={props.codeCopiedLabel}
+					copiedCodeIndex={
+						props.copiedCode?.partIndex === 0 ? props.copiedCode.codeIndex : undefined
+					}
+					onCopyCode={
+						props.onCopyCode
+							? (code, codeIndex) => props.onCopyCode?.(code, 0, codeIndex)
+							: undefined
+					}
 				/>
 			}
 		>
@@ -124,18 +171,28 @@ export function NativeMessageContent(props: {
 					<Show when={props.content != null}>
 						<NativePart
 							part={props.content}
+							partIndex={0}
 							format={props.format ?? "markdown"}
 							streaming={props.streaming}
+							codeCopyLabel={props.codeCopyLabel}
+							codeCopiedLabel={props.codeCopiedLabel}
+							copiedCode={props.copiedCode}
+							onCopyCode={props.onCopyCode}
 						/>
 					</Show>
 				}
 			>
 				<For each={props.content as unknown[]}>
-					{(part) => (
+					{(part, partIndex) => (
 						<NativePart
 							part={part}
+							partIndex={partIndex()}
 							format={props.format ?? "markdown"}
 							streaming={props.streaming}
+							codeCopyLabel={props.codeCopyLabel}
+							codeCopiedLabel={props.codeCopiedLabel}
+							copiedCode={props.copiedCode}
+							onCopyCode={props.onCopyCode}
 						/>
 					)}
 				</For>

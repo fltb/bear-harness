@@ -13,16 +13,17 @@
 		"test:e2e:live": "node ../../scripts/require-live-model-env.mjs && playwright test live-model.spec.ts"
 	},
 	"dependencies": {
-		"@kobalte/core": "0.13.13",
 		"@bear-harness/companion-client": "file:../../packages/companion-client",
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/i18n": "file:../../packages/i18n",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol",
+		"@kobalte/core": "0.13.13",
 		"@tanstack/solid-query": "5.101.4"
 	},
 	"devDependencies": {
+		"@axe-core/playwright": "4.13.0",
 		"@rsbuild/core": "2.1.11",
 		"@rsbuild/plugin-babel": "2.0.1",
 		"@rsbuild/plugin-solid": "1.2.2",

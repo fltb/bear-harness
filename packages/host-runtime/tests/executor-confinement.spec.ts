@@ -107,6 +107,15 @@ describe("ACP process confinement", () => {
 		expect(executeSection).not.toContain(`(subpath ${JSON.stringify(root)})`);
 	});
 
+	it("allows the worker to drain only its own native child processes", () => {
+		const { spec } = fixture();
+		const profile = createMacOSSandboxProfile(spec);
+
+		expect(profile).toContain("(allow signal (target self))");
+		expect(profile).toContain("(allow signal (target same-sandbox))");
+		expect(profile).not.toContain("(allow signal)\n");
+	});
+
 	it.each(["linux", "win32"] as const)(
 		"fails closed on %s before an unsupported backend can spawn",
 		(platform) => {

@@ -47,6 +47,33 @@ function messageText(content: unknown): string {
 		.join("\n");
 }
 
+function messageContentIsLong(content: unknown): boolean {
+	let length = 0;
+	let lines = 1;
+	const count = (value: string) => {
+		length += value.length;
+		for (const character of value) if (character === "\n") lines += 1;
+		return length >= 1_200 || lines >= 16;
+	};
+	if (typeof content === "string") return count(content);
+	if (!Array.isArray(content)) return false;
+	let sawText = false;
+	for (const part of content) {
+		if (
+			part &&
+			typeof part === "object" &&
+			"type" in part &&
+			part.type === "text" &&
+			"text" in part
+		) {
+			if (sawText) lines += 1;
+			sawText = true;
+			if (count(String(part.text))) return true;
+		}
+	}
+	return false;
+}
+
 function hostToolPayload(details: unknown): Record<string, unknown> | undefined {
 	if (!details || typeof details !== "object" || !("ok" in details) || details.ok !== true) return;
 	if (!("data" in details) || !details.data || typeof details.data !== "object") return;
@@ -89,10 +116,18 @@ function PiTimelineEntryView(props: {
 	const [actionBusy, setActionBusy] = createSignal(false);
 	const messageActionBusy = () => actionBusy() || store.conversationMutationBusy;
 	const [actionError, setActionError] = createSignal<string | null>(null);
-	const [copied, setCopied] = createSignal(false);
+	const [copiedTarget, setCopiedTarget] = createSignal<
+		"message" | { partIndex: number; codeIndex: number } | null
+	>(null);
+	const copiedCode = () => {
+		const target = copiedTarget();
+		return target !== null && typeof target === "object" ? target : undefined;
+	};
 	let editOpener: HTMLButtonElement | undefined;
 	let correctionOpener: HTMLButtonElement | undefined;
 	let correctionInput: HTMLInputElement | undefined;
+	let messageStartRef: HTMLSpanElement | undefined;
+	let messageEndRef: HTMLSpanElement | undefined;
 	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 	onCleanup(() => {
 		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
@@ -132,6 +167,7 @@ function PiTimelineEntryView(props: {
 			: assistant()?.stopReason === "error"
 				? t("messages.responseFailedSaved")
 				: undefined);
+	const longResponse = () => !isUser && messageContentIsLong(content());
 	if (
 		!isUser &&
 		Array.isArray(message.content) &&
@@ -177,7 +213,7 @@ function PiTimelineEntryView(props: {
 			return;
 		}
 		const previousId = store.activeSubmission?.id;
-		const request = store.editMessage(entry.id, value);
+		const request = store.editMessage(props.entry.id, value);
 		const staged = store.activeSubmission?.id !== previousId;
 		if (staged) dismissEdit();
 		void request.catch((cause) => {
@@ -192,7 +228,7 @@ function PiTimelineEntryView(props: {
 		const value = feedback.trim();
 		if (!value) return;
 		const previousId = store.activeSubmission?.id;
-		const request = store.correctMessage(entry.id, value);
+		const request = store.correctMessage(props.entry.id, value);
 		const staged = store.activeSubmission?.id !== previousId;
 		if (staged) {
 			setCorrecting(false);
@@ -202,14 +238,17 @@ function PiTimelineEntryView(props: {
 			if (!staged) setActionError(cause instanceof Error ? cause.message : String(cause));
 		});
 	};
-	const copyMessage = async () => {
+	const copyText = async (
+		value: string,
+		target: "message" | { partIndex: number; codeIndex: number },
+	) => {
 		if (typeof navigator === "undefined" || !navigator.clipboard) return;
-		await navigator.clipboard.writeText(text());
-		setCopied(true);
+		await navigator.clipboard.writeText(value);
+		setCopiedTarget(target);
 		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
 		copiedTimer = setTimeout(() => {
 			copiedTimer = undefined;
-			setCopied(false);
+			setCopiedTarget(null);
 		}, 1_500);
 	};
 	const selectedVersionIndex = () => {
@@ -240,14 +279,24 @@ function PiTimelineEntryView(props: {
 				<article
 					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed() ? " stream-failed" : ""}`}
 					data-testid="timeline-message"
-					data-pi-entry-id={entry.id}
+					data-pi-entry-id={props.entry.id}
 					aria-label={isUser ? t("messages.you") : characterName()}
 				>
+					<span ref={messageStartRef} class="message-scroll-anchor" />
 					<div class="msg-heading">
 						<Show when={isUser}>
 							<div class="msg-meta">{t("messages.you")}</div>
 						</Show>
 						<div class="message-direct-actions">
+							<Show when={longResponse()}>
+								<Button
+									type="button"
+									class="msg-text-action"
+									onClick={() => messageEndRef?.scrollIntoView({ block: "end" })}
+								>
+									{t("messages.jumpToResponseEnd")}
+								</Button>
+							</Show>
 							<Show when={props.canEdit && isUser}>
 								<Button
 									ref={(element) => {
@@ -270,18 +319,47 @@ function PiTimelineEntryView(props: {
 							<Button
 								type="button"
 								class="msg-inline-action"
-								aria-label={copied() ? t("messages.copied") : t("messages.copy")}
-								title={copied() ? t("messages.copied") : t("messages.copy")}
+								aria-label={
+									copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")
+								}
+								title={copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")}
 								disabled={messageActionBusy()}
-								onClick={() => void copyMessage()}
+								onClick={() => void copyText(text(), "message")}
 							>
 								<Icon icon={faCopy} />
 							</Button>
 						</div>
 					</div>
 					<Show when={!editing()}>
-						<NativeMessageContent content={content()} format={isUser ? "plain" : "markdown"} />
+						<NativeMessageContent
+							content={content()}
+							format={isUser ? "plain" : "markdown"}
+							codeCopyLabel={t("messages.copyCode")}
+							codeCopiedLabel={t("messages.codeCopied")}
+							copiedCode={copiedCode()}
+							onCopyCode={
+								isUser
+									? undefined
+									: (code, partIndex, codeIndex) => void copyText(code, { partIndex, codeIndex })
+							}
+						/>
 					</Show>
+					<Show when={longResponse() && !editing()}>
+						<div class="long-response-actions">
+							<Button
+								type="button"
+								onClick={() => messageStartRef?.scrollIntoView({ block: "start" })}
+							>
+								{t("messages.jumpToResponseStart")}
+							</Button>
+							<Button type="button" onClick={() => void copyText(text(), "message")}>
+								{copiedTarget() === "message"
+									? t("messages.copied")
+									: t("messages.copyFullResponse")}
+							</Button>
+						</div>
+					</Show>
+					<span ref={messageEndRef} class="message-scroll-anchor" />
 					<Show when={editing() && isUser}>
 						<div class="message-inline-edit">
 							<TextField class="message-inline-editor">
@@ -349,7 +427,9 @@ function PiTimelineEntryView(props: {
 								<Button
 									type="button"
 									disabled={messageActionBusy()}
-									onClick={() => void runAction(() => store.createConversationFromEntry(entry.id))}
+									onClick={() =>
+										void runAction(() => store.createConversationFromEntry(props.entry.id))
+									}
 								>
 									<Icon icon={faCodeBranch} />
 									{t("messages.branch")}

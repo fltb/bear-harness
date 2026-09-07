@@ -115,7 +115,7 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 	const view = render(() => (
 		<QueryClientProvider client={queryClient}>
 			<DesktopProvider store={store}>
-				<ThreadHead sceneLabel="Scene" />
+				<ThreadHead sceneLabel="Scene" showExternalRuns />
 				<WorkTimelineItem messageId="message-1" />
 				<ArtifactPreview />
 				{showPermission ? <PermissionLayer /> : null}
@@ -497,7 +497,11 @@ describe("work timeline controls", () => {
 			}),
 		);
 		const secondPreview = screen.getByRole("dialog", { name: "second.mp4" });
-		await waitFor(() => expect(within(secondPreview).getByLabelText("second.mp4")).toBeVisible());
+		await waitFor(() =>
+			expect(
+				within(secondPreview).getByLabelText("second.mp4", { selector: "video" }),
+			).toBeVisible(),
+		);
 		expect(revokeObjectURL).toHaveBeenCalledWith("blob:first");
 
 		await user.click(
@@ -508,7 +512,9 @@ describe("work timeline controls", () => {
 		expect(revokeObjectURL).toHaveBeenCalledWith("blob:second");
 		await user.click(screen.getByRole("button", { name: /查看成果: third\.mp3/ }));
 		const thirdPreview = screen.getByRole("dialog", { name: "third.mp3" });
-		await waitFor(() => expect(within(thirdPreview).getByLabelText("third.mp3")).toBeVisible());
+		await waitFor(() =>
+			expect(within(thirdPreview).getByLabelText("third.mp3", { selector: "audio" })).toBeVisible(),
+		);
 		await user.click(
 			within(screen.getByRole("dialog", { name: "third.mp3" })).getByRole("button", {
 				name: /fourth\.pdf/,

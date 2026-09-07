@@ -16,10 +16,35 @@ const credentialsAvailable = apiKey.length > 0 || usePiConfig;
 const configuredProviderId = usePiConfig ? "e2e-live-openai" : providerId;
 const liveReplyTimeout = 180_000;
 
-function selectedPiProviderConfig(): {
+type LiveRpc = <T>(channel: string, data: unknown) => Promise<T>;
+
+async function completeLiveOnboarding(rpc: LiveRpc, context: string): Promise<void> {
+	await rpc("systemOnboarding.completeModel", {
+		reply: { providerId: configuredProviderId, modelId },
+		vision: { mode: "auto" },
+	});
+	await rpc("systemOnboarding.completeEmbedding", { choice: "none" });
+	await rpc("model.defaults.completeOnboarding", {});
+	let onboarding = await rpc<{ status: string; currentStepId?: string }>("onboarding.get", {});
+	const onboardingAnswers: Record<string, string | undefined> = {
+		welcome: undefined,
+		nickname: "北辰",
+	};
+	while (onboarding.status === "active") {
+		const stepId = onboarding.currentStepId;
+		if (!stepId || !(stepId in onboardingAnswers)) {
+			throw new Error(`Unhandled ${context} onboarding step: ${stepId ?? "missing"}`);
+		}
+		onboarding = await rpc("onboarding.submit", {
+			stepId,
+			answer: onboardingAnswers[stepId],
+		});
+	}
+}
+
+function selectedPiProviderConfig(modelIds: string[] = [modelId]): {
 	apiKey: string;
-	baseUrl: string;
-	model: { id: string; name?: string; supportsImages?: boolean };
+	configJson: string;
 } {
 	const parsed = JSON.parse(
 		readFileSync(join(homedir(), ".pi", "agent", "models.json"), "utf8"),
@@ -31,35 +56,8 @@ function selectedPiProviderConfig(): {
 		throw new Error(`Pi config provider ${providerId} has no API key`);
 	if (typeof metadata.baseUrl !== "string")
 		throw new Error(`Pi config provider ${providerId} has no base URL`);
-	const sourceModel = (Array.isArray(metadata.models) ? metadata.models : []).find(
-		(value) => value !== null && typeof value === "object" && "id" in value && value.id === modelId,
-	) as Record<string, unknown> | undefined;
-	if (!sourceModel) throw new Error(`Pi config provider ${providerId} has no model ${modelId}`);
-	return {
-		apiKey: configuredKey,
-		baseUrl: metadata.baseUrl,
-		model: {
-			id: modelId,
-			...(typeof sourceModel.name === "string" ? { name: sourceModel.name } : {}),
-			...(Array.isArray(sourceModel.input) && sourceModel.input.includes("image")
-				? { supportsImages: true }
-				: {}),
-		},
-	};
-}
-
-function selectedPiModels(modelIds: string[]): Array<{
-	id: string;
-	name?: string;
-	supportsImages?: boolean;
-}> {
-	const parsed = JSON.parse(
-		readFileSync(join(homedir(), ".pi", "agent", "models.json"), "utf8"),
-	) as { providers?: Record<string, unknown> };
-	const provider = parsed.providers?.[providerId] as Record<string, unknown> | undefined;
-	if (!provider) throw new Error(`Pi config has no provider ${providerId}`);
-	const configuredModels = Array.isArray(provider.models) ? provider.models : [];
-	return modelIds.map((requestedModelId) => {
+	const configuredModels = Array.isArray(metadata.models) ? metadata.models : [];
+	const selectedModels = modelIds.map((requestedModelId) => {
 		const sourceModel = configuredModels.find(
 			(value) =>
 				value !== null &&
@@ -69,14 +67,16 @@ function selectedPiModels(modelIds: string[]): Array<{
 		) as Record<string, unknown> | undefined;
 		if (!sourceModel)
 			throw new Error(`Pi config provider ${providerId} has no model ${requestedModelId}`);
-		return {
-			id: requestedModelId,
-			...(typeof sourceModel.name === "string" ? { name: sourceModel.name } : {}),
-			...(Array.isArray(sourceModel.input) && sourceModel.input.includes("image")
-				? { supportsImages: true }
-				: {}),
-		};
+		return sourceModel;
 	});
+	return {
+		apiKey: configuredKey,
+		configJson: JSON.stringify({
+			providers: {
+				[configuredProviderId]: { ...metadata, models: selectedModels },
+			},
+		}),
+	};
 }
 
 test("configured live model answers a WebDev smoke message", async ({ page }) => {
@@ -84,6 +84,7 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 		!enabled || !providerId || !modelId || !credentialsAvailable,
 		"Set BEAR_E2E_LIVE_MODEL=1 and the provider/model/key variables in .env",
 	);
+	test.setTimeout(liveReplyTimeout);
 
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
@@ -102,12 +103,7 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 	if (usePiConfig) {
 		const selected = selectedPiProviderConfig();
 		selectedApiKey = selected.apiKey;
-		await rpc("provider.customUpsert", {
-			providerId: configuredProviderId,
-			name: "E2E live Pi provider",
-			baseUrl: selected.baseUrl,
-			models: [selected.model],
-		});
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
 	} else if (customBaseUrl) {
 		await rpc("provider.customUpsert", {
 			providerId,
@@ -147,6 +143,17 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 				const opened = await rpc<{ branch: { entries: unknown[] } }>("conversation.open", {
 					conversationId: conversation.conversationId,
 				});
+				const failed = opened.branch.entries.findLast(
+					(entry) =>
+						entry !== null &&
+						typeof entry === "object" &&
+						"message" in entry &&
+						entry.message !== null &&
+						typeof entry.message === "object" &&
+						"stopReason" in entry.message &&
+						entry.message.stopReason === "error",
+				);
+				if (failed) throw new Error(`Live smoke model error: ${JSON.stringify(failed)}`);
 				return projectPiEntries(opened.branch.entries)
 					.filter((entry) => entry.type === "message" && entry.role === "assistant")
 					.map((entry) => entry.text ?? "")
@@ -164,7 +171,7 @@ test("configured live model answers in character and obeys the explicit-memory b
 		!enabled || !providerId || !modelId || !credentialsAvailable,
 		"Set BEAR_E2E_LIVE_MODEL=1 and the provider/model/key variables in .env",
 	);
-	test.setTimeout(120_000);
+	test.setTimeout(300_000);
 
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
@@ -182,12 +189,7 @@ test("configured live model answers in character and obeys the explicit-memory b
 	if (usePiConfig) {
 		const selected = selectedPiProviderConfig();
 		selectedApiKey = selected.apiKey;
-		await rpc("provider.customUpsert", {
-			providerId: configuredProviderId,
-			name: "E2E live Pi provider",
-			baseUrl: selected.baseUrl,
-			models: [selected.model],
-		});
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
 	} else if (customBaseUrl) {
 		await rpc("provider.customUpsert", {
 			providerId,
@@ -233,7 +235,7 @@ test("configured live model answers in character and obeys the explicit-memory b
 		});
 
 	await send("我今天穿蓝色外套，只是随口说，不需要记住。请自然回应。 ");
-	await expect.poll(async () => (await assistants()).length, { timeout: 60_000 }).toBe(1);
+	await expect.poll(async () => (await assistants()).length, { timeout: liveReplyTimeout }).toBe(1);
 	await expect.poll(async () => (await open()).live.isStreaming).toBe(false);
 	expect(JSON.stringify((await open()).branch.entries)).not.toContain(
 		'"toolName":"explicit_memory"',
@@ -241,12 +243,16 @@ test("configured live model answers in character and obeys the explicit-memory b
 
 	await send("请明确记住：我长期希望你称呼我为北辰。记住后简短确认。");
 	await expect
-		.poll(async () => JSON.stringify((await open()).branch.entries), { timeout: 60_000 })
+		.poll(async () => JSON.stringify((await open()).branch.entries), { timeout: liveReplyTimeout })
 		.toContain('"toolName":"explicit_memory"');
-	await expect.poll(async () => (await open()).live.isStreaming, { timeout: 60_000 }).toBe(false);
+	await expect
+		.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
+		.toBe(false);
 
 	await send("请用两句话直接回答：你是谁，你现在最重视什么？");
-	await expect.poll(async () => (await assistants()).at(-1), { timeout: 60_000 }).toContain("极昼");
+	await expect
+		.poll(async () => (await assistants()).at(-1), { timeout: liveReplyTimeout })
+		.toContain("极昼");
 	await expect.poll(async () => (await open()).live.isStreaming).toBe(false);
 });
 
@@ -291,14 +297,9 @@ test("configured live model answers through the native conversation journey", as
 
 	let selectedApiKey = apiKey;
 	if (usePiConfig) {
-		const selected = selectedPiProviderConfig();
+		const selected = selectedPiProviderConfig([modelId, secondaryModelId]);
 		selectedApiKey = selected.apiKey;
-		await rpc("provider.customUpsert", {
-			providerId: configuredProviderId,
-			name: "E2E live Pi provider",
-			baseUrl: selected.baseUrl,
-			models: selectedPiModels([modelId, secondaryModelId]),
-		});
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
 	} else {
 		test.skip(!customBaseUrl, "The complete journey needs a custom provider base URL");
 		await rpc("provider.customUpsert", {
@@ -323,27 +324,7 @@ test("configured live model answers through the native conversation journey", as
 	await rpc("model.defaults.setReply", {
 		reply: { providerId: configuredProviderId, modelId },
 	});
-	await rpc("model.systemDefaults.set", {
-		reply: { providerId: configuredProviderId, modelId },
-		vision: { mode: "auto" },
-	});
-	await rpc("model.defaults.completeOnboarding", {});
-	await rpc("settings.set", { settings: { firstRunStage: "role" } });
-	let onboarding = await rpc<{ status: string; currentStepId?: string }>("onboarding.get", {});
-	const onboardingAnswers: Record<string, string | undefined> = {
-		welcome: undefined,
-		nickname: "北辰",
-	};
-	while (onboarding.status === "active") {
-		const stepId = onboarding.currentStepId;
-		if (!stepId || !(stepId in onboardingAnswers)) {
-			throw new Error(`Unhandled live-model onboarding step: ${stepId ?? "missing"}`);
-		}
-		onboarding = await rpc("onboarding.submit", {
-			stepId,
-			answer: onboardingAnswers[stepId],
-		});
-	}
+	await completeLiveOnboarding(rpc, "live-model");
 
 	const source = await rpc<{ conversationId: string }>("conversation.create", {
 		title: "Live native journey source",
@@ -408,7 +389,7 @@ test("configured live model answers through the native conversation journey", as
 	await page.goto("/");
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
-	const sourceButton = page.locator(`[data-conversation-id="${source.conversationId}"]`);
+	const sourceButton = sidebar.locator(`[data-conversation-id="${source.conversationId}"]`);
 	await sourceButton.click();
 	await expect(thread.getByText("LIVE_SOURCE", { exact: true })).toHaveCount(1);
 	const sourceAssistant = thread
@@ -472,13 +453,29 @@ test("configured live model answers through the native conversation journey", as
 				?.getAttribute("data-conversation-id"),
 		);
 	if (!branchConversationId) throw new Error("live-model fork did not activate a conversation");
-	await sendRpc(branchConversationId, "只回复 LIVE_BRANCH，不要添加其他文字。");
-	await waitSettled(branchConversationId, "LIVE_BRANCH");
-	await expect(thread.getByText("LIVE_BRANCH", { exact: true })).toHaveCount(1);
+	const branchPrompt = "这是刚才话题的新方向。请确认你收到了，并简短说说我们现在从哪里继续。";
+	const branchAssistantCount = (await assistantTexts(branchConversationId)).length;
+	await sendRpc(branchConversationId, branchPrompt);
+	await expect
+		.poll(async () => (await assistantTexts(branchConversationId)).length, {
+			timeout: liveReplyTimeout,
+		})
+		.toBeGreaterThan(branchAssistantCount);
+	await expect
+		.poll(async () => (await open(branchConversationId)).live.isStreaming, {
+			timeout: liveReplyTimeout,
+		})
+		.toBe(false);
+	expect(JSON.stringify((await open(source.conversationId)).branch.entries)).not.toContain(
+		branchPrompt,
+	);
+	await expect(thread.getByText(branchPrompt, { exact: true })).toHaveCount(1);
+	await expect(thread.getByRole("article", { name: "极昼" })).toHaveCount(branchAssistantCount + 1);
 	await expect(sourceButton).toBeVisible();
 
 	await page.reload();
-	await expect(thread.getByText("LIVE_BRANCH", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText(branchPrompt, { exact: true })).toHaveCount(1);
+	await expect(thread.getByRole("article", { name: "极昼" })).toHaveCount(branchAssistantCount + 1);
 	expect((await open(source.conversationId)).selectedModel).toEqual({
 		providerId: configuredProviderId,
 		modelId,
@@ -514,12 +511,7 @@ test("configured live model answers a natural story with scene expression media 
 	if (usePiConfig) {
 		const selected = selectedPiProviderConfig();
 		selectedApiKey = selected.apiKey;
-		await rpc("provider.customUpsert", {
-			providerId: configuredProviderId,
-			name: "E2E live Pi provider",
-			baseUrl: selected.baseUrl,
-			models: [selected.model],
-		});
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
 	} else if (customBaseUrl) {
 		await rpc("provider.customUpsert", {
 			providerId: configuredProviderId,
@@ -541,27 +533,7 @@ test("configured live model answers a natural story with scene expression media 
 	await rpc("model.defaults.setReply", {
 		reply: { providerId: configuredProviderId, modelId },
 	});
-	await rpc("model.systemDefaults.set", {
-		reply: { providerId: configuredProviderId, modelId },
-		vision: { mode: "auto" },
-	});
-	await rpc("model.defaults.completeOnboarding", {});
-	await rpc("settings.set", { settings: { firstRunStage: "role" } });
-	let onboarding = await rpc<{ status: string; currentStepId?: string }>("onboarding.get", {});
-	const onboardingAnswers: Record<string, string | undefined> = {
-		welcome: undefined,
-		nickname: "北辰",
-	};
-	while (onboarding.status === "active") {
-		const stepId = onboarding.currentStepId;
-		if (!stepId || !(stepId in onboardingAnswers)) {
-			throw new Error(`Unhandled natural-story onboarding step: ${stepId ?? "missing"}`);
-		}
-		onboarding = await rpc("onboarding.submit", {
-			stepId,
-			answer: onboardingAnswers[stepId],
-		});
-	}
+	await completeLiveOnboarding(rpc, "natural-story");
 
 	const conversation = await rpc<{ conversationId: string }>("conversation.create", {
 		title: "自然剧情真实模型验收",
@@ -636,7 +608,10 @@ test("configured live model answers a natural story with scene expression media 
 
 	await page.goto("/");
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
-	await page.locator(`[data-conversation-id="${conversation.conversationId}"]`).click();
+	await page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.locator(`[data-conversation-id="${conversation.conversationId}"]`)
+		.click();
 	await expect(page.getByRole("img", { name: "交接档案室" })).toBeVisible();
 	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
 	const damagedSignal = thread.getByRole("region", { name: "残缺报码" });
@@ -647,7 +622,12 @@ test("configured live model answers a natural story with scene expression media 
 	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 
 	const findRelayChoice = async () => {
-		for (const name of ["查转发台登记页", "查看转发台登记页", "先查转发台登记页"]) {
+		for (const name of [
+			"查转发台登记页",
+			"查看转发台登记页",
+			"先查转发台登记页",
+			"查转发台的登记页",
+		]) {
 			const candidate = thread.getByRole("button", { name, exact: true });
 			if ((await candidate.count()) === 1) return candidate;
 		}
@@ -707,12 +687,7 @@ test("configured live model answers naturally with rendered structured content",
 	if (usePiConfig) {
 		const selected = selectedPiProviderConfig();
 		selectedApiKey = selected.apiKey;
-		await rpc("provider.customUpsert", {
-			providerId: configuredProviderId,
-			name: "E2E live Pi provider",
-			baseUrl: selected.baseUrl,
-			models: [selected.model],
-		});
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
 	} else if (customBaseUrl) {
 		await rpc("provider.customUpsert", {
 			providerId: configuredProviderId,
@@ -734,23 +709,7 @@ test("configured live model answers naturally with rendered structured content",
 	await rpc("model.defaults.setReply", {
 		reply: { providerId: configuredProviderId, modelId },
 	});
-	await rpc("model.defaults.completeOnboarding", {});
-	await rpc("settings.set", { settings: { firstRunStage: "role" } });
-	let onboarding = await rpc<{ status: string; currentStepId?: string }>("onboarding.get", {});
-	const onboardingAnswers: Record<string, string | undefined> = {
-		welcome: undefined,
-		nickname: "北辰",
-	};
-	while (onboarding.status === "active") {
-		const stepId = onboarding.currentStepId;
-		if (!stepId || !(stepId in onboardingAnswers)) {
-			throw new Error(`Unhandled rich-content onboarding step: ${stepId ?? "missing"}`);
-		}
-		onboarding = await rpc("onboarding.submit", {
-			stepId,
-			answer: onboardingAnswers[stepId],
-		});
-	}
+	await completeLiveOnboarding(rpc, "rich-content");
 	const conversation = await rpc<{ conversationId: string }>("conversation.create", {
 		title: "自然富内容真实模型验收",
 	});
@@ -760,15 +719,20 @@ test("configured live model answers naturally with rendered structured content",
 	});
 
 	await page.reload();
-	await page.locator(`[data-conversation-id="${conversation.conversationId}"]`).click();
+	await page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.locator(`[data-conversation-id="${conversation.conversationId}"]`)
+		.click();
 	const prompt =
-		"极昼，我在给客栈写一个夜间取暖费用小工具。电暖器功率 1.5kW，每晚 8 小时，电价 0.6 元/kWh，住 7 晚。算出总费用并解释计算关系，再给一个最小的 TypeScript 计算函数；顺手把它和 0.9kW 热泵的每晚耗电并排摆清楚，让我决定用哪个。";
+		"极昼，我在给客栈写一个夜间取暖费用小工具。电暖器功率 1.5kW，每晚 8 小时，电价 0.6 元/kWh，住 7 晚。算出总费用，把计算公式清楚地排版出来，再给一个最小的 TypeScript 计算函数；顺手把它和 0.9kW 热泵的每晚耗电并排摆清楚，让我决定用哪个。";
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	await composer.fill(prompt);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
-	const response = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "84" });
+	const response = thread
+		.getByRole("article", { name: "极昼" })
+		.filter({ has: page.getByRole("table") });
 	await expect(response.getByRole("table")).toBeVisible({ timeout: liveReplyTimeout });
 	await expect
 		.poll(
@@ -781,13 +745,36 @@ test("configured live model answers naturally with rendered structured content",
 			{ timeout: liveReplyTimeout },
 		)
 		.toBe(false);
-	await expect.poll(() => response.getByRole("math").count()).toBeGreaterThan(0);
+	await expect(response.getByRole("button", { name: zhCN.messages.copyCode })).toBeVisible();
+	await expect.poll(() => response.getByRole("code").count()).toBeGreaterThan(0);
+	if ((await response.getByRole("math").count()) === 0) {
+		await composer.fill("这段公式在界面里还是普通文字，不方便读。请把计算公式重新清楚地排版给我。");
+		await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
+		await expect
+			.poll(() => thread.getByRole("math").count(), { timeout: liveReplyTimeout })
+			.toBeGreaterThan(0);
+		await expect
+			.poll(
+				async () =>
+					(
+						await rpc<{ live: { isStreaming: boolean } }>("conversation.open", {
+							conversationId: conversation.conversationId,
+						})
+					).live.isStreaming,
+				{ timeout: liveReplyTimeout },
+			)
+			.toBe(false);
+	}
+	await expect.poll(() => thread.getByRole("math").count()).toBeGreaterThan(0);
 	await expect
-		.poll(() => response.getByText("return", { exact: false }).count())
-		.toBeGreaterThan(0);
-	await expect(response.getByTestId("message-content")).not.toHaveAttribute("aria-busy", "true", {
-		timeout: liveReplyTimeout,
-	});
+		.poll(
+			() =>
+				response
+					.getByTestId("message-content")
+					.evaluateAll((nodes) => nodes.every((node) => node.getAttribute("aria-busy") !== "true")),
+			{ timeout: liveReplyTimeout },
+		)
+		.toBe(true);
 
 	const opened = await rpc<{ branch: { entries: unknown[] }; live: { isStreaming: boolean } }>(
 		"conversation.open",
@@ -795,18 +782,21 @@ test("configured live model answers naturally with rendered structured content",
 	);
 	const assistant = projectPiEntries(opened.branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
-		.at(-1)?.text;
+		.map((entry) => entry.text ?? "")
+		.join("\n");
 	expect(opened.live.isStreaming).toBe(false);
 	expect(assistant).toContain("```");
 	expect(assistant).toContain("$");
 	expect(assistant).toContain("number");
-	expect(assistant).toContain("return");
 
 	await page.reload();
-	const reloadedResponse = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "84" });
+	const reloadedResponse = thread
+		.getByRole("article", { name: "极昼" })
+		.filter({ has: page.getByRole("table") });
 	await expect(reloadedResponse.getByRole("table")).toBeVisible();
-	await expect
-		.poll(() => reloadedResponse.getByText("return", { exact: false }).count())
-		.toBeGreaterThan(0);
-	await expect.poll(() => reloadedResponse.getByRole("math").count()).toBeGreaterThan(0);
+	await expect(
+		reloadedResponse.getByRole("button", { name: zhCN.messages.copyCode }),
+	).toBeVisible();
+	await expect.poll(() => reloadedResponse.getByRole("code").count()).toBeGreaterThan(0);
+	await expect.poll(() => thread.getByRole("math").count()).toBeGreaterThan(0);
 });

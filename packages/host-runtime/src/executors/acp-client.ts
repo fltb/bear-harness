@@ -54,6 +54,7 @@ type PendingPermission = {
 const SESSION_STEERING_METHOD = "_session/steering";
 const SHUTDOWN_METHOD = "_bear/shutdown";
 const PROCESS_STOP_TIMEOUT_MS = 2_000;
+const NATIVE_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function steeringReceipt(value: unknown): RunSteerResponse {
 	if (
@@ -82,6 +83,7 @@ export class AcpRunClient {
 	private stopping: Promise<void> | null = null;
 	private nativeShutdownRequired = false;
 	private nativeShutdown: Promise<unknown> | null = null;
+	private processExitObserved = false;
 	private readonly pendingPermissions = new Map<string, PendingPermission>();
 
 	constructor(spec: AcpProcessSpec, handlers: AcpClientHandlers) {
@@ -148,6 +150,7 @@ export class AcpRunClient {
 			if (!this.stopped) processFailure ??= "acp_process_stdio_failed";
 		});
 		process.once("exit", (code, signal) => {
+			this.processExitObserved = true;
 			this.resolvePendingPermissionsAsCancelled();
 			this.connection = null;
 			this.sessionId = null;
@@ -273,7 +276,12 @@ export class AcpRunClient {
 		}
 		this.connection = null;
 		this.sessionId = null;
-		if (process.exitCode !== null || process.signalCode !== null) return;
+		if (this.processExitObserved || process.exitCode !== null || process.signalCode !== null)
+			return;
+		// A peer may close stdio immediately before Node delivers its exit event.
+		// Give that already-terminating process one event-loop grace period so a
+		// recycled or inaccessible process group is never signalled by mistake.
+		if (await waitForProcessExit(process, 100)) return;
 		// A pre-initialize worker has no session/tools. An initialized native
 		// worker reaches here only after its real abort/drain acknowledgement.
 		terminateProcessGroup(process, "SIGTERM");
@@ -400,7 +408,7 @@ async function waitForNativeShutdown(operation: Promise<unknown>): Promise<unkno
 			new Promise<never>((_, reject) => {
 				timer = setTimeout(
 					() => reject(new Error("acp_native_shutdown_timeout")),
-					PROCESS_STOP_TIMEOUT_MS,
+					NATIVE_SHUTDOWN_TIMEOUT_MS,
 				);
 			}),
 		]);

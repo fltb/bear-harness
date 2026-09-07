@@ -25,11 +25,13 @@ export interface ZodCoreTool<TSchema extends z.ZodType> {
  * any Host side effect runs.
  */
 export function toCoreTool<TSchema extends z.ZodType>(tool: ZodCoreTool<TSchema>): AgentTool {
+	const generatedParameters = toJsonSchema(tool.schema);
+	const parameters = { ...generatedParameters, type: "object" as const };
 	return {
 		name: tool.name,
 		label: tool.label,
 		description: tool.description,
-		parameters: toJsonSchema(tool.schema) as never,
+		parameters: parameters as never,
 		prepareArguments: (value: unknown) => tool.schema.parse(value) as never,
 		execute: (toolCallId, value, signal) =>
 			tool.execute(toolCallId, tool.schema.parse(value), signal),

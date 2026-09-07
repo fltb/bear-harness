@@ -38,3 +38,14 @@ it("reports both Error and non-Error language update failures", async () => {
 		expect(within(settings).getByRole("alert")).toHaveTextContent("locale rejected"),
 	);
 });
+
+it("masks the work-agent settings entry for this release", async () => {
+	const user = userEvent.setup();
+	const { client } = createTestClient();
+	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
+	const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	expect(within(settings).queryByRole("button", { name: zhCN.settings.workAgent })).toBeNull();
+	expect(within(settings).queryByText(zhCN.settings.optionalCodexAgent)).toBeNull();
+});

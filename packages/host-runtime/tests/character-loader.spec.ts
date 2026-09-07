@@ -369,6 +369,10 @@ describe("character package Pi resources", () => {
 		]);
 		expect(resources.pluginPaths).toEqual([]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
+		const masked = loader.piResources(character, true, false);
+		expect(masked.appendSystemPrompt).not.toContain("host_delegate");
+		expect(masked.appendSystemPrompt).not.toContain("host_run_read");
+		expect(masked.appendSystemPrompt).not.toContain("host_run_control");
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

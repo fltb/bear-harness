@@ -409,9 +409,7 @@ describe("Pi native tool rendering", () => {
 		expect(activity).toHaveAttribute("data-activity", "memory_recall");
 		expect(activity).toBeVisible();
 		expect(screen.queryByTestId("streaming-assistant-message")).toBeNull();
-		expect(
-			screen.getByRole("button", { name: new RegExp(zhCN.threadHead.runningWork) }),
-		).toHaveTextContent("0");
+		expect(screen.queryByText(zhCN.threadHead.runningWork, { exact: true })).toBeNull();
 		pushPiEvent(client, {
 			type: "conversationActivity",
 			conversationId: "conversation-1",

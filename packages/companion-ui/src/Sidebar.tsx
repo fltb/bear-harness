@@ -75,6 +75,7 @@ export function Sidebar(props: {
 		const deleted = await workflow.runSidebarAction(() => store.deleteConversation(target.id));
 		setDeleteBusy(false);
 		if (!deleted) return;
+		workflow.forgetDraft(target.id);
 		setDeleteTarget(null);
 		focusAfterRender(() => {
 			const activeId = store.activeConversationId;
@@ -327,11 +328,15 @@ export function Sidebar(props: {
 												title={t("sidebar.archiveConversationHint")}
 												data-tooltip={t("sidebar.archiveConversationHint")}
 												aria-label={t("sidebar.archiveConversationHint")}
-												onClick={() =>
-													void workflow.runSidebarAction(() =>
-														store.archiveConversation(conversation.conversationId),
-													)
-												}
+												onClick={() => {
+													void workflow
+														.runSidebarAction(() =>
+															store.archiveConversation(conversation.conversationId),
+														)
+														.then((archived) => {
+															if (archived) workflow.forgetDraft(conversation.conversationId);
+														});
+												}}
 											>
 												<Icon icon={faBoxArchive} />
 											</Button>

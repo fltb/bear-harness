@@ -110,7 +110,7 @@ describe("locale switching stability", () => {
 		await i18n.changeLanguage("en");
 
 		// English copy proves the language actually switched and re-rendered…
-		await screen.findByRole("button", { name: new RegExp(en.threadHead.runningWork) });
+		await screen.findByRole("button", { name: en.sidebar.newConversation, exact: true });
 		// …while the persisted message still renders: the store instance survived.
 		expect(within(thread).getByText("必须保留的记忆测试消息")).toBeInTheDocument();
 		await waitFor(() => expect(screen.queryByRole("status", { name: "Loading" })).toBeNull());

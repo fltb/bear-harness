@@ -1,6 +1,42 @@
+import AxeBuilder from "@axe-core/playwright";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation } from "./helpers";
+
+test("composer drafts remain isolated while switching conversations", async ({ page }) => {
+	await ensureReadyForConversation(page);
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const activeId = async () =>
+		sidebar
+			.getByRole("button")
+			.evaluateAll((buttons) =>
+				buttons
+					.find((button) => button.getAttribute("aria-current") === "page")
+					?.getAttribute("data-conversation-id"),
+			);
+	const conversationA = await activeId();
+	if (!conversationA) throw new Error("active conversation has no identity");
+	await composer.fill("会话 A 的未发送草稿");
+
+	await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
+	await expect
+		.poll(async () => {
+			const current = await activeId();
+			return Boolean(current && current !== conversationA);
+		})
+		.toBe(true);
+	const conversationB = await activeId();
+	if (!conversationB || conversationB === conversationA)
+		throw new Error("new conversation was not activated");
+	await expect(composer).toHaveValue("");
+	await composer.fill("会话 B 的未发送草稿");
+
+	await sidebar.locator(`[data-conversation-id="${conversationA}"]`).click();
+	await expect(composer).toHaveValue("会话 A 的未发送草稿");
+	await sidebar.locator(`[data-conversation-id="${conversationB}"]`).click();
+	await expect(composer).toHaveValue("会话 B 的未发送草稿");
+});
 
 test("mobile composer, live activity, touch targets and detached scrolling stay usable", async ({
 	page,
@@ -154,4 +190,96 @@ test("reduced motion disables new-turn entrance animation", async ({ page }) => 
 		"none",
 	);
 	await page.getByRole("button", { name: zhCN.composer.stopLabel }).click();
+});
+
+test("a streamed reply enters once and its settled handoff does not animate again", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await composer.fill("STREAM_HOLD_A");
+	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+	const streamingReply = page.getByTestId("streaming-assistant-message");
+	await expect(streamingReply).toContainText("HOLD_ONE");
+	expect(await streamingReply.evaluate((element) => getComputedStyle(element).animationName)).toBe(
+		"timeline-entry-in",
+	);
+	expect(
+		await streamingReply.evaluate((element) => getComputedStyle(element).animationDuration),
+	).toBe("0.12s");
+
+	const settledReply = page
+		.getByTestId("timeline-entry-row")
+		.filter({ hasText: "HOLD_ONE HOLD_TWO" });
+	await expect(settledReply).toBeVisible({ timeout: 15_000 });
+	await expect(streamingReply).toHaveCount(0);
+	expect(await settledReply.getAttribute("class")).not.toContain("timeline-entry-enter");
+});
+
+test("long replies expose code copy and local reading navigation", async ({ context, page }) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await ensureReadyForConversation(page);
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await composer.fill("LONG_RICH_CONTENT");
+	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+
+	const response = page.getByRole("article", { name: "极昼" }).filter({ hasText: "长回复验收" });
+	await expect(
+		response.getByRole("button", { name: zhCN.messages.jumpToResponseEnd }),
+	).toBeVisible();
+	await expect(
+		response.getByRole("button", { name: zhCN.messages.jumpToResponseStart }),
+	).toBeVisible();
+	await expect(
+		response.getByRole("button", { name: zhCN.messages.copyFullResponse }),
+	).toBeVisible();
+
+	await response.getByRole("button", { name: zhCN.messages.copyCode }).click();
+	await expect(response.getByRole("button", { name: zhCN.messages.codeCopied })).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+		'const exactSource = "<safe>";\n',
+	);
+
+	await page.evaluate(() => {
+		const scrollingElement = document.scrollingElement;
+		if (!scrollingElement) throw new Error("missing document scrolling element");
+		scrollingElement.scrollTop = 0;
+		window.dispatchEvent(new WheelEvent("wheel"));
+	});
+	const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
+	await expect(jumpToLatest).toBeVisible();
+	const jumpBox = await jumpToLatest.boundingBox();
+	const footerBox = await response
+		.getByRole("button", { name: zhCN.messages.copyFullResponse })
+		.boundingBox();
+	if (!jumpBox || !footerBox) throw new Error("navigation controls have no layout boxes");
+	const overlaps = !(
+		jumpBox.x + jumpBox.width <= footerBox.x ||
+		footerBox.x + footerBox.width <= jumpBox.x ||
+		jumpBox.y + jumpBox.height <= footerBox.y ||
+		footerBox.y + footerBox.height <= jumpBox.y
+	);
+	expect(overlaps).toBe(false);
+
+	await response.getByRole("button", { name: zhCN.messages.jumpToResponseStart }).click();
+	const atStart = await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0);
+	await response.getByRole("button", { name: zhCN.messages.jumpToResponseEnd }).click();
+	await expect
+		.poll(() => page.evaluate(() => document.scrollingElement?.scrollTop ?? 0))
+		.toBeGreaterThan(atStart);
+});
+
+test("the main conversation has no serious automated accessibility violations", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await composer.fill("RICH_CONTENT_STREAM");
+	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+	await expect(page.getByRole("heading", { name: "交接结果" })).toBeVisible();
+	const result = await new AxeBuilder({ page }).include("main").analyze();
+	const blocking = result.violations.filter(
+		(violation) => violation.impact === "critical" || violation.impact === "serious",
+	);
+	expect(blocking).toEqual([]);
 });

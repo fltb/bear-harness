@@ -217,11 +217,31 @@ describe("Pi message actions", () => {
 			screen.queryAllByTestId("timeline-message").some((entry) => entry.textContent === "Voice"),
 		).toBe(false);
 		expect(await screen.findByRole("button", { name: zhCN.composer.attachLabel })).toBeDisabled();
-		correctionRequest.resolve({ ok: true, data: session as never });
+		const correctedSession = {
+			...session,
+			branch: {
+				...session.branch,
+				entries: session.branch.entries.map((entry) =>
+					entry.id === "assistant-2" ? { ...entry, id: "assistant-corrected" } : entry,
+				),
+			},
+		};
+		correctionRequest.resolve({ ok: true, data: correctedSession as never });
 		await waitFor(() =>
-			expect(within(message).getByRole("button", { name: zhCN.messages.branch })).toBeEnabled(),
+			expect(screen.getByText("Second reply").closest("article")).toHaveAttribute(
+				"data-pi-entry-id",
+				"assistant-corrected",
+			),
 		);
-		await user.click(within(message).getByRole("button", { name: zhCN.messages.branch }));
+		const correctedMessage = screen.getByText("Second reply").closest("article") as HTMLElement;
+		expect(
+			within(correctedMessage).getByRole("button", { name: zhCN.messages.branch }),
+		).toBeEnabled();
+		await user.click(within(correctedMessage).getByRole("button", { name: zhCN.messages.branch }));
+		expect(client.message.branch).toHaveBeenCalledWith({
+			conversationId: "conversation-1",
+			entryId: "assistant-corrected",
+		});
 		await waitFor(() => expect(screen.queryByTestId("conversation-submission")).toBeNull());
 		await waitFor(() => expect(screen.queryByText("Second reply")).toBeNull());
 

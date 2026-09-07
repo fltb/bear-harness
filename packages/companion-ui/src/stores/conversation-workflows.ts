@@ -3,7 +3,7 @@ import { createStore } from "solid-js/store";
 import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
 
 interface State {
-	composerText: string;
+	composerDrafts: Record<string, string>;
 	query: string;
 	editingId?: string;
 	editingTitle: string;
@@ -22,8 +22,9 @@ export function useConversationWorkflow(store: CompanionStore) {
 
 function createWorkflow(store: CompanionStore) {
 	const [modelBusySessions, setModelBusySessions] = createSignal<ReadonlySet<string>>(new Set());
+	const submitting = new Set<string>();
 	const [state, setState] = createStore<State>({
-		composerText: "",
+		composerDrafts: {},
 		query: "",
 		editingTitle: "",
 		renameRequired: false,
@@ -59,16 +60,30 @@ function createWorkflow(store: CompanionStore) {
 			return false;
 		}
 	};
+	const activeDraft = () => {
+		const conversationId = store.activeConversationId;
+		return conversationId ? (state.composerDrafts[conversationId] ?? "") : "";
+	};
+	const setActiveDraft = (value: string) => {
+		const conversationId = store.activeConversationId;
+		if (conversationId) setState("composerDrafts", conversationId, value);
+	};
+	const forgetDraft = (conversationId: string) =>
+		setState("composerDrafts", (current) => {
+			if (!(conversationId in current)) return current;
+			const next = { ...current };
+			delete next[conversationId];
+			return next;
+		});
 	return {
-		composerText: () => state.composerText,
-		setComposerText: (value: string) => setState("composerText", value),
+		composerText: activeDraft,
+		setComposerText: setActiveDraft,
+		forgetDraft,
 		insertLocalPaths: (paths: readonly string[], label: string) => {
 			if (paths.length === 0) return;
 			const references = paths.map((path) => `${label}：${JSON.stringify(path)}`).join("\n");
-			setState(
-				"composerText",
-				`${state.composerText.trimEnd()}${state.composerText ? "\n\n" : ""}${references}`,
-			);
+			const draft = activeDraft();
+			setActiveDraft(`${draft.trimEnd()}${draft ? "\n\n" : ""}${references}`);
 		},
 		modelBusy: () => modelBusySessions().has(store.activeConversationId ?? ""),
 		query: () => state.query,
@@ -128,9 +143,16 @@ function createWorkflow(store: CompanionStore) {
 			}
 		},
 		dispatchMessage: async () => {
-			const message = state.composerText.trim();
-			if (!message || store.conversationMutationBusy) return;
 			const conversationId = store.activeConversationId;
+			const message = activeDraft().trim();
+			if (
+				!conversationId ||
+				!message ||
+				submitting.has(conversationId) ||
+				store.conversationMutationBusy
+			)
+				return;
+			submitting.add(conversationId);
 			const previousSubmission = store.activeSubmission?.id;
 			try {
 				const sending = store.sendMessage(message);
@@ -140,10 +162,12 @@ function createWorkflow(store: CompanionStore) {
 					store.activeSubmission?.id !== previousSubmission &&
 					store.activeSubmission?.conversationId === conversationId
 				)
-					setState("composerText", "");
+					setState("composerDrafts", conversationId, "");
 				await sending;
 			} catch {
 				// Dispatched request failures remain available in submission feedback.
+			} finally {
+				submitting.delete(conversationId);
 			}
 		},
 	};

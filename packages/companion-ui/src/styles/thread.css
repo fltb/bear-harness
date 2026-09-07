@@ -140,6 +140,51 @@
 	background: color-mix(in srgb, var(--surface-canvas) 82%, black 18%);
 }
 
+.message-code-block {
+	@apply my-3 max-w-full overflow-hidden rounded-xl border;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-canvas) 82%, black 18%);
+}
+
+.message-code-block .message-code-toolbar {
+	@apply flex min-h-11 items-center justify-between gap-3 border-b px-3 text-xs;
+	border-color: var(--line-soft);
+	color: var(--sys-text-muted);
+	background: var(--surface-control);
+}
+
+.message-code-block pre {
+	@apply m-0 rounded-none border-0;
+}
+
+.message-code-copy {
+	@apply min-h-11 rounded-lg border-0 px-3 text-xs;
+	color: var(--text-action);
+	background: transparent;
+}
+
+.message-code-copy:hover,
+.message-code-copy:focus-visible {
+	background: var(--surface-success);
+	color: var(--text-on-message);
+}
+
+.message-scroll-anchor {
+	@apply block h-0;
+}
+
+.long-response-actions {
+	@apply mt-4 flex flex-wrap items-center justify-end gap-2 border-t pt-3;
+	border-color: var(--line-soft);
+}
+
+.long-response-actions button,
+.msg-text-action {
+	@apply min-h-11 rounded-lg border-0 px-3 text-xs;
+	color: var(--sys-text-muted);
+	background: var(--surface-control);
+}
+
 .message-markdown pre code {
 	@apply bg-transparent p-0;
 }

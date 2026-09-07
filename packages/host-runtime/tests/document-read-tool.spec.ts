@@ -10,6 +10,15 @@ import { registerHostTools } from "../src/companion/host-tool-register.js";
 describe("document_read", () => {
 	beforeEach(() => parseOffice.mockReset());
 
+	it("can mask all External Run tools without changing their implementation", () => {
+		const tools = registerHostTools({} as never, { externalRuns: false });
+
+		expect(tools.host_delegate).toBeUndefined();
+		expect(tools.host_run_read).toBeUndefined();
+		expect(tools.host_run_control).toBeUndefined();
+		expect(tools.host_state).toBeDefined();
+	});
+
 	it("reads an Office document path without creating attachment state", async () => {
 		parseOffice.mockResolvedValue({
 			to: vi.fn().mockResolvedValue({ value: "# Brief\nalpha beta gamma" }),

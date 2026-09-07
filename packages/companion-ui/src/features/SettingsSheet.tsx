@@ -10,7 +10,6 @@ import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { Button, Select } from "../ui/primitives.js";
 import { ArchivedConversationSettings } from "./ArchivedConversationSettings.js";
-import { ExternalAgentSettings } from "./ExternalAgentSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
 
@@ -24,7 +23,10 @@ export function SettingsSheet(
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [localPage, setLocalPage] = createSignal<SettingsPage>(props.initialPage ?? "general");
-	const page = () => props.initialPage ?? localPage();
+	const page = () => {
+		const selected = props.initialPage ?? localPage();
+		return selected === "agents" ? "general" : selected;
+	};
 	const setPage = (nextPage: SettingsPage) => {
 		setLocalPage(nextPage);
 		props.onPageChange?.(nextPage);
@@ -33,7 +35,6 @@ export function SettingsSheet(
 		{ id: "general" as const, label: t("settings.language") },
 		{ id: "archived" as const, label: t("sidebar.archivedConversations") },
 		{ id: "providers" as const, label: t("settings.systemModelSettings") },
-		{ id: "agents" as const, label: t("settings.workAgent") },
 		{ id: "network" as const, label: t("settings.networkSection") },
 		{ id: "memory" as const, label: t("settings.memoryVectorSection") },
 	];
@@ -145,9 +146,6 @@ export function SettingsSheet(
 				</Show>
 				<Show when={page() === "providers"}>
 					<SystemModelSettings />
-				</Show>
-				<Show when={page() === "agents"}>
-					<ExternalAgentSettings />
 				</Show>
 				<Show when={page() === "network"}>
 					<NetworkAndMemorySettings section="network" />

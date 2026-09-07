@@ -106,20 +106,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		)
 		.toBe(1);
 
-	const queue = page.getByRole("button", {
-		name: `${zhCN.threadHead.runningWork} 0`,
-	});
-	await queue.click();
-	await expect(queue).toHaveAttribute("aria-expanded", "true");
-	const taskWorkspace = page.getByRole("region", { name: zhCN.threadHead.runningWork });
-	await expect(taskWorkspace).toBeVisible();
-	await expect(
-		taskWorkspace.getByRole("heading", { name: zhCN.work.task.unfinished, exact: true }),
-	).toBeVisible();
-	await expect(taskWorkspace.getByRole("button", { name: zhCN.work.task.history })).toBeVisible();
-	await queue.click();
-	await expect(queue).toHaveAttribute("aria-expanded", "false");
-	await expect(taskWorkspace).toBeHidden();
+	await expect(page.getByText(zhCN.threadHead.runningWork, { exact: true })).toHaveCount(0);
 
 	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
 	await search.fill("不存在的对话");

@@ -362,6 +362,11 @@ export const en = {
 		branch: "Start a new conversation here",
 		copy: "Copy",
 		copied: "Copied",
+		copyCode: "Copy code",
+		codeCopied: "Code copied",
+		copyFullResponse: "Copy full response",
+		jumpToResponseStart: "Jump to response start",
+		jumpToResponseEnd: "Jump to response end",
 		userEditBranchNote:
 			"Resending starts a new response from this revised message. The previous version remains in this conversation.",
 		conversation: "Conversations",

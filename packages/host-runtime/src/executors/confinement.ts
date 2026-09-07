@@ -245,6 +245,10 @@ export function createMacOSSandboxProfile(spec: ConfinableProcessSpec): string {
 		"(allow system*)",
 		"(allow network*)",
 		"(allow file-read-metadata)",
+		// Pi owns native tool subprocesses and must be able to abort/drain their
+		// whole inherited sandbox before ACP acknowledges cancellation. Separate
+		// sandbox instances and unrelated host processes remain outside this grant.
+		"(allow signal (target same-sandbox))",
 		"(allow file-read*",
 		'  (literal "/")',
 		...readFilters.map((filter) => `  ${filter}`),
