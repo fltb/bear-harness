@@ -104,26 +104,13 @@ describe("shell visual and thread head contracts", () => {
 		expect(layoutModeForWidth(FULLSCREEN_LAYOUT_MIN_WIDTH)).toBe("fullscreen");
 	});
 
-	it("masks the external work entry by default", () => {
-		render(() => (
-			<DesktopProvider
-				store={{ activeConversationId: "conversation-1", runs: [] } as CompanionStore}
-			>
-				<ThreadHead sceneLabel="Idle" />
-			</DesktopProvider>
-		));
-		expect(
-			screen.queryByRole("button", { name: zhCN.threadHead.runningWork }),
-		).not.toBeInTheDocument();
-	});
-
-	it("shows an explicit empty state when the retained work surface is enabled", async () => {
+	it("shows an explicit empty state when no work is running", async () => {
 		const user = userEvent.setup();
 		render(() => (
 			<DesktopProvider
 				store={{ activeConversationId: "conversation-1", runs: [] } as CompanionStore}
 			>
-				<ThreadHead sceneLabel="Idle" showExternalRuns />
+				<ThreadHead sceneLabel="Idle" />
 			</DesktopProvider>
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
@@ -172,7 +159,7 @@ describe("shell visual and thread head contracts", () => {
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ThreadHead sceneLabel="Scene title" showExternalRuns />
+				<ThreadHead sceneLabel="Scene title" />
 			</DesktopProvider>
 		));
 

@@ -41,7 +41,6 @@ export interface PiRuntimeOptions {
 	delegate: HostToolInput["delegate"];
 	runRead: HostToolInput["runRead"];
 	runControl: HostToolInput["runControl"];
-	externalRunToolsEnabled?: boolean;
 	canon(companionId: string, query: string, limit: number, moduleId?: string): Promise<unknown>;
 	memory: {
 		enabled(companionId: string): boolean;
@@ -695,30 +694,27 @@ export class PiRuntime {
 			: this.options.defaultModel(companionId);
 		const model = route && models.getModel(route.providerId, route.modelId);
 		if (!model) throw { kind: "unavailable", reason: "provider_auth_required" };
-		hostTools = registerHostTools(
-			{
-				sessionId: () => sessionId,
-				entryId: () => manager.getLeafId() ?? sessionId,
-				character: () => character,
-				store: this.options.store,
-				delegate: this.options.delegate,
-				runRead: this.options.runRead,
-				runControl: this.options.runControl,
-				canon: (query, limit, moduleId) => this.options.canon(companionId, query, limit, moduleId),
-				memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
-				conversationSearch: (query, limit) =>
-					this.options.memory.searchConversations(companionId, sessionId, query, limit),
-				...(model.input?.includes("image")
-					? {}
-					: { imageRead: (path: string) => this.readImage(session, companionId, path) }),
-				explicitMemory: {
-					read: () => this.options.memory.explicit.read(companionId),
-					edit: (oldText, newText) =>
-						this.options.memory.explicit.edit(companionId, oldText, newText),
-				},
+		hostTools = registerHostTools({
+			sessionId: () => sessionId,
+			entryId: () => manager.getLeafId() ?? sessionId,
+			character: () => character,
+			store: this.options.store,
+			delegate: this.options.delegate,
+			runRead: this.options.runRead,
+			runControl: this.options.runControl,
+			canon: (query, limit, moduleId) => this.options.canon(companionId, query, limit, moduleId),
+			memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
+			conversationSearch: (query, limit) =>
+				this.options.memory.searchConversations(companionId, sessionId, query, limit),
+			...(model.input?.includes("image")
+				? {}
+				: { imageRead: (path: string) => this.readImage(session, companionId, path) }),
+			explicitMemory: {
+				read: () => this.options.memory.explicit.read(companionId),
+				edit: (oldText, newText) =>
+					this.options.memory.explicit.edit(companionId, oldText, newText),
 			},
-			{ externalRuns: this.options.externalRunToolsEnabled !== false },
-		);
+		});
 		const tools = {
 			...Object.fromEntries(createReadOnlyTools(this.cwd).map((tool) => [tool.name, tool])),
 			...hostTools,

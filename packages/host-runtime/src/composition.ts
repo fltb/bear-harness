@@ -1229,5 +1229,5 @@ function configureCharacterRuntime(
 	character: Parameters<CharacterLoader["piResources"]>[0],
 ): void {
 	const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
-	s.pi.configure(s.characterLoader.piResources(character, trust.trusted, false));
+	s.pi.configure(s.characterLoader.piResources(character, trust.trusted));
 }

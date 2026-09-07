@@ -366,7 +366,7 @@
 
 ## 9. 2026-09-07 逐项执行结果
 
-结果口径：`PASS` 表示本轮已有直接自动化、真实模型或截图证据；`NOT RUN` 表示测试条件存在但本轮没有足够的直接证据；`BLOCKED` 表示需要当前环境以外的设备、辅助技术或发行凭据。External Run、Artifact、Codex 与对应 Host Pi tools 在当前版本入口处遮罩，底层实现保留，因此不能把底层单测冒充成当前发布 UI 已验收。
+结果口径：`PASS` 表示本轮已有直接自动化、真实模型或截图证据；`NOT RUN` 表示测试条件存在但本轮没有足够的直接证据；`BLOCKED` 表示需要当前环境以外的设备、辅助技术或发行凭据。当前仅遮罩外部 Codex 的设置入口；内部 Pi Worker、Host Run tools、External Run 和 Artifact 结果工作区均为发布主路径，并必须以实际浏览器链路验收。
 
 ### A. 打开、刷新与会话生命周期
 
@@ -493,13 +493,13 @@
 | G-03 | PASS | Choice 作为普通用户消息 E2E + 真实剧情 |
 | G-04 | PASS | 声明 Media ID 解析单测 + 真实剧情 |
 | G-05 | PASS | Media 安全预览与关闭的真实浏览器点击 |
-| G-06 | NOT RUN | 当前版本 External Run UI/Host Pi tool 已遮罩；底层生命周期单测通过 |
-| G-07 | NOT RUN | 当前版本入口不可达；显式 `conversationId` 投递单测通过 |
-| G-08 | NOT RUN | 当前版本入口不可达；runId 幂等单测通过 |
-| G-09 | NOT RUN | 当前版本 Artifact UI 入口不可达；底层 ownership/integrity 测试通过 |
-| G-10 | NOT RUN | 当前版本 Artifact UI 入口不可达；内部组件测试不代表发布路径 |
-| G-11 | NOT RUN | 当前版本入口不可达；损坏/缺失/越权底层测试通过 |
-| G-12 | NOT RUN | 当前版本入口不可达；受控 capability 与 Save As 底层测试通过 |
+| G-06 | PASS | 后台 Chromium 从 `host_delegate` 启动内置 Pi Worker；进度留在时间线和“进行中的事”，未强制打开结果 |
+| G-07 | PASS | 后台 E2E 在来源会话忙碌且另一会话 active 时完成 Run；结果只投递来源会话且不抢焦点 |
+| G-08 | PASS | 同一 Run 的结果交付、刷新和重开后仍只有一条 `host_external_agent_result` |
+| G-09 | PASS | 后台 E2E 实际点击 Artifact，在 1920/1280/390 三档打开双列、Drawer、全屏结果并显示 metadata/provenance/完整性 |
+| G-10 | PASS | 会话归属单测与浏览器跨会话投递旅程共同证明结果不跨会话自动打开；预览选择在明确切换时清理 |
+| G-11 | PASS | Host ownership/integrity/path 反向测试 + UI 缺失/损坏本地化错误测试；不暴露 CAS 路径 |
+| G-12 | PASS | 浏览器真实下载并逐字节核对文本、解包核对 XLSX A1:E5；Open/Reveal/Save As capability 单测通过 |
 
 ### H. 响应式、排版、动效与视觉稳定性
 
@@ -508,8 +508,8 @@
 | H-01 | PASS | 1920 长对话截图 |
 | H-02 | PASS | 1280 空态/流式/完成截图与站点遍历 |
 | H-03 | PASS | 390 富内容/detached 截图与移动 E2E |
-| H-04 | NOT RUN | 结果工作区当前发布入口已遮罩 |
-| H-05 | NOT RUN | 结果工作区当前发布入口已遮罩 |
+| H-04 | PASS | 布局边界单测 + 1920 双列/1280 右侧 Drawer 的后台真实 DOM 几何验证 |
+| H-05 | PASS | 布局边界单测 + 1280 Drawer/390 全屏结果的后台真实 DOM 几何验证 |
 | H-06 | NOT RUN | 未执行浏览器 200%/400% 缩放专项 |
 | H-07 | NOT RUN | 未执行字体下载失败注入 |
 | H-08 | PASS | 首 token 只入场一次 E2E |
@@ -529,7 +529,7 @@
 | I-03 | PASS | 错误/停止状态播报组件测试 |
 | I-04 | PASS | 浏览器键盘发送、停止、复制 |
 | I-05 | PASS | 浏览器键盘编辑/分支与焦点可达 |
-| I-06 | NOT RUN | Choice/Media 已可键盘聚焦；Artifact 当前入口遮罩，未形成完整项 |
+| I-06 | PASS | Choice、Media、Artifact 组件键盘测试；浏览器验证 Media Escape 后焦点回到触发按钮，结果工作区可关闭返回对话 |
 | I-07 | PASS | “回到最新”可聚焦/点击 E2E |
 | I-08 | PASS | 主对话 axe serious/critical 违规为 0 |
 | I-09 | BLOCKED | 需要 macOS VoiceOver 人工旅程 |
@@ -562,7 +562,7 @@
 | K-02 | NOT RUN | 未执行 500 次 A/B 切换量化内存基准 |
 | K-03 | NOT RUN | 长内容可用性已通过，尚无长时间性能预算门禁 |
 | K-04 | PASS | 复制反馈 timer 单例与卸载清理组件测试 |
-| K-05 | NOT RUN | External Run UI 已遮罩；底层缓存/历史分页单测通过 |
+| K-05 | PASS | Run/permission action state 保持 32 项上限，历史分页与发布 UI 路径均通过 |
 | K-06 | PASS | UI controller、Observer/listener 与 Host close 清理单测 |
 | K-07 | PASS | runtime 激活/替换/失败保权威单测 |
 | K-08 | PASS | Session delete 精确 dispose/排斥/幂等单测 |

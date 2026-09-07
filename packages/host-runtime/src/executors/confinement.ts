@@ -40,6 +40,7 @@ const MACOS_SYSTEM_READ_PATHS = [
 	"/bin",
 	"/sbin",
 	"/Library/Apple",
+	"/Library/Developer/CommandLineTools",
 	"/Library/Frameworks",
 	"/private/etc",
 	"/private/var/db/dyld",
@@ -58,6 +59,7 @@ const MACOS_SYSTEM_EXECUTABLE_PATHS = [
 	"/usr/libexec",
 	"/bin",
 	"/sbin",
+	"/Library/Developer/CommandLineTools",
 ] as const;
 const LINUX_SYSTEM_READ_PATHS = [
 	"/usr/bin",

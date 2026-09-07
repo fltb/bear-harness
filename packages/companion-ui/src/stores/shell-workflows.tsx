@@ -236,28 +236,41 @@ export function createShellWorkflowStore(input: {
 		}
 		return groups;
 	});
-	// Recreate only presentation selection when its conversation changes.
-	const artifactSelection = createMemo(() => {
+	// Query refreshes may briefly expose no active detail. Preserve the last
+	// concrete UI scope through that loading gap, but replace it when another
+	// character or conversation is explicitly active.
+	const artifactConversationId = createMemo<string | undefined>((previous) => {
 		const conversationId = store.activeConversationId;
-		const scopeId = characterId();
+		return conversationId ?? previous;
+	});
+	// Recreate only presentation selection when its concrete UI scope changes.
+	const artifactSelection = createMemo(() => {
+		const conversationId = artifactConversationId();
 		const [selected, setSelected] = createSignal<{
 			runId: string;
 			artifactId: string;
 			run?: RunInfo;
 		}>();
-		return { characterId: scopeId, conversationId, selected, setSelected };
+		return { conversationId, selected, setSelected };
 	});
 	const selectedArtifact = createMemo<SelectedArtifact | undefined>(() => {
 		const scope = artifactSelection();
 		const selection = scope.selected();
 		if (!selection) return undefined;
-		const run =
-			(store.runs ?? []).find(
-				(candidate) =>
-					candidate.id === selection.runId && candidate.conversationId === scope.conversationId,
-			) ?? (selection.run?.conversationId === scope.conversationId ? selection.run : undefined);
-		const artifact = run?.artifacts.find((candidate) => candidate.id === selection.artifactId);
-		return run && artifact ? { run, artifact } : undefined;
+		const currentRun = (store.runs ?? []).find(
+			(candidate) =>
+				candidate.id === selection.runId && candidate.conversationId === scope.conversationId,
+		);
+		const currentArtifact = currentRun?.artifacts.find(
+			(candidate) => candidate.id === selection.artifactId,
+		);
+		if (currentRun && currentArtifact) return { run: currentRun, artifact: currentArtifact };
+		const openedRun =
+			selection.run?.conversationId === scope.conversationId ? selection.run : undefined;
+		const openedArtifact = openedRun?.artifacts.find(
+			(candidate) => candidate.id === selection.artifactId,
+		);
+		return openedRun && openedArtifact ? { run: openedRun, artifact: openedArtifact } : undefined;
 	});
 	let artifactNavigation = 0;
 	const selectArtifact = (runId: string, artifactId: string) => {

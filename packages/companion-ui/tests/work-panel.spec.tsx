@@ -115,7 +115,7 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 	const view = render(() => (
 		<QueryClientProvider client={queryClient}>
 			<DesktopProvider store={store}>
-				<ThreadHead sceneLabel="Scene" showExternalRuns />
+				<ThreadHead sceneLabel="Scene" />
 				<WorkTimelineItem messageId="message-1" />
 				<ArtifactPreview />
 				{showPermission ? <PermissionLayer /> : null}

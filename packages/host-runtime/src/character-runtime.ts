@@ -112,7 +112,6 @@ export class CharacterRuntime {
 			models: options.providers,
 			character: () => this.character(),
 			store: this.companionStore,
-			externalRunToolsEnabled: false,
 			delegate: (params) => {
 				this.pi.requireAvailable(params.conversationId);
 				return this.externalAgentRuns.delegate(params);
@@ -273,7 +272,7 @@ export class CharacterRuntime {
 		this.onboarding.initialize(this.companionId);
 		this.canon.syncPackage(this.companionId, character.canon);
 		const trust = options.characterLoader.pluginTrust(options.systemDb, character);
-		this.pi.configure(options.characterLoader.piResources(character, trust.trusted, false));
+		this.pi.configure(options.characterLoader.piResources(character, trust.trusted));
 	}
 
 	get db() {

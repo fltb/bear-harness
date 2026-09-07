@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
@@ -27,6 +27,15 @@ export interface PiRunManifest {
 
 /** Default first-party Pi external-agent profile. */
 export const PI_ACP_PROFILE_ID = "pi-default";
+
+function piWorkerPath(bundledEntries: readonly string[] = []): string | undefined {
+	if (process.platform !== "darwin") {
+		return bundledEntries.length > 0
+			? [...bundledEntries, process.env.PATH].filter(Boolean).join(delimiter)
+			: process.env.PATH;
+	}
+	return [...bundledEntries, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
+}
 
 export function seedPiAcpProfile(db: AppDatabase): void {
 	db.insert(executorProfiles)
@@ -71,6 +80,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 		const runRoot = dirname(resolve(request.task.outputDirectory));
 		const authDir = ensurePrivateDirectory(resolve(this.authDir));
 		const sessionDir = ensurePrivateDirectory(resolve(runRoot, "pi-session"));
+		const executablePath = piWorkerPath(this.bundledGit?.pathEntries);
 		return {
 			command: realpathSync.native(process.execPath),
 			args: [realpathSync.native(this.workerPath)],
@@ -81,6 +91,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 				BEAR_PI_AUTH_DIR: authDir,
 				BEAR_PI_SESSION_DIR: sessionDir,
 				BEAR_OUTPUT_DIR: request.task.outputDirectory,
+				...(executablePath ? { PATH: executablePath } : {}),
 				...(request.task.modelRoute
 					? piModelEnvironment(
 							request.task.modelRoute.providerId,
@@ -91,9 +102,6 @@ export class PiAcpAdapter extends AcpExecutorController {
 				...(this.bundledGit
 					? {
 							BEAR_PI_SHELL_PATH: this.bundledGit.shellPath,
-							PATH: [...this.bundledGit.pathEntries, process.env.PATH]
-								.filter(Boolean)
-								.join(process.platform === "win32" ? ";" : ":"),
 						}
 					: {}),
 			}),

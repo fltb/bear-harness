@@ -409,7 +409,10 @@ describe("Pi native tool rendering", () => {
 		expect(activity).toHaveAttribute("data-activity", "memory_recall");
 		expect(activity).toBeVisible();
 		expect(screen.queryByTestId("streaming-assistant-message")).toBeNull();
-		expect(screen.queryByText(zhCN.threadHead.runningWork, { exact: true })).toBeNull();
+		expect(screen.getByRole("button", { name: `${zhCN.threadHead.runningWork}0` })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
 		pushPiEvent(client, {
 			type: "conversationActivity",
 			conversationId: "conversation-1",

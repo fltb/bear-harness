@@ -189,7 +189,7 @@ describe("external-agent process environments", () => {
 		const piSessionDirectory = realpathSync(join(runRoot, "pi-session"));
 		const piAuthDirectory = realpathSync(join(root, "user-data"));
 		expect(environment).toMatchObject({
-			PATH: "/safe/runtime/bin",
+			PATH: process.platform === "darwin" ? "/usr/bin:/bin:/usr/sbin:/sbin" : "/safe/runtime/bin",
 			LANG: "en_US.UTF-8",
 			HOME: home,
 			USERPROFILE: home,

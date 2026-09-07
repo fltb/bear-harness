@@ -255,20 +255,20 @@ P0、P1、P2-1、P2-3 和 P2-4 已解除，并补齐滚动、Composer、可访�
 - 消息内容、消息版本、会话隔离和工具活动专项单测：64/64 通过。
 - 主对话可用性后台 Chromium E2E：6/6 通过；覆盖分会话草稿、移动端 Composer/滚动/触控、reduced-motion、单次流式入场与 settled 交接、长回复复制/导航以及自动化无障碍检查。
 - 本次新增代码没有正则；此前用来猜测 Markdown/HTML 的正则已移除。Markdown、公式、高亮和净化继续由通用库处理。
-- 本次专项复验不替代仓库完整发布门禁；线上最新版核查中记录的 Artifact/Run E2E、ACP 关闭和真实模型脚本问题仍需分别闭环。
+- 内部 Pi Worker 的 ACP 启动、暂停、恢复、取消、失败清理与 Artifact 结果工作区已重新纳入发布主路径，并由后台浏览器走完整链路闭环。
 
 ## 本轮验证结果
 
 - lint、clean-checkout 自举 typecheck、全仓 build：通过。
-- 全量单测：905 项通过，1 项按平台条件跳过；没有失败。
-- Coverage：Host 78.74%/67.44%/80.34%/81.99%，UI 82.98%/72.84%/82.73%/86.38%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
-- 后台 Web required E2E：43/43 通过，0 跳过；三档结果布局内部专项 3/3 通过。
+- 全量单测：904 项通过，1 项按平台条件跳过；没有失败。已删除一项要求遮罩内部 Run 工具的过时兼容性测试。
+- Coverage：Host 78.72%/67.38%/80.36%/81.98%，UI 82.99%/72.85%/82.73%/86.39%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
+- 后台 Web required E2E：50/50 通过，0 跳过；其中内置 Pi Worker/Run/Artifact 7/7，三档结果布局 3/3。
 - 隐藏 Electron E2E：通过 `CI=1` 保证窗口不显示，3/3 通过。
 - Recovery：Host 49/49、Desktop 23/23 通过。
 - 真实模型 E2E：使用 Pi 配置中的 `deepseek-v4-pro` 与 `deepseek-v4-flash`，同一次整套运行 5/5 通过；覆盖基础往返、角色/显式记忆、双模型会话隔离、编辑/纠正/分支/复制/刷新、自然剧情的 CG/场景/表情/Choices，以及 Markdown/表格/代码/公式自然输出。
 - OpenAI/Codex 配置已按真实 `openai-responses` 协议导入；`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 本轮均被上游 HTTP 502 阻断，不能伪记通过。
 - 安全审计：0 vulnerabilities；998 个 registry signature、313 个 attestation 验证通过。
-- 当前版本在入口处遮罩 External Run/Codex/Host Pi Run tools，保留实现；因此 Run/Artifact 浏览器发布路径不计入通过。
+- 当前版本仅遮罩外部 Codex 设置入口并保留代码/RPC；内置 Pi Worker、Host Run tools、External Run 与 Artifact 结果工作区完整启用。
 
 ## 关键模块规模与所有权
 

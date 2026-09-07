@@ -470,9 +470,7 @@ export class HostRuntime {
 				resource.runtime.companionStore.reconcileSchema(character.id, character.state);
 				resource.runtime.canon.syncPackage(character.id, character.canon);
 				const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
-				resource.runtime.pi.configure(
-					this.characterLoader.piResources(character, trust.trusted, false),
-				);
+				resource.runtime.pi.configure(this.characterLoader.piResources(character, trust.trusted));
 			},
 		);
 		if (this.lifecycle.snapshot().activeRuntimeId === previousRuntimeId) return;

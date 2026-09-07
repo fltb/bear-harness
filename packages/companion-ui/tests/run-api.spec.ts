@@ -74,7 +74,7 @@ function createWorkflow() {
 	return createRoot((dispose) => {
 		disposers.push(dispose);
 		const [character, setCharacter] = createSignal(THEMED_CHARACTER);
-		const [conversationId, setConversationId] = createSignal("conversation-two");
+		const [conversationId, setConversationId] = createSignal<string | null>("conversation-two");
 		const [runs, setRuns] = createSignal<RunInfo[]>([run]);
 		const selectConversation = vi.fn(async (id: string) => {
 			setConversationId(id);
@@ -269,6 +269,14 @@ describe("task workflow scope", () => {
 		resolve();
 		await pending;
 		expect(workflow.selectedArtifact()?.run.id).toBe(run.id);
+		setRuns([{ ...historic, artifacts: [] }]);
+		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
+		setRuns([historic]);
+		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
+		setConversationId(null);
+		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
+		setConversationId(run.conversationId);
+		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
 		setConversationId("another-conversation");
 		expect(workflow.selectedArtifact()).toBeUndefined();
 	});

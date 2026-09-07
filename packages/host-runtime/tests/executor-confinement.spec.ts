@@ -107,6 +107,17 @@ describe("ACP process confinement", () => {
 		expect(executeSection).not.toContain(`(subpath ${JSON.stringify(root)})`);
 	});
 
+	it("allows the installed Apple command-line toolchain without granting user toolchains", () => {
+		const { spec } = fixture();
+		const profile = createMacOSSandboxProfile(spec);
+		if (existsSync("/Library/Developer/CommandLineTools")) {
+			expect(profile).toContain(
+				`(subpath ${JSON.stringify("/Library/Developer/CommandLineTools")})`,
+			);
+		}
+		expect(profile).not.toContain(`(subpath ${JSON.stringify("/opt/homebrew")})`);
+	});
+
 	it("allows the worker to drain only its own native child processes", () => {
 		const { spec } = fixture();
 		const profile = createMacOSSandboxProfile(spec);

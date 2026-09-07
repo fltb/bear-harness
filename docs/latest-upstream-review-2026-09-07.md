@@ -1,6 +1,6 @@
 # 线上最新版回归核查（2026-09-07）
 
-> 后续状态：本文件保留的是合并前的上游缺陷基线。下列问题已在当前工作树完成语义合并与修复；最终执行结果以 `main-conversation-behavior-acceptance-matrix.md` 第 9 节为准。当前主路径门禁通过，但公开发布仍因平台包、签名/notarization、packaged smoke 与外部设备项保持 NO-GO。
+> 后续状态：本文件保留的是合并前的上游缺陷基线。下列问题已在当前工作树完成语义合并与修复；内部 Pi Worker、Host Run tools 与结果工作区保持启用，仅外部 Codex 设置入口被遮罩。最终执行结果以 `main-conversation-behavior-acceptance-matrix.md` 第 9 节为准。当前主路径门禁通过，但公开发布仍因平台包、签名/notarization、packaged smoke 与外部设备项保持 NO-GO。
 
 ## 结论
 

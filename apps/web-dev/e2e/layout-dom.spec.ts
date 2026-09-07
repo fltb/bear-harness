@@ -156,7 +156,36 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	);
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEditable();
 
-	await expect(page.getByText(zhCN.threadHead.runningWork, { exact: true })).toHaveCount(0);
+	const workButton = page.getByRole("button", {
+		name: `${zhCN.threadHead.runningWork} 0`,
+		exact: true,
+	});
+	await workButton.click();
+	const taskWorkspace = page.getByRole("region", { name: zhCN.threadHead.runningWork });
+	await expect(taskWorkspace).toBeVisible();
+	await expect(workButton).toHaveAttribute("aria-expanded", "true");
+	await expect(taskWorkspace).toBeFocused();
+	await assertSurface(page, viewport, taskWorkspace);
+	const historyButton = taskWorkspace.getByRole("button", { name: zhCN.work.task.history });
+	await historyButton.click();
+	await expect(historyButton).toHaveAttribute("aria-expanded", "true");
+	const history = taskWorkspace.getByRole("region", { name: zhCN.work.task.history });
+	await expect(history).toBeVisible();
+	await expect(history).toHaveAttribute("aria-busy", "false");
+	await expect(history.getByRole("alert")).toHaveCount(0);
+	await historyButton.click();
+	await expect(historyButton).toHaveAttribute("aria-expanded", "false");
+	await expect(history).toBeHidden();
+	await taskWorkspace.getByRole("button", { name: zhCN.work.task.close }).click();
+	await expect(taskWorkspace).toBeHidden();
+	await expect(workButton).toHaveAttribute("aria-expanded", "false");
+	await expect(workButton).toBeFocused();
+	await workButton.click();
+	await expect(taskWorkspace).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(taskWorkspace).toBeHidden();
+	await expect(workButton).toHaveAttribute("aria-expanded", "false");
+	await expect(workButton).toBeFocused();
 
 	const navigation = await revealSidebar(page, viewport);
 	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
@@ -334,6 +363,70 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	await mediaPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 	await expect(mediaPreview).toHaveCount(0);
 	await expect(mediaTrigger).toBeFocused();
+
+	await sendMessage(page, "E2E_DELEGATE_ARTIFACT");
+	const artifact = page.getByRole("button", {
+		name: `${zhCN.work.timeline.viewArtifacts}: e2e-report.txt`,
+		exact: true,
+	});
+	await expect(artifact).toBeVisible({ timeout: 30_000 });
+	const artifactPreview = page.getByRole("dialog", { name: "e2e-report.txt" });
+	await expect(artifactPreview).toHaveCount(0);
+	await artifact.click();
+	const safePreview = artifactPreview.getByRole("region", { name: "e2e-report.txt", exact: true });
+	await expect(safePreview).toHaveAttribute("data-preview-state", "ready");
+	await expect(safePreview).toHaveAttribute("aria-busy", "false");
+	await expect(safePreview).toBeVisible();
+	await expect(safePreview.getByRole("alert")).toHaveCount(0);
+	await expect(
+		artifactPreview
+			.getByRole("list", { name: zhCN.work.result.tabsLabel })
+			.getByRole("button")
+			.filter({ hasText: "e2e-report.txt" }),
+	).toHaveAttribute("aria-current", "true");
+	await expect(
+		artifactPreview.getByRole("region", { name: zhCN.work.result.provenance }),
+	).toBeVisible();
+	await expect(artifactPreview.getByRole("button", { name: zhCN.work.download })).toBeEnabled();
+	await assertSurface(page, viewport, artifactPreview);
+	const resultBox = await artifactPreview.boundingBox();
+	const mainBox = await page.getByRole("main").boundingBox();
+	if (!resultBox || !mainBox) throw new Error("Conversation and result require visible geometry");
+	const presence = page.getByRole("img", { name: "极昼值守中", exact: true });
+	if (viewport.mode === "fullscreen") {
+		await expect(presence).toHaveCount(0);
+		expect(resultBox.x).toBeGreaterThanOrEqual(mainBox.x + mainBox.width - 1);
+		expect(Math.abs(resultBox.width - mainBox.width)).toBeLessThanOrEqual(1);
+		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+		await composer.fill("边看结果边继续聊");
+		await expect(artifactPreview).toBeVisible();
+		await mediaTrigger.click();
+		await assertSurface(page, viewport, mediaPreview);
+		await page.keyboard.press("Escape");
+		await expect(mediaPreview).toHaveCount(0);
+		await expect(mediaTrigger).toBeFocused();
+		await expect(artifactPreview).toBeVisible();
+		await expect(safePreview).toHaveAttribute("data-preview-state", "ready");
+		await expect(composer).toHaveValue("边看结果边继续聊");
+		await composer.fill("");
+	} else if (viewport.mode === "window") {
+		expect(resultBox.x).toBeGreaterThan(0);
+		expect(Math.abs(resultBox.x + resultBox.width - viewport.width)).toBeLessThanOrEqual(1);
+		expect(resultBox.x).toBeLessThan(mainBox.x + mainBox.width);
+	} else {
+		await expect(artifactPreview).toHaveJSProperty("clientWidth", viewport.width);
+		await expect(artifactPreview).toHaveJSProperty("clientHeight", viewport.height);
+	}
+	await artifactPreview.getByRole("button", { name: zhCN.work.result.close }).click();
+	await expect(artifactPreview).toHaveCount(0);
+	if (viewport.mode === "fullscreen") await expect(presence).toBeVisible();
+	if (viewport.mode !== "fullscreen") {
+		await mediaTrigger.click();
+		await assertSurface(page, viewport, mediaPreview);
+		await page.keyboard.press("Escape");
+		await expect(mediaPreview).toHaveCount(0);
+		await expect(mediaTrigger).toBeFocused();
+	}
 
 	await assertSurface(
 		page,

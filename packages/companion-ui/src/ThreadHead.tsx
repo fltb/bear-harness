@@ -14,7 +14,7 @@ import { Button } from "./ui/primitives.js";
  * context and top actions.
  */
 
-export function ThreadHead(props: { sceneLabel: string; showExternalRuns?: boolean }) {
+export function ThreadHead(props: { sceneLabel: string }) {
 	const workflow = useShellWorkflowStore();
 	const queueOpen = workflow.queueOpen;
 	const activeRuns = workflow.activeRuns;
@@ -40,13 +40,12 @@ export function ThreadHead(props: { sceneLabel: string; showExternalRuns?: boole
 
 	onMount(() => {
 		const onKey = (event: KeyboardEvent) => {
-			if (!props.showExternalRuns || !queueOpen() || event.key !== "Escape") return;
+			if (!queueOpen() || event.key !== "Escape") return;
 			event.preventDefault();
 			closeQueue();
 		};
 		const onPointerDown = (event: PointerEvent) => {
-			if (!props.showExternalRuns || !queueOpen() || wrapper?.contains(event.target as Node))
-				return;
+			if (!queueOpen() || wrapper?.contains(event.target as Node)) return;
 			workflow.closeQueue();
 		};
 		document.addEventListener("keydown", onKey);
@@ -75,48 +74,46 @@ export function ThreadHead(props: { sceneLabel: string; showExternalRuns?: boole
 					<span>{t("threadHead.conversationState")}</span>
 				</Button>
 			</Show>
-			<Show when={props.showExternalRuns}>
-				<div class="work-pill-wrap" ref={wrapper}>
-					<Button
-						ref={(element) => {
-							queueTrigger = element;
-						}}
-						type="button"
-						class="work-pill"
-						aria-expanded={queueOpen()}
-						aria-controls="current-work-panel"
-						onClick={workflow.toggleQueue}
-					>
-						<Show when={activeRuns().length > 0}>
-							<span class="pulse" aria-hidden="true" />
-						</Show>
-						{t("threadHead.runningWork")}
-						<b>{activeRuns().length}</b>
-					</Button>
-					<Show when={queueOpen()}>
-						<section
-							ref={(element) => {
-								panel = element;
-								onMount(() => {
-									if (!workflow.selectedTaskId() && element.isConnected) element.focus();
-								});
-							}}
-							id="current-work-panel"
-							class="queue-pop task-workspace"
-							tabIndex={-1}
-							aria-label={t("threadHead.runningWork")}
-						>
-							<div class="task-panel-heading">
-								<h2>{t("threadHead.runningWork")}</h2>
-								<Button type="button" onClick={closeQueue}>
-									{t("work.task.close")}
-								</Button>
-							</div>
-							<RunTaskPanel onBack={() => panel?.isConnected && panel.focus()} />
-						</section>
+			<div class="work-pill-wrap" ref={wrapper}>
+				<Button
+					ref={(element) => {
+						queueTrigger = element;
+					}}
+					type="button"
+					class="work-pill"
+					aria-expanded={queueOpen()}
+					aria-controls="current-work-panel"
+					onClick={workflow.toggleQueue}
+				>
+					<Show when={activeRuns().length > 0}>
+						<span class="pulse" aria-hidden="true" />
 					</Show>
-				</div>
-			</Show>
+					{t("threadHead.runningWork")}
+					<b>{activeRuns().length}</b>
+				</Button>
+				<Show when={queueOpen()}>
+					<section
+						ref={(element) => {
+							panel = element;
+							onMount(() => {
+								if (!workflow.selectedTaskId() && element.isConnected) element.focus();
+							});
+						}}
+						id="current-work-panel"
+						class="queue-pop task-workspace"
+						tabIndex={-1}
+						aria-label={t("threadHead.runningWork")}
+					>
+						<div class="task-panel-heading">
+							<h2>{t("threadHead.runningWork")}</h2>
+							<Button type="button" onClick={closeQueue}>
+								{t("work.task.close")}
+							</Button>
+						</div>
+						<RunTaskPanel onBack={() => panel?.isConnected && panel.focus()} />
+					</section>
+				</Show>
+			</div>
 			<ConversationStatePanel open={stateOpen()} onOpenChange={setConversationStateOpen} />
 		</header>
 	);
