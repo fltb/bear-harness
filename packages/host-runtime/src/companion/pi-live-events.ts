@@ -11,6 +11,7 @@ import type { PiSnapshot } from "./pi-runtime.js";
 
 type Session = NonNullable<PiSnapshot>;
 const DEFAULT_PAGE_SIZE = 50;
+const MAX_PROJECTED_VERSION_LEAVES = 100;
 const versions = new WeakMap<Session, PiProjectionVersion>();
 
 /** Transport metadata belongs to the actual open Pi resource, never its durable session id. */
@@ -38,26 +39,44 @@ export function projectPiTransientEvent(
 }
 
 function findTreeNode(nodes: SessionTreeNode[], entryId: string): SessionTreeNode | undefined {
-	for (const node of nodes) {
-		if (node.entry.id === entryId) {
-			return node;
-		}
-		const match = findTreeNode(node.children, entryId);
-		if (match) {
-			return match;
+	const pending = [...nodes].reverse();
+	while (pending.length > 0) {
+		const node = pending.pop();
+		if (!node) continue;
+		if (node.entry.id === entryId) return node;
+		for (let index = node.children.length - 1; index >= 0; index -= 1) {
+			const child = node.children[index];
+			if (child) pending.push(child);
 		}
 	}
 	return undefined;
 }
 
 function collectTerminalLeafIds(node: SessionTreeNode, leafIds: string[]): void {
-	if (node.children.length === 0) {
-		leafIds.push(node.entry.id);
-		return;
+	const pending = [node];
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current) continue;
+		if (current.children.length === 0) {
+			leafIds.push(current.entry.id);
+			continue;
+		}
+		for (let index = current.children.length - 1; index >= 0; index -= 1) {
+			const child = current.children[index];
+			if (child) pending.push(child);
+		}
 	}
-	for (const child of node.children) {
-		collectTerminalLeafIds(child, leafIds);
+}
+
+function boundLatestLeafIds(leafIds: string[], activeLeafId: string | null): string[] {
+	if (leafIds.length <= MAX_PROJECTED_VERSION_LEAVES) return leafIds;
+	const retained = new Set(leafIds.slice(-MAX_PROJECTED_VERSION_LEAVES));
+	if (activeLeafId && !retained.has(activeLeafId)) {
+		const replaceable = leafIds.find((leafId) => retained.has(leafId));
+		if (replaceable) retained.delete(replaceable);
+		retained.add(activeLeafId);
 	}
+	return leafIds.filter((leafId) => retained.has(leafId));
 }
 
 function projectLatestLeafIds(session: Session): ConversationDetail["branch"]["latestLeafIds"] {
@@ -90,7 +109,7 @@ function projectLatestLeafIds(session: Session): ConversationDetail["branch"]["l
 	for (const root of userTurnRoots && userTurnRoots.length > 1 ? userTurnRoots : [bottomTurn]) {
 		collectTerminalLeafIds(root, leafIds);
 	}
-	return leafIds;
+	return boundLatestLeafIds(leafIds, session.sessionManager.getLeafId());
 }
 
 /** A bounded initial/reconnect view over Pi-owned session state. */

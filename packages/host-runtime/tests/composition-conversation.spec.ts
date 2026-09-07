@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { RPC } from "@bear-harness/protocol/schema";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
 import { Dispatcher, type RpcHandler } from "../src/dispatcher.js";
@@ -202,6 +203,29 @@ describe("Host conversation projection and routing", () => {
 		expect(branch).toMatchObject({ conversationId: "beta", name: "Beta" });
 		expect(fixture.sessions.fork).toHaveBeenCalledWith("bear", "alpha", "alpha-user");
 		expect(fixture.pi.close).not.toHaveBeenCalled();
+	});
+
+	it("dispatches a protocol-valid open response for a ten-thousand-entry Pi session", async () => {
+		const manager = SessionManager.inMemory();
+		for (let index = 0; index < 10_000; index += 1) {
+			manager.appendMessage({
+				role: "user",
+				content: `message ${index}`,
+				timestamp: index,
+			});
+		}
+		fixture.snapshots.alpha.sessionManager = manager;
+
+		const opened = await dispatcher.dispatch(RPC.conversation.open.channel, {
+			conversationId: "alpha",
+		});
+		expect(opened.ok).toBe(true);
+		if (!opened.ok) return;
+		expect(opened.data).toMatchObject({
+			conversationId: "alpha",
+			branch: { entries: expect.any(Array), hasMoreBefore: true },
+		});
+		expect((opened.data as { branch: { entries: unknown[] } }).branch.entries).toHaveLength(50);
 	});
 
 	it("reveals only the Host-resolved package location for a validated character id", async () => {

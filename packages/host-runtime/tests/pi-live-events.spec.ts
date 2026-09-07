@@ -60,6 +60,77 @@ describe("native Pi conversation projection", () => {
 		});
 	});
 
+	it("projects a ten-thousand-entry linear Pi branch without exhausting the call stack", () => {
+		const current = session();
+		for (let index = 60; index < 10_000; index += 1) {
+			current.sessionManager.appendMessage({
+				role: "user",
+				content: `message ${index}`,
+				timestamp: index,
+			});
+		}
+
+		const entries = current.sessionManager.getBranch();
+		const detail = projectPiConversationDetail(current);
+		expect(detail.branch.entries).toHaveLength(50);
+		expect(detail.branch.entries[0]).toBe(entries[9_950]);
+		expect(detail.branch.entries[49]).toBe(entries[9_999]);
+		expect(detail.branch.latestLeafIds).toEqual([entries[9_999]?.id]);
+		expect(detail.branch.hasMoreBefore).toBe(true);
+	});
+
+	it("collects version leaves below a deeply nested sibling branch without recursion", () => {
+		const current = session();
+		const parentId = current.sessionManager.getLeafId();
+		expect(parentId).toBeTruthy();
+		const olderRootId = current.sessionManager.appendMessage({
+			role: "user",
+			content: "older version",
+			timestamp: 60,
+		});
+		let olderLeafId = olderRootId;
+		for (let index = 61; index < 10_000; index += 1) {
+			olderLeafId = current.sessionManager.appendMessage({
+				role: "user",
+				content: `older branch ${index}`,
+				timestamp: index,
+			});
+		}
+		current.sessionManager.branch(parentId!);
+		const activeLeafId = current.sessionManager.appendMessage({
+			role: "user",
+			content: "active version",
+			timestamp: 10_000,
+		});
+
+		const detail = projectPiConversationDetail(current);
+		expect(detail.branch.activeLeafId).toBe(activeLeafId);
+		expect(detail.branch.latestLeafIds).toEqual([olderLeafId, activeLeafId]);
+	});
+
+	it("bounds projected version leaves while retaining the active Pi leaf", () => {
+		const current = session();
+		const parentId = current.sessionManager.getLeafId();
+		expect(parentId).toBeTruthy();
+		const versionLeaves: string[] = [];
+		for (let index = 0; index < 120; index += 1) {
+			current.sessionManager.branch(parentId!);
+			versionLeaves.push(
+				current.sessionManager.appendMessage({
+					role: "user",
+					content: `version ${index}`,
+					timestamp: 100 + index,
+				}),
+			);
+		}
+		current.sessionManager.branch(versionLeaves[0]!);
+
+		const detail = projectPiConversationDetail(current);
+		expect(detail.branch.latestLeafIds).toHaveLength(100);
+		expect(detail.branch.latestLeafIds).toContain(versionLeaves[0]);
+		expect(detail.branch.latestLeafIds).toContain(versionLeaves[119]);
+	});
+
 	it("pages earlier native entries by Pi entry id", () => {
 		const current = session();
 		const entries = current.sessionManager.getBranch();
