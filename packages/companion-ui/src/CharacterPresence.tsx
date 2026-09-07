@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { CharacterDisplay } from "./stores/companion.js";
 
 export type CharacterPresenceLayoutMode = "resting" | "expanded" | "compact";
@@ -11,12 +11,22 @@ export type CharacterPresenceLayoutMode = "resting" | "expanded" | "compact";
 export function CharacterPresence(props: {
 	character: CharacterDisplay | undefined;
 	visualState?: string;
+	activityState?: string;
 	layout?: CharacterPresenceLayoutMode;
 }) {
 	const layout = () => props.layout ?? "resting";
 	const [loadedAspectRatio, setLoadedAspectRatio] = createSignal<
 		{ source: string; ratio: number } | undefined
 	>();
+	const [documentVisible, setDocumentVisible] = createSignal(
+		typeof document === "undefined" || document.visibilityState !== "hidden",
+	);
+	onMount(() => {
+		const updateDocumentVisibility = () =>
+			setDocumentVisible(document.visibilityState !== "hidden");
+		document.addEventListener("visibilitychange", updateDocumentVisibility);
+		onCleanup(() => document.removeEventListener("visibilitychange", updateDocumentVisibility));
+	});
 	const presenceStyle = (asset: string): string | undefined => {
 		const loaded = loadedAspectRatio();
 		if (!loaded || loaded.source !== asset) return undefined;
@@ -59,7 +69,10 @@ export function CharacterPresence(props: {
 			{(asset) => (
 				<div
 					class="presence-stage"
+					data-testid="presence-stage"
 					data-state={visualState()}
+					data-activity-state={props.activityState}
+					data-document-visible={documentVisible()}
 					data-layout-mode={layout()}
 					role="img"
 					aria-label={label()}

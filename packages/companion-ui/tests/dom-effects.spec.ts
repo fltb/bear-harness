@@ -35,7 +35,7 @@ describe("presentation-only DOM effects", () => {
 		expect(textarea.style.overflowY).toBe("hidden");
 	});
 
-	it("protects detached document reading and restores a position per conversation", async () => {
+	it("restores a position per conversation while virtual item anchoring stays isolated", async () => {
 		const thread = document.createElement("section");
 		const scrollingElement = document.documentElement;
 		const jumpButton = document.createElement("button");
@@ -81,7 +81,7 @@ describe("presentation-only DOM effects", () => {
 			scrollingElement.scrollTop = 425;
 			thread.append(document.createTextNode("stream settled"));
 			await flushEffects();
-			expect(scrollingElement.scrollTop).toBe(240);
+			expect(scrollingElement.scrollTop).toBe(425);
 
 			notifyTimelineUserSent("a");
 			await flushEffects();

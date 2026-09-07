@@ -243,6 +243,7 @@ function DesktopFrame() {
 						<CharacterPresence
 							character={workflow.character()}
 							visualState={workflow.visualState() ?? activityVisualState()}
+							activityState={activityVisualState()}
 							layout={presenceLayout()}
 						/>
 					</Show>

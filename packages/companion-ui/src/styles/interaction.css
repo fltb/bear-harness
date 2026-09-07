@@ -755,24 +755,29 @@
 
 /* --- generic presence states -------------------------------------- */
 
-.presence-stage[data-state="thinking"] {
-	animation: presence-pace 3.4s ease-in-out infinite;
+.presence-stage[data-activity-state="thinking"] {
+	animation: presence-pace 7s ease-in-out infinite;
 }
 
-.presence-stage[data-state="listening"] {
-	animation: presence-listen 2.6s ease-in-out infinite;
+.presence-stage[data-activity-state="listening"] {
+	animation: presence-listen 8s ease-in-out infinite;
 }
 
-.presence-stage[data-state="result_ready"] {
+.presence-stage[data-activity-state="result_ready"] {
 	animation: presence-result 1.6s ease-in-out;
 }
 
-.presence-stage[data-state="needs_user"] img {
+.presence-stage[data-activity-state="needs_user"] img {
 	animation: presence-amber-pulse 1.8s ease-in-out infinite;
 }
 
-.presence-stage[data-state="problem"] {
+.presence-stage[data-activity-state="problem"] {
 	@apply saturate-50 sepia;
+}
+
+.presence-stage[data-document-visible="false"],
+.presence-stage[data-document-visible="false"] img {
+	animation-play-state: paused;
 }
 
 @keyframes presence-pace {
@@ -781,7 +786,7 @@
 		transform: translateY(0);
 	}
 	50% {
-		transform: translateY(-7px);
+		transform: translateY(-1.5%);
 	}
 }
 
@@ -791,7 +796,7 @@
 		transform: rotate(0deg);
 	}
 	50% {
-		transform: rotate(-1.6deg);
+		transform: rotate(-0.8deg);
 	}
 }
 

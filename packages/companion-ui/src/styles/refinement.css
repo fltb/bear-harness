@@ -643,6 +643,16 @@ button[data-variant="primary"]:hover:not(:disabled),
 	@apply flex w-full items-start gap-3;
 }
 
+.virtual-timeline {
+	@apply relative m-0 min-w-0 w-full list-none p-0;
+	overflow-anchor: none;
+}
+
+.virtual-timeline-item {
+	@apply absolute left-0 top-0 flex min-w-0 w-full flex-col gap-4;
+	contain: layout style;
+}
+
 .timeline-entry-enter {
 	animation: timeline-entry-in var(--motion-fast) cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }

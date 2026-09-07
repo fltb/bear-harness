@@ -223,8 +223,11 @@ describe("shell visual and thread head contracts", () => {
 		expect(screen.getByRole("img", { name: "Reading room" })).toBeVisible();
 		expect(screen.getByRole("img", { name: "Thinking" })).toBeVisible();
 
-		render(() => <CharacterPresence character={character} visualState="custom" />);
+		const custom = render(() => (
+			<CharacterPresence character={character} visualState="custom" activityState="thinking" />
+		));
 		expect(screen.getByRole("img", { name: "Custom expression" })).toBeVisible();
+		expect(custom.getByTestId("presence-stage")).toHaveAttribute("data-activity-state", "thinking");
 	});
 
 	it("keeps unlabeled scenes decorative and renders layered icon definitions", () => {

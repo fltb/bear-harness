@@ -15,6 +15,8 @@ export interface MessageContentProps {
 	onCopyCode?(code: string, index: number): void;
 }
 
+const LARGE_STREAM_PLAIN_TEXT_THRESHOLD = 16_384;
+
 const markdown = new Marked(
 	{
 		gfm: true,
@@ -99,17 +101,22 @@ export function MessageContent(props: MessageContentProps) {
 	// Preserve the upstream string identity across equivalent snapshot objects.
 	// This is a derived reference, not a second message or mutable component state.
 	const text = createMemo(() => props.text);
+	const renderLargeStreamAsPlainText = createMemo(
+		() => props.streaming === true && text().length > LARGE_STREAM_PLAIN_TEXT_THRESHOLD,
+	);
 	const rendered = createMemo(() =>
-		renderMarkdown(
-			text(),
-			props.onCopyCode && props.codeCopyLabel && props.codeCopiedLabel
-				? {
-						copyLabel: props.codeCopyLabel,
-						copiedLabel: props.codeCopiedLabel,
-						copiedIndex: () => props.copiedCodeIndex,
-					}
-				: undefined,
-		),
+		renderLargeStreamAsPlainText()
+			? ""
+			: renderMarkdown(
+					text(),
+					props.onCopyCode && props.codeCopyLabel && props.codeCopiedLabel
+						? {
+								copyLabel: props.codeCopyLabel,
+								copiedLabel: props.codeCopiedLabel,
+								copiedIndex: () => props.copiedCodeIndex,
+							}
+						: undefined,
+				),
 	);
 	const copyCode = (event: Event) => {
 		if (!props.onCopyCode || !contentRef || !(event.target instanceof Element)) return;
@@ -129,12 +136,21 @@ export function MessageContent(props: MessageContentProps) {
 			aria-busy={props.streaming === true ? "true" : undefined}
 		>
 			<Show when={props.format === "markdown"} fallback={<p>{text()}</p>}>
-				<div
-					ref={contentRef}
-					class="message-markdown"
-					data-testid="message-markdown"
-					innerHTML={rendered()}
-				/>
+				<Show
+					when={!renderLargeStreamAsPlainText()}
+					fallback={
+						<p class="message-streaming-plain" data-testid="message-streaming-plain">
+							{text()}
+						</p>
+					}
+				>
+					<div
+						ref={contentRef}
+						class="message-markdown"
+						data-testid="message-markdown"
+						innerHTML={rendered()}
+					/>
+				</Show>
 			</Show>
 		</div>
 	);

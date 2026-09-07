@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { projectPiEntries } from "./helpers";
+import { activeConversationId, projectPiEntries } from "./helpers";
 
 const enabled = process.env.BEAR_E2E_LIVE_MODEL === "1";
 const providerId = process.env.BEAR_E2E_PROVIDER_ID ?? "";
@@ -162,6 +162,131 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 			{ timeout: 60_000 },
 		)
 		.toContain("E2E_OK");
+});
+
+test("configured live model preserves authority through switch, refresh, and Stop", async ({
+	page,
+}) => {
+	test.skip(
+		!enabled || !providerId || !modelId || !credentialsAvailable,
+		"Set the live-model variables for the Stop journey",
+	);
+	test.setTimeout(600_000);
+	const pageErrors: Error[] = [];
+	page.on("pageerror", (error) => pageErrors.push(error));
+	await page.goto("/");
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
+		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
+			headers,
+			data,
+		});
+		const envelope = await response.json();
+		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
+		return envelope.data as T;
+	};
+	let selectedApiKey = apiKey;
+	if (usePiConfig) {
+		const selected = selectedPiProviderConfig();
+		selectedApiKey = selected.apiKey;
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
+	} else if (customBaseUrl) {
+		await rpc("provider.customUpsert", {
+			providerId: configuredProviderId,
+			name: "E2E live custom provider",
+			baseUrl: customBaseUrl,
+			models: [{ id: modelId }],
+		});
+	}
+	await rpc("provider.setApiKey", {
+		providerId: configuredProviderId,
+		apiKey: selectedApiKey,
+		sessionOnly: true,
+	});
+	await rpc("model.enable", {
+		providerId: configuredProviderId,
+		modelId,
+		label: `E2E live ${modelId}`,
+	});
+	await rpc("model.defaults.setReply", {
+		reply: { providerId: configuredProviderId, modelId },
+	});
+	await completeLiveOnboarding(rpc, "stop-journey");
+	const source = await rpc<{ conversationId: string }>("conversation.create", {
+		title: "真实模型停止验收",
+	});
+	const parallel = await rpc<{ conversationId: string }>("conversation.create", {
+		title: "真实模型后台会话",
+	});
+	for (const conversationId of [source.conversationId, parallel.conversationId]) {
+		await rpc("model.route.set", {
+			conversationId,
+			selected: { providerId: configuredProviderId, modelId },
+		});
+	}
+	await page.reload();
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const sourceButton = sidebar.locator(`[data-conversation-id="${source.conversationId}"]`);
+	const parallelButton = sidebar.locator(`[data-conversation-id="${parallel.conversationId}"]`);
+	await sourceButton.click();
+	await activeConversationId(page, source.conversationId);
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await composer.fill(
+		"极昼，今晚值守太安静了。请给我讲一个足够长、至少一万字的雪原旅店故事，从第一场风雪一直讲到第二天清晨，人物对话和环境细节都慢慢展开。",
+	);
+	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
+	const streaming = page.getByTestId("streaming-assistant-message");
+	await expect(streaming).not.toHaveText("", { timeout: liveReplyTimeout });
+	const partialBeforeSwitch = (await streaming.textContent()) ?? "";
+	expect(partialBeforeSwitch.length).toBeGreaterThan(0);
+	await parallelButton.click();
+	await activeConversationId(page, parallel.conversationId);
+	await expect(page.getByTestId("conversation-activity")).toBeHidden();
+	await sourceButton.click();
+	await activeConversationId(page, source.conversationId);
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeVisible();
+	await page.reload();
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeVisible({
+		timeout: liveReplyTimeout,
+	});
+	const stopStarted = Date.now();
+	await page.getByRole("button", { name: zhCN.composer.stopLabel }).click();
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden({
+		timeout: 1_000,
+	});
+	expect(Date.now() - stopStarted).toBeLessThanOrEqual(1_000);
+	await expect
+		.poll(
+			async () =>
+				(
+					await rpc<{ live: { isStreaming: boolean } }>("conversation.open", {
+						conversationId: source.conversationId,
+					})
+				).live.isStreaming,
+			{ timeout: 3_000 },
+		)
+		.toBe(false);
+	const opened = await rpc<{ branch: { entries: unknown[] } }>("conversation.open", {
+		conversationId: source.conversationId,
+	});
+	const serialized = JSON.stringify(opened.branch.entries);
+	expect(serialized).toContain('"stopReason":"aborted"');
+	const aborted = opened.branch.entries.findLast(
+		(entry) =>
+			entry !== null &&
+			typeof entry === "object" &&
+			"message" in entry &&
+			entry.message !== null &&
+			typeof entry.message === "object" &&
+			"stopReason" in entry.message &&
+			entry.message.stopReason === "aborted",
+	) as { message?: { content?: unknown[] } } | undefined;
+	expect(aborted?.message?.content?.length).toBeGreaterThan(0);
+	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
+	await page.reload();
+	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
+	expect(pageErrors).toEqual([]);
 });
 
 test("configured live model answers in character and obeys the explicit-memory boundary", async ({
@@ -799,4 +924,121 @@ test("configured live model answers naturally with rendered structured content",
 	).toBeVisible();
 	await expect.poll(() => reloadedResponse.getByRole("code").count()).toBeGreaterThan(0);
 	await expect.poll(() => thread.getByRole("math").count()).toBeGreaterThan(0);
+});
+
+test("both configured release models survive ten natural mixed-content turns", async ({ page }) => {
+	test.skip(
+		!enabled || !providerId || !modelId || !secondaryModelId || !credentialsAvailable,
+		"Set both release models for the natural mixed-content corpus",
+	);
+	test.setTimeout(1_800_000);
+	const pageErrors: Error[] = [];
+	page.on("pageerror", (error) => pageErrors.push(error));
+	await page.goto("/");
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
+		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
+			headers,
+			data,
+		});
+		const envelope = await response.json();
+		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
+		return envelope.data as T;
+	};
+	let selectedApiKey = apiKey;
+	if (usePiConfig) {
+		const selected = selectedPiProviderConfig([modelId, secondaryModelId]);
+		selectedApiKey = selected.apiKey;
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
+	} else {
+		test.skip(!customBaseUrl, "The two-model corpus needs a custom provider base URL");
+		await rpc("provider.customUpsert", {
+			providerId: configuredProviderId,
+			name: "E2E live custom provider",
+			baseUrl: customBaseUrl,
+			models: [{ id: modelId }, { id: secondaryModelId }],
+		});
+	}
+	await rpc("provider.setApiKey", {
+		providerId: configuredProviderId,
+		apiKey: selectedApiKey,
+		sessionOnly: true,
+	});
+	for (const currentModelId of [modelId, secondaryModelId]) {
+		await rpc("model.enable", {
+			providerId: configuredProviderId,
+			modelId: currentModelId,
+			label: `E2E live ${currentModelId}`,
+		});
+	}
+	await rpc("model.defaults.setReply", {
+		reply: { providerId: configuredProviderId, modelId },
+	});
+	await completeLiveOnboarding(rpc, "mixed-content-corpus");
+	const prompts = [
+		"今晚三间客房的壁炉分别烧了 4、6、5 捆木柴。帮我整理成一眼能比较的记录，再算出合计。",
+		"一壶水从 18 摄氏度加热到 92 摄氏度，用日常语言说明温差怎么算，也把式子排清楚。",
+		"我明早要去雪原巡路，帮我列一份简短行装清单，分成必带和可选。",
+		"写一个很小的 TypeScript 函数，输入住店晚数和每晚价格，返回总价，并解释一个例子。",
+		"把客栈今日交接分成已完成、待确认、风险三部分，每部分给两条简短记录。",
+		"比较油灯和电灯：油灯每晚 3.2 元，电灯每晚 1.8 元，连续七晚各花多少，差多少？",
+		"我总弄混摄氏和华氏。用一个例子讲清换算关系，再给我一段可以复用的小公式。",
+		"给新来的夜班同伴写一份三步交接办法，顺便给出一个容易漏掉的反例。",
+		"把一周七晚的入住数 4、6、5、7、8、6、3 整理清楚，指出最高和最低的那天。",
+		"总结我们刚才这些计算和清单里最值得保留的三条做法，最后留一句自然的晚安。",
+	];
+	type Opened = { branch: { entries: unknown[] }; live: { isStreaming: boolean } };
+	for (const currentModelId of [modelId, secondaryModelId]) {
+		const conversation = await rpc<{ conversationId: string }>("conversation.create", {
+			title: `自然富内容十轮 ${currentModelId}`,
+		});
+		await rpc("model.route.set", {
+			conversationId: conversation.conversationId,
+			selected: { providerId: configuredProviderId, modelId: currentModelId },
+		});
+		await page.reload();
+		await page
+			.getByRole("navigation", { name: zhCN.sidebar.conversations })
+			.locator(`[data-conversation-id="${conversation.conversationId}"]`)
+			.click();
+		await activeConversationId(page, conversation.conversationId);
+		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+		for (const prompt of prompts) {
+			const before = projectPiEntries(
+				(await rpc<Opened>("conversation.open", { conversationId: conversation.conversationId }))
+					.branch.entries,
+			).filter((entry) => entry.type === "message" && entry.role === "assistant").length;
+			await composer.fill(prompt);
+			await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
+			await expect
+				.poll(
+					async () => {
+						const opened = await rpc<Opened>("conversation.open", {
+							conversationId: conversation.conversationId,
+						});
+						if (opened.live.isStreaming) return before;
+						return projectPiEntries(opened.branch.entries).filter(
+							(entry) => entry.type === "message" && entry.role === "assistant",
+						).length;
+					},
+					{ timeout: liveReplyTimeout },
+				)
+				.toBeGreaterThan(before);
+			expect(pageErrors).toEqual([]);
+			const settled = await rpc<Opened>("conversation.open", {
+				conversationId: conversation.conversationId,
+			});
+			const latestAssistant = projectPiEntries(settled.branch.entries).findLast(
+				(entry) => entry.type === "message" && entry.role === "assistant",
+			);
+			if (!latestAssistant) throw new Error("The live model turn has no authoritative reply");
+			await expect(
+				page
+					.getByRole("region", { name: zhCN.messages.conversation })
+					.locator(`[data-pi-entry-id="${latestAssistant.id}"]`),
+			).toBeVisible();
+		}
+	}
+	expect(pageErrors).toEqual([]);
 });

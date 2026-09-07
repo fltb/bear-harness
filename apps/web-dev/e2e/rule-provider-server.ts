@@ -42,6 +42,7 @@ const port = Number(process.env.BEAR_E2E_PROVIDER_PORT ?? "3211");
 // The Web E2E harness configures this test provider with the canonical model ID "rule-model".
 // Keep the deterministic response script model-agnostic; model selection belongs to the tests.
 let toolSequence = 0;
+let completionSequence = 0;
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
 const prompts: string[] = [];
 const retriedRequests = new Set<string>();
@@ -469,15 +470,17 @@ $$
 									: current.includes("规则：回复 EDITED_OK") ||
 											prompt.includes("规则：回复 EDITED_OK")
 										? "EDITED_OK\n"
-										: prompt.includes("STREAM_HOLD_A")
-											? "HOLD_ONE HOLD_TWO\n"
-											: prompt.includes("STREAM_CHECK")
-												? "STREAM_ONE STREAM_TWO\n"
-												: prompt.includes("你是谁")
-													? "我是 E2E Rule Provider。\n"
-													: prompt.includes("E2E_OK")
-														? "E2E_OK\n"
-														: "RULE_OK\n";
+										: prompt.includes("STREAM_FOCUS_HOLD")
+											? "FOCUS_ONE FOCUS_TWO\n"
+											: prompt.includes("STREAM_HOLD_A")
+												? "HOLD_ONE HOLD_TWO\n"
+												: prompt.includes("STREAM_CHECK")
+													? "STREAM_ONE STREAM_TWO\n"
+													: prompt.includes("你是谁")
+														? "我是 E2E Rule Provider。\n"
+														: prompt.includes("E2E_OK")
+															? "E2E_OK\n"
+															: "RULE_OK\n";
 	return { content };
 }
 
@@ -578,7 +581,7 @@ createServer(async (request, response) => {
 		await waitForHold(result.holdId);
 		if (response.destroyed) return;
 	}
-	const id = "chatcmpl-e2e";
+	const id = `chatcmpl-e2e-${++completionSequence}`;
 	if ("tool" in result) {
 		const toolCall = {
 			id: `call_${++toolSequence}`,
@@ -659,6 +662,20 @@ createServer(async (request, response) => {
 			await new Promise((resolve) => setTimeout(resolve, 4_000));
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "HOLD_TWO\n" }, finish_reason: null }] })}\n\n`,
+			);
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+			);
+			response.end("data: [DONE]\n\n");
+			return;
+		}
+		if (result.content === "FOCUS_ONE FOCUS_TWO\n") {
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "FOCUS_ONE " }, finish_reason: null }] })}\n\n`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 8_000));
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "FOCUS_TWO\n" }, finish_reason: null }] })}\n\n`,
 			);
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,

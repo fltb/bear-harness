@@ -12,10 +12,17 @@ import {
 	faPen,
 	faPlay,
 } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import {
+	createWindowVirtualizer,
+	defaultRangeExtractor,
+	type Range,
+} from "@tanstack/solid-virtual";
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
 import {
 	installTimelineScrollProtection,
+	installVirtualTimelineFollow,
+	notifyTimelineUserSent,
 	type TimelineScrollController,
 } from "./lib/timeline-scroll.js";
 import { MessageContent } from "./MessageContent.js";
@@ -32,6 +39,7 @@ import { Button, Dialog, TextField } from "./ui/primitives.js";
 import { DelegatedRunCard, WorkTimelineItem } from "./WorkPanel.js";
 
 type PiSessionEntryId = PiSessionEntry["id"];
+const MAX_REMEMBERED_TOOL_DISCLOSURES = 32;
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
@@ -161,12 +169,10 @@ function PiTimelineEntryView(props: {
 		return "content" in current ? current.content : undefined;
 	};
 	const errorText = () =>
-		assistant()?.errorMessage ||
-		(assistant()?.stopReason === "aborted"
+		assistant()?.stopReason === "aborted"
 			? t("messages.responseStopped")
-			: assistant()?.stopReason === "error"
-				? t("messages.responseFailedSaved")
-				: undefined);
+			: assistant()?.errorMessage ||
+				(assistant()?.stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const longResponse = () => !isUser && messageContentIsLong(content());
 	if (
 		!isUser &&
@@ -632,6 +638,8 @@ function NativeToolView(props: {
 	args?: unknown;
 	result?: unknown;
 	entryId?: string;
+	expanded: boolean;
+	onExpandedChange(expanded: boolean): void;
 	onPreviewMedia(media: CharacterMedia): void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -680,7 +688,11 @@ function NativeToolView(props: {
 			data-tool-call-id={props.toolCallId}
 			data-pi-entry-id={props.entryId}
 		>
-			<details class="native-tool-disclosure">
+			<details
+				class="native-tool-disclosure"
+				open={props.expanded}
+				onToggle={(event) => props.onExpandedChange(event.currentTarget.open)}
+			>
 				<summary>
 					<strong>{props.toolName}</strong> <span>{summary()}</span>{" "}
 					<span class="pi-tool-status">{status()}</span>
@@ -728,7 +740,11 @@ function NativeToolView(props: {
 											store.activeSubmission?.state === "submitting" ||
 											store.conversationMutationBusy
 										}
-										onClick={() => void store.sendMessage(choice.message)}
+										onClick={() => {
+											if (store.activeConversationId)
+												notifyTimelineUserSent(store.activeConversationId);
+											void store.sendMessage(choice.message);
+										}}
 									>
 										{choice.label}
 									</Button>
@@ -849,12 +865,10 @@ function StreamingAssistantProjection(props: {
 		message().stopReason === "aborted" ||
 		!!message().errorMessage;
 	const errorText = () =>
-		message().errorMessage ||
-		(message().stopReason === "aborted"
+		message().stopReason === "aborted"
 			? t("messages.responseStopped")
-			: message().stopReason === "error"
-				? t("messages.responseFailedSaved")
-				: undefined);
+			: message().errorMessage ||
+				(message().stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const characterName = () => store.character?.name ?? "";
 	return (
 		<div class="timeline-entry-row timeline-entry-enter" data-testid="streaming-assistant-message">
@@ -894,13 +908,36 @@ function StreamingAssistantProjection(props: {
 	);
 }
 
+type VirtualTimelineItem =
+	| TimelineProjectionItem
+	| { kind: "history-control"; id: "history-control" };
+
 function PiTimelineRenderer(props: {
 	items: readonly TimelineProjectionItem[];
+	following: boolean;
+	hasMoreBefore: boolean;
+	historyLoading: boolean;
+	onLoadOlder(): Promise<void>;
 	onPreviewMedia(media: CharacterMedia): void;
 	activeLeafId?: PiSessionEntryId;
 	latestLeafIds: readonly PiSessionEntryId[];
 }) {
 	const store = useCompanionStore();
+	const items = createMemo<readonly VirtualTimelineItem[]>(() =>
+		props.hasMoreBefore
+			? [{ kind: "history-control", id: "history-control" }, ...props.items]
+			: props.items,
+	);
+	const [scrollMargin, setScrollMargin] = createSignal(0);
+	const [focusedItemId, setFocusedItemId] = createSignal<string>();
+	const [expandedToolIds, setExpandedToolIds] = createSignal<ReadonlySet<string>>(new Set());
+	let anchorFrame: number | undefined;
+	let timelineRef: HTMLUListElement | undefined;
+	const cancelAnchorRestoration = () => {
+		if (anchorFrame === undefined) return;
+		cancelAnimationFrame(anchorFrame);
+		anchorFrame = undefined;
+	};
 	const turnActive = () =>
 		store.activePiLiveState?.isStreaming === true ||
 		store.activePiLiveState?.isCompacting === true ||
@@ -909,7 +946,7 @@ function PiTimelineRenderer(props: {
 		(store.activeActivity !== undefined && store.activeActivity.errorMessage === undefined);
 	const latestAssistantId = createMemo(
 		() =>
-			[...props.items]
+			[...items()]
 				.reverse()
 				.find(
 					(item) =>
@@ -918,10 +955,135 @@ function PiTimelineRenderer(props: {
 						item.entry.message.role === "assistant",
 				)?.id,
 	);
-	const itemIds = createMemo(() => props.items.map((item) => item.id));
+	const itemIndexes = createMemo(
+		() => new Map(items().map((item, index) => [item.id, index] as const)),
+	);
+	const itemsById = createMemo(() => new Map(items().map((item) => [item.id, item] as const)));
+	const streamingItemId = createMemo(() => {
+		for (let index = items().length - 1; index >= 0; index -= 1) {
+			const item = items()[index];
+			if (item?.kind === "streaming-assistant") return item.id;
+		}
+		return undefined;
+	});
+	const rangeExtractor = createMemo(() => {
+		const pinnedIndexes = [focusedItemId(), streamingItemId()].flatMap((id) => {
+			if (!id) return [];
+			const index = itemIndexes().get(id);
+			return index === undefined ? [] : [index];
+		});
+		return (range: Range) => {
+			const indexes = new Set(defaultRangeExtractor(range));
+			const scroller = document.scrollingElement ?? document.documentElement;
+			if (scroller.scrollTop <= 72 && items().length > 0) indexes.add(0);
+			if (
+				scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 72 &&
+				items().length > 0
+			)
+				indexes.add(items().length - 1);
+			for (const index of pinnedIndexes) indexes.add(index);
+			return [...indexes].sort((left, right) => left - right);
+		};
+	});
+	const setToolExpanded = (id: string, expanded: boolean) =>
+		setExpandedToolIds((current) => {
+			if (current.has(id) === expanded) return current;
+			const next = new Set(current);
+			if (expanded) {
+				next.delete(id);
+				next.add(id);
+				if (next.size > MAX_REMEMBERED_TOOL_DISCLOSURES) {
+					const oldest = next.values().next().value;
+					if (oldest !== undefined) next.delete(oldest);
+				}
+			} else next.delete(id);
+			return next;
+		});
+	const virtualizer = createWindowVirtualizer<HTMLLIElement>({
+		get count() {
+			return items().length;
+		},
+		estimateSize: () => 128,
+		getItemKey: (index) => items()[index]?.id ?? index,
+		get rangeExtractor() {
+			return rangeExtractor();
+		},
+		get scrollMargin() {
+			return scrollMargin();
+		},
+		overscan: 8,
+		gap: 16,
+		anchorTo: "end",
+		followOnAppend: false,
+		useAnimationFrameWithResizeObserver: true,
+	});
+	const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+	const virtualItemsByKey = createMemo(
+		() => new Map(virtualItems().map((item) => [item.key, item] as const)),
+	);
+	const loadOlder = async () => {
+		const anchor = Array.from(
+			timelineRef?.querySelectorAll<HTMLElement>("[data-virtual-item-id]") ?? [],
+		).find((element) => {
+			const bounds = element.getBoundingClientRect();
+			return (
+				element.dataset.virtualItemId !== "history-control" &&
+				bounds.bottom > 0 &&
+				bounds.top < window.innerHeight
+			);
+		});
+		const anchorId = anchor?.dataset.virtualItemId;
+		const top = anchor?.getBoundingClientRect().top;
+		await props.onLoadOlder();
+		if (anchorId === undefined || top === undefined) return;
+		const scroller = document.scrollingElement ?? document.documentElement;
+		let framesRemaining = 8;
+		const restoreAnchor = () => {
+			anchorFrame = requestAnimationFrame(() => {
+				anchorFrame = undefined;
+				const current = Array.from(
+					timelineRef?.querySelectorAll<HTMLElement>("[data-virtual-item-id]") ?? [],
+				).find((element) => element.dataset.virtualItemId === anchorId);
+				if (current) {
+					scroller.scrollTop += current.getBoundingClientRect().top - top;
+					window.dispatchEvent(new Event("scroll"));
+				} else {
+					const nextIndex = itemIndexes().get(anchorId);
+					const target =
+						nextIndex === undefined ? undefined : virtualizer.getOffsetForIndex(nextIndex, "start");
+					if (target) {
+						scroller.scrollTop = Math.max(0, target[0] - top);
+						window.dispatchEvent(new Event("scroll"));
+					}
+				}
+				framesRemaining -= 1;
+				if (framesRemaining > 0) restoreAnchor();
+			});
+		};
+		restoreAnchor();
+	};
+	onMount(() => {
+		if (!timelineRef) return;
+		const stopFollowing = installVirtualTimelineFollow(timelineRef, () => props.following);
+		const userScrollEvents = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+		const updateScrollMargin = () => {
+			if (timelineRef) setScrollMargin(timelineRef.getBoundingClientRect().top + window.scrollY);
+		};
+		updateScrollMargin();
+		window.addEventListener("resize", updateScrollMargin, { passive: true });
+		for (const eventName of userScrollEvents)
+			window.addEventListener(eventName, cancelAnchorRestoration, { passive: true });
+		onCleanup(() => {
+			stopFollowing();
+			cancelAnchorRestoration();
+			window.removeEventListener("resize", updateScrollMargin);
+			for (const eventName of userScrollEvents)
+				window.removeEventListener(eventName, cancelAnchorRestoration);
+		});
+	});
 	const toolArgs = createMemo(() => {
 		const args = new Map<string, unknown>();
-		for (const item of props.items) {
+		for (const item of items()) {
 			const message =
 				item.kind === "entry" && item.entry.type === "message" ? item.entry.message : undefined;
 			if (message?.role !== "assistant") continue;
@@ -931,98 +1093,148 @@ function PiTimelineRenderer(props: {
 		return args;
 	});
 	return (
-		<For each={itemIds()}>
-			{(itemId) => {
-				const item = () => props.items.find((candidate) => candidate.id === itemId);
-				const entryItem = () => {
-					const value = item();
-					return value?.kind === "entry" ? value : undefined;
-				};
-				const submissionItem = () => {
-					const value = item();
-					return value?.kind === "submission" ? value : undefined;
-				};
-				const queuedItem = () => {
-					const value = item();
-					return value?.kind === "queued-user" ? value : undefined;
-				};
-				const toolExecutionItem = () => {
-					const value = item();
-					if (value?.kind === "tool-execution") return value;
-					if (
-						value?.kind !== "entry" ||
-						value.entry.type !== "message" ||
-						value.entry.message.role !== "toolResult"
-					)
-						return;
-					const message = value.entry.message;
-					return {
-						toolName: message.toolName,
-						toolCallId: message.toolCallId,
-						status: message.isError ? ("failed" as const) : ("completed" as const),
-						args: toolArgs().get(message.toolCallId),
-						result: message,
-						entryId: value.entry.id,
+		<ul
+			ref={timelineRef}
+			class="virtual-timeline"
+			aria-label={i18n.t("messages.conversation")}
+			data-testid="virtual-timeline"
+			data-item-count={props.items.length}
+			style={{ height: `${virtualizer.getTotalSize()}px` }}
+		>
+			<For each={virtualItems().map((item) => item.key)}>
+				{(key) => {
+					const virtualItem = () => {
+						const value = virtualItemsByKey().get(key);
+						if (!value) throw new Error("Virtual timeline item lost its keyed measurement");
+						return value;
 					};
-				};
-				const streamingItem = () => {
-					const value = item();
-					return value?.kind === "streaming-assistant" ? value : undefined;
-				};
-				return (
-					<Switch>
-						<Match when={toolExecutionItem()}>
-							{(execution) => (
-								<NativeToolView
-									toolName={execution().toolName}
-									toolCallId={execution().toolCallId}
-									status={execution().status}
-									args={execution().args}
-									result={execution().result}
-									entryId={entryItem()?.entry.id}
-									onPreviewMedia={props.onPreviewMedia}
-								/>
-							)}
-						</Match>
-						<Match when={entryItem()}>
-							{(entryItem) => (
-								<>
-									<PiTimelineEntryView
-										entry={entryItem().entry}
-										onPreviewMedia={props.onPreviewMedia}
-										canEdit={!turnActive()}
-										canCorrect={!turnActive()}
-										canBranch={!turnActive() && entryItem().id === latestAssistantId()}
-										versionPager={
-											entryItem().id === latestAssistantId() &&
-											props.latestLeafIds.length > 1 &&
-											props.activeLeafId !== undefined &&
-											props.latestLeafIds.includes(props.activeLeafId)
-												? {
-														leafIds: props.latestLeafIds,
-														activeLeafId: props.activeLeafId,
-														disabled: turnActive(),
-													}
-												: undefined
-										}
-									/>
-									<WorkTimelineItem messageId={entryItem().id} />
-								</>
-							)}
-						</Match>
-						<Match when={submissionItem()}>
-							{(submission) => <SubmissionFeedback submission={submission().submission} />}
-						</Match>
-						<Match when={queuedItem()}>
-							{(queued) => <QueuedUserProjection text={queued().text} queue={queued().queue} />}
-						</Match>
-						<Match when={streamingItem()}>
-							{(streaming) => <StreamingAssistantProjection item={streaming()} />}
-						</Match>
-					</Switch>
-				);
-			}}
-		</For>
+					const item = () => itemsById().get(String(key));
+					const itemId = () => item()?.id ?? String(key);
+					const historyItem = () => {
+						const value = item();
+						return value?.kind === "history-control" ? value : undefined;
+					};
+					const entryItem = () => {
+						const value = item();
+						return value?.kind === "entry" ? value : undefined;
+					};
+					const submissionItem = () => {
+						const value = item();
+						return value?.kind === "submission" ? value : undefined;
+					};
+					const queuedItem = () => {
+						const value = item();
+						return value?.kind === "queued-user" ? value : undefined;
+					};
+					const toolExecutionItem = () => {
+						const value = item();
+						if (value?.kind === "tool-execution") return value;
+						if (
+							value?.kind !== "entry" ||
+							value.entry.type !== "message" ||
+							value.entry.message.role !== "toolResult"
+						)
+							return;
+						const message = value.entry.message;
+						return {
+							toolName: message.toolName,
+							toolCallId: message.toolCallId,
+							status: message.isError ? ("failed" as const) : ("completed" as const),
+							args: toolArgs().get(message.toolCallId),
+							result: message,
+							entryId: value.entry.id,
+						};
+					};
+					const streamingItem = () => {
+						const value = item();
+						return value?.kind === "streaming-assistant" ? value : undefined;
+					};
+					return (
+						<li
+							class="virtual-timeline-item"
+							data-testid="virtual-timeline-item"
+							data-index={virtualItem().index}
+							data-virtual-item-id={String(key)}
+							aria-posinset={virtualItem().index + 1}
+							aria-setsize={items().length}
+							onFocusIn={() => setFocusedItemId(item()?.id)}
+							style={{ transform: `translateY(${virtualItem().start - scrollMargin()}px)` }}
+							ref={(element) => {
+								element.dataset.index = String(virtualItem().index);
+								virtualizer.measureElement(element);
+							}}
+						>
+							<Switch>
+								<Match when={historyItem()}>
+									<Button
+										type="button"
+										class="timeline-load-older"
+										disabled={props.historyLoading}
+										onClick={() => void loadOlder()}
+									>
+										{i18n.t(
+											props.historyLoading
+												? "messages.native.loadingHistory"
+												: "messages.native.loadOlder",
+										)}
+									</Button>
+								</Match>
+								<Match when={toolExecutionItem()}>
+									{(execution) => (
+										<NativeToolView
+											toolName={execution().toolName}
+											toolCallId={execution().toolCallId}
+											status={execution().status}
+											args={execution().args}
+											result={execution().result}
+											entryId={entryItem()?.entry.id}
+											expanded={expandedToolIds().has(itemId())}
+											onExpandedChange={(expanded) => setToolExpanded(itemId(), expanded)}
+											onPreviewMedia={props.onPreviewMedia}
+										/>
+									)}
+								</Match>
+								<Match when={entryItem()}>
+									{(entryItem) => (
+										<>
+											<PiTimelineEntryView
+												entry={entryItem().entry}
+												onPreviewMedia={props.onPreviewMedia}
+												canEdit={!turnActive()}
+												canCorrect={!turnActive()}
+												canBranch={!turnActive() && entryItem().id === latestAssistantId()}
+												versionPager={
+													entryItem().id === latestAssistantId() &&
+													props.latestLeafIds.length > 1 &&
+													props.activeLeafId !== undefined &&
+													props.latestLeafIds.includes(props.activeLeafId)
+														? {
+																leafIds: props.latestLeafIds,
+																activeLeafId: props.activeLeafId,
+																disabled: turnActive(),
+															}
+														: undefined
+												}
+											/>
+											<WorkTimelineItem messageId={entryItem().id} />
+										</>
+									)}
+								</Match>
+								<Match when={submissionItem()}>
+									{(submission) => <SubmissionFeedback submission={submission().submission} />}
+								</Match>
+								<Match when={queuedItem()}>
+									{(queued) => <QueuedUserProjection text={queued().text} queue={queued().queue} />}
+								</Match>
+								<Match when={streamingItem()}>
+									{(streaming) => <StreamingAssistantProjection item={streaming()} />}
+								</Match>
+							</Switch>
+						</li>
+					);
+				}}
+			</For>
+		</ul>
 	);
 }
 
@@ -1034,8 +1246,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 	let threadRef: HTMLElement | undefined;
 	let jumpButtonRef: HTMLButtonElement | undefined;
 	let timelineScroll: TimelineScrollController | undefined;
-	let historyFrame: number | undefined;
-	let disposed = false;
+	const [timelineFollowing, setTimelineFollowing] = createSignal(true);
 	const activityLabel = createMemo(() => {
 		const activity = store.activeActivity;
 		if (!activity) return "";
@@ -1045,35 +1256,19 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 	});
 	const connectTimelineScroll = () => {
 		if (!timelineScroll && threadRef && jumpButtonRef)
-			timelineScroll = installTimelineScrollProtection(threadRef, jumpButtonRef);
+			timelineScroll = installTimelineScrollProtection(
+				threadRef,
+				jumpButtonRef,
+				setTimelineFollowing,
+			);
 	};
 	onCleanup(() => {
-		disposed = true;
 		timelineScroll?.dispose();
-		if (historyFrame !== undefined) cancelAnimationFrame(historyFrame);
 	});
 	const loadOlder = async () => {
 		if (store.historyLoading) return;
-		const conversationId = store.activeConversationId;
-		const anchor = threadRef?.querySelector<HTMLElement>("[data-pi-entry-id]");
-		const top = anchor?.getBoundingClientRect().top;
+		timelineScroll?.preserveReadingPosition();
 		await store.loadOlderHistory();
-		if (disposed) return;
-		if (historyFrame !== undefined) cancelAnimationFrame(historyFrame);
-		// Restore the same native entry after the store prepends its authoritative page.
-		// A frame runs after the existing mutation-based follow-to-latest observer.
-		historyFrame = requestAnimationFrame(() => {
-			historyFrame = undefined;
-			if (
-				store.activeConversationId !== conversationId ||
-				!anchor?.isConnected ||
-				top === undefined
-			)
-				return;
-			const scroller = document.scrollingElement ?? document.documentElement;
-			scroller.scrollTop += anchor.getBoundingClientRect().top - top;
-			window.dispatchEvent(new Event("scroll"));
-		});
 	};
 
 	return (
@@ -1105,25 +1300,26 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 						)}
 					</div>
 				</Show>
-				<Show when={store.activePiBranch?.hasMoreBefore}>
-					<Button type="button" disabled={store.historyLoading} onClick={() => void loadOlder()}>
-						{t(
-							store.historyLoading ? "messages.native.loadingHistory" : "messages.native.loadOlder",
-						)}
-					</Button>
-				</Show>
 				<Show when={store.historyError}>
 					<p class="thread-error" role="alert">
 						{store.historyError}
 					</p>
 				</Show>
-				<Show when={hasThreadContent()}>
-					<PiTimelineRenderer
-						items={store.activeTimeline}
-						activeLeafId={store.activePiBranch?.activeLeafId}
-						latestLeafIds={store.activePiBranch?.latestLeafIds ?? []}
-						onPreviewMedia={props.onPreviewMedia}
-					/>
+				<Show when={store.activeConversationId} keyed>
+					{(_conversationId) => (
+						<Show when={hasThreadContent()}>
+							<PiTimelineRenderer
+								items={store.activeTimeline}
+								following={timelineFollowing()}
+								hasMoreBefore={store.activePiBranch?.hasMoreBefore === true}
+								historyLoading={store.historyLoading}
+								onLoadOlder={loadOlder}
+								activeLeafId={store.activePiBranch?.activeLeafId}
+								latestLeafIds={store.activePiBranch?.latestLeafIds ?? []}
+								onPreviewMedia={props.onPreviewMedia}
+							/>
+						</Show>
+					)}
 				</Show>
 				<Show when={store.activeSubmission?.kind !== "send" && store.activeSubmission}>
 					{(submission) => <SubmissionFeedback submission={submission()} />}

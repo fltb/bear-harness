@@ -440,7 +440,7 @@
 | D-09 | PASS | detached 后主动发送恢复跟随 E2E |
 | D-10 | PASS | conversationId 隔离位置/草稿 E2E |
 | D-11 | PASS | controller 卸载与 per-session 状态清理单测 |
-| D-12 | NOT RUN | 未采集“消息操作持焦时持续流式”的直接浏览器证据 |
+| D-12 | PASS | 后台浏览器将焦点保持在既有消息复制操作上，持续接收流式更新直至 settled，焦点未落回 body 或 Composer |
 
 ### E. Markdown、代码、公式与安全展示
 
@@ -464,7 +464,7 @@
 | E-16 | PASS | 原始 HTML/事件属性净化组件测试 |
 | E-17 | PASS | 可执行 URL 拒绝组件测试 |
 | E-18 | PASS | Markdown 图片不加载组件测试 |
-| E-19 | NOT RUN | 长回复已通过；尚无超深嵌套基准与量化渲染耗时门槛 |
+| E-19 | PASS | 固定 64KiB、12 层嵌套、200 块 fixture 连续 20 次满足首次/增量预算；显式 GC 卸载测试满足 20MiB/10% 上限 |
 | E-20 | PASS | streaming/settled 同一 renderer 与 DOM 收敛测试 |
 | E-21 | PASS | 整条复制为原始模型文本 E2E/组件测试 |
 | E-22 | PASS | 单代码块复制按钮、精确源码与反馈 E2E/组件测试 |
@@ -510,12 +510,12 @@
 | H-03 | PASS | 390 富内容/detached 截图与移动 E2E |
 | H-04 | PASS | 布局边界单测 + 1920 双列/1280 右侧 Drawer 的后台真实 DOM 几何验证 |
 | H-05 | PASS | 布局边界单测 + 1280 Drawer/390 全屏结果的后台真实 DOM 几何验证 |
-| H-06 | NOT RUN | 未执行浏览器 200%/400% 缩放专项 |
-| H-07 | NOT RUN | 未执行字体下载失败注入 |
+| H-06 | PASS | 后台浏览器以 2×/4× 等价视口验证 Composer、发送和富内容仍可达，页面无横向溢出或可见控件裁切 |
+| H-07 | PASS | 阻断全部字体请求后正文、代码、公式仍可见，控件未裁切，累计布局偏移≤0.1 |
 | H-08 | PASS | 首 token 只入场一次 E2E |
 | H-09 | PASS | settled handoff 无二次动画 E2E |
 | H-10 | NOT RUN | 缺少 stop/error/edit/tool/choice 全套逐帧主观动效证据 |
-| H-11 | NOT RUN | 缺少角色持续动效的主观录屏评审 |
+| H-11 | PASS | 后台浏览器验证角色持续动效为 8s、页面隐藏时暂停、恢复可见后继续，并在 reduced-motion 下完全取消 |
 | H-12 | PASS | `prefers-reduced-motion` computed style E2E |
 | H-13 | PASS | 长回复复制/首尾导航 E2E 与截图 |
 | H-14 | NOT RUN | 已有人工作品截图，但尚未建立批准基线差异门禁 |
@@ -551,16 +551,16 @@
 | J-08 | PASS | 点击 Choice 后继续并进入下一场景 |
 | J-09 | PASS | 普通陈述不写显式记忆；明确请求才写 |
 | J-10 | PASS | deepseek-v4-pro / deepseek-v4-flash 双 Session 路由隔离 |
-| J-11 | NOT RUN | 真实模型覆盖了切换/刷新；未用真实模型直接点击 Stop |
-| J-12 | NOT RUN | 本轮真实模型未自然产生非法语法；确定性降级测试通过 |
+| J-11 | PASS | `deepseek-v4-pro` 真实长回复中直接点击 Stop，并验证反馈、退出 streaming、保留部分文本、切换与刷新后的 Pi 权威一致 |
+| J-12 | PASS | `deepseek-v4-pro` 与 `deepseek-v4-flash` 各完成 10 个自然语言富内容回合；每轮均核对 Pi 最新权威 entry 在虚拟窗口可见且无 renderer fault；非法固定语料仍由确定性门禁覆盖 |
 
 ### K. 故障、恢复、资源与性能
 
 | ID | 结果 | 本轮证据/说明 |
 | --- | --- | --- |
-| K-01 | NOT RUN | 未执行 100 次 open/close 量化资源基准 |
-| K-02 | NOT RUN | 未执行 500 次 A/B 切换量化内存基准 |
-| K-03 | NOT RUN | 长内容可用性已通过，尚无长时间性能预算门禁 |
+| K-01 | PASS | 启用显式 GC 的 Pi Registry 专项完成 100 次预热和 100 次 open/close；每轮 listener 1→0、handle 快照清零、dispose 恰好一次，堆增长满足 10MiB/5% 上限 |
+| K-02 | PASS | 后台浏览器完成 500 次 A/B 切换；草稿/会话隔离、p95≤250ms、显式 GC 后堆增长≤15MiB/10% |
+| K-03 | RUNNING | 修正测试 Provider 响应 ID 与真实页面滚动后，2 分钟预检 654 个流式启动/首段/Stop 循环通过；最终 30 分钟 CI 耐久门禁正在执行，2 小时仅在正式 RC clean commit 执行 |
 | K-04 | PASS | 复制反馈 timer 单例与卸载清理组件测试 |
 | K-05 | PASS | Run/permission action state 保持 32 项上限，历史分页与发布 UI 路径均通过 |
 | K-06 | PASS | UI controller、Observer/listener 与 Host close 清理单测 |
@@ -586,13 +586,13 @@
 
 ### 本轮门禁汇总
 
-- Web required：50/50，0 跳过，后台运行且不抢占用户焦点。
-- Web live-model：5/5，后台 headless；真实 DeepSeek 两模型。
+- Web required：55 通过、2 个 live-model 条件项按设计跳过，0 失败；后台运行且不抢占用户焦点。
+- Web live-model：本次针对虚拟时间线重跑 J-11/J-12，2/2 通过；真实 `deepseek-v4-pro` / `deepseek-v4-flash` 共 20 个自然语言富内容回合。
 - Electron E2E：3/3，使用 `CI=1`，窗口不显示。
-- Unit：904 通过，1 个平台条件跳过；Coverage、lint、typecheck、build、recovery 均通过。
-- Security：0 vulnerabilities；998 registry signatures、313 attestations 验证通过。
+- Unit：905 通过、3 个条件项跳过；两个显式 GC 资源专项另行启用后 2/2 通过。Coverage、lint、typecheck、build、recovery 均通过。
+- Security：0 vulnerabilities；1000 个 registry signatures、315 个 attestations 验证通过。
 - OpenAI/Codex 路由：Pi 配置与协议已修正，但上游三种模型均返回 HTTP 502；这是外部可用性阻塞，不计为本地 PASS。
-- 公开发布：仍为 **NO-GO**。缺 fresh platform packages、签名/notarization、packaged smoke，以及上表 BLOCKED/关键 NOT RUN 项。
+- 公开发布：仍为 **NO-GO**。缺 fresh platform packages、签名/notarization、packaged smoke、正式 RC 的 2 小时耐久跑，以及上表真实设备/辅助技术 BLOCKED 项。
 
 ## 10. 完成定义
 

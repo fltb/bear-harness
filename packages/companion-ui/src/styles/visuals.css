@@ -87,7 +87,7 @@
 	border: 1px solid color-mix(in srgb, var(--sys-border) 78%, var(--sys-accent) 22%);
 	color: var(--sys-text-muted);
 	background: color-mix(in srgb, var(--sys-surface-raised) 85%, transparent);
-	animation: tool-trace-enter 180ms ease-out;
+	animation: tool-trace-enter var(--motion-fast) ease-out;
 }
 
 .tool-trace summary {

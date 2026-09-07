@@ -22,6 +22,7 @@
 - 已完成：Pi 原生工具 start/update/end 进入分会话瞬态投影；权威快照携带 `pendingToolCallIds`，刷新或重连可恢复运行中工具提示。
 - 已完成：Composer 从单行增长到桌面 12rem、移动端 10rem 上限，超过上限后才内部滚动；发送清空、文件插入和普通输入都会重新计算展示高度。
 - 已完成：时间线只在贴近底部或用户主动发送时跟随；用户上滚后保持 detached，并提供“回到最新”。阅读位置按会话隔离，控制器卸载时释放 Observer、事件监听与位置表。
+- 已完成：权威历史可以完整分页拼接，但 DOM 使用 `@tanstack/solid-virtual` 按实际可见窗口挂载可变高度行；10,000 条权威 entry 实测只挂载 15 个 `li`。加载更早内容以稳定 entry id 保持当前阅读锚点，流式项和持焦项会被固定在虚拟范围中；每个会话的虚拟器随 keyed 会话视图独立创建和释放，不缓存或复制消息正文。
 - 已完成：时间线不再是 live region；独立原子状态节点只播报“正在回复”，流式正文变化不会逐 chunk 触发读屏播报。
 - 已完成：消息复制、编辑、重生成、校正和分支操作达到 44px 触控高度；移动端复制/编辑不再依赖 hover 才可见。
 - 已完成：正文排版统一由 `MessageContent` 样式拥有；模型名与 Provider 同名时去重；首 token/乐观消息只做一次 120ms 入场，settled 权威交接不二次入场，并遵守 reduced-motion。
@@ -260,14 +261,14 @@ P0、P1、P2-1、P2-3 和 P2-4 已解除，并补齐滚动、Composer、可访�
 ## 本轮验证结果
 
 - lint、clean-checkout 自举 typecheck、全仓 build：通过。
-- 全量单测：904 项通过，1 项按平台条件跳过；没有失败。已删除一项要求遮罩内部 Run 工具的过时兼容性测试。
-- Coverage：Host 78.72%/67.38%/80.36%/81.98%，UI 82.99%/72.85%/82.73%/86.39%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
-- 后台 Web required E2E：50/50 通过，0 跳过；其中内置 Pi Worker/Run/Artifact 7/7，三档结果布局 3/3。
+- 全量单测：905 项通过、3 项按条件跳过；没有失败。显式启用 GC 后，100 次 Pi Session open/close 与超大 Markdown 卸载资源专项另行 2/2 通过。
+- Coverage：Host 78.72%/67.38%/80.36%/81.98%，UI 82.97%/72.52%/82.88%/86.28%，Desktop 86.31%/76.27%/92.97%/89.46%，均通过声明阈值。
+- 后台 Web required E2E：55 通过、2 个真实模型条件项按设计跳过，0 失败；含 10,000 条权威历史虚拟列表、500 次 A/B 会话切换、内置 Pi Worker/Run/Artifact 与三档结果布局。
 - 隐藏 Electron E2E：通过 `CI=1` 保证窗口不显示，3/3 通过。
 - Recovery：Host 49/49、Desktop 23/23 通过。
 - 真实模型 E2E：使用 Pi 配置中的 `deepseek-v4-pro` 与 `deepseek-v4-flash`，同一次整套运行 5/5 通过；覆盖基础往返、角色/显式记忆、双模型会话隔离、编辑/纠正/分支/复制/刷新、自然剧情的 CG/场景/表情/Choices，以及 Markdown/表格/代码/公式自然输出。
 - OpenAI/Codex 配置已按真实 `openai-responses` 协议导入；`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 本轮均被上游 HTTP 502 阻断，不能伪记通过。
-- 安全审计：0 vulnerabilities；998 个 registry signature、313 个 attestation 验证通过。
+- 安全审计：0 vulnerabilities；1000 个 registry signature、315 个 attestation 验证通过。
 - 当前版本仅遮罩外部 Codex 设置入口并保留代码/RPC；内置 Pi Worker、Host Run tools、External Run 与 Artifact 结果工作区完整启用。
 
 ## 关键模块规模与所有权

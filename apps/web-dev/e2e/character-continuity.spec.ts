@@ -141,6 +141,7 @@ test("presented role choices send ordinary messages and advance generic schema s
 	);
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	await sidebar.getByRole("button").filter({ hasText: "Generic choice state flow" }).click();
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 
 	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
@@ -149,6 +150,8 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_START_DONE");
+	await expect(thread.getByText("E2E_MANUAL_ROLE_START_DONE", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
 	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_MANUAL_ROLE_CONTINUE",
@@ -156,6 +159,8 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
+	await expect(thread.getByText("E2E_MANUAL_ROLE_CONTINUE_DONE", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
 	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_MANUAL_ROLE_PRESENT",
@@ -163,9 +168,9 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_PRESENT_DONE");
+	await expect(thread.getByText("E2E_MANUAL_ROLE_PRESENT_DONE", { exact: true })).toBeVisible();
 	const choice = page.getByRole("button", { name: /我听见了/ });
 	await expect(choice).toBeVisible();
-	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 	await expect
 		.poll(async () => {
 			const [threadBox, choiceBox] = await Promise.all([
@@ -183,6 +188,8 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
+	await expect(thread.getByText("E2E_MANUAL_ROLE_RECEIVED_DONE", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
 	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
 	await expect(mediaCard).toBeVisible();
 	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();

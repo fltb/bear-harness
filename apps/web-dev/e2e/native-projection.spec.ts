@@ -141,8 +141,7 @@ test("native history pagination restores earlier turns without moving the visibl
 		await expect(assistant.getByText(`E2E_NATIVE_REPLY_${turn}`, { exact: true })).toHaveCount(1);
 		await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
 	}
-	await expect(firstMessage).toHaveCount(1);
-	const firstEntryId = await firstMessage.getAttribute("data-pi-entry-id");
+	await expect(firstMessage).toHaveCount(0);
 	const { token } = await getBootstrap(page);
 	const historyResponse = await page.request.post("/rpc/conversation.history", {
 		headers: { "x-bear-web-dev-token": token },
@@ -156,6 +155,11 @@ test("native history pagination restores earlier turns without moving the visibl
 	);
 	expect(messages.filter((entry) => entry.role === "user")).toHaveLength(30);
 	expect(messages.filter((entry) => entry.role === "assistant")).toHaveLength(30);
+	const firstNativeMessage = messages.find(
+		(entry) => entry.role === "user" && entry.text === "E2E_NATIVE_HISTORY_1",
+	);
+	if (!firstNativeMessage) throw new Error("Native history is missing the first user message");
+	const firstEntryId = firstNativeMessage.id;
 
 	await page.reload();
 	await activeConversationId(page, conversationId);
@@ -172,14 +176,22 @@ test("native history pagination restores earlier turns without moving the visibl
 		name: zhCN.messages.native.loadOlder,
 		exact: true,
 	});
-	await loadOlder.scrollIntoViewIfNeeded();
+	await page.evaluate(() => {
+		window.scrollTo({ top: 0 });
+		window.dispatchEvent(new WheelEvent("wheel"));
+	});
+	await expect(loadOlder).toBeVisible();
 	await expect(anchor).toBeInViewport();
 	await expect(anchor).toHaveAttribute("data-pi-entry-id", existing.id);
 	const before = await anchor.boundingBox();
 	if (!before) throw new Error("Native history anchor has no visible bounds");
-	await loadOlder.click();
+	const loadedHistory = page.waitForResponse(
+		(response) =>
+			response.request().method() === "POST" &&
+			response.url().endsWith("/rpc/conversation.history"),
+	);
+	await Promise.all([loadedHistory, loadOlder.click()]);
 	await expect(loadOlder).toBeHidden();
-	await expect(firstMessage).toHaveAttribute("data-pi-entry-id", firstEntryId!);
 	await expect(anchor).toHaveAttribute("data-pi-entry-id", existing.id);
 	await expect(anchor).toBeInViewport();
 	await expect
@@ -188,7 +200,11 @@ test("native history pagination restores earlier turns without moving the visibl
 			return after ? Math.abs(after.y - before.y) : Number.POSITIVE_INFINITY;
 		})
 		.toBeLessThanOrEqual(2);
-	await firstMessage.scrollIntoViewIfNeeded();
+	await page.evaluate(() => {
+		window.scrollTo({ top: 0 });
+		window.dispatchEvent(new WheelEvent("wheel"));
+	});
+	await expect(firstMessage).toHaveAttribute("data-pi-entry-id", firstEntryId);
 	await expect(firstMessage).toBeInViewport();
 	await expect(firstMessage.getByText("E2E_NATIVE_HISTORY_1", { exact: true })).toBeVisible();
 
@@ -219,9 +235,11 @@ test("native history pagination restores earlier turns without moving the visibl
 		assistant.filter({ has: page.getByText("E2E_NATIVE_REPLY_31", { exact: true }) }),
 	).toHaveAttribute("data-pi-entry-id", refreshedReply.id);
 	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
-	await expect(firstMessage).toHaveAttribute("data-pi-entry-id", firstEntryId!);
-	await expect(anchor).toHaveAttribute("data-pi-entry-id", existing.id);
 	await expect(loadOlder).toHaveCount(0);
-	await firstMessage.scrollIntoViewIfNeeded();
+	await page.evaluate(() => {
+		window.scrollTo({ top: 0 });
+		window.dispatchEvent(new WheelEvent("wheel"));
+	});
+	await expect(firstMessage).toHaveAttribute("data-pi-entry-id", firstEntryId);
 	await expect(firstMessage.getByText("E2E_NATIVE_HISTORY_1", { exact: true })).toBeVisible();
 });

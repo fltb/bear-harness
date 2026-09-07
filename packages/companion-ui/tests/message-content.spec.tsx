@@ -4,6 +4,23 @@ import { describe, expect, it, vi } from "vitest";
 import { MessageContent, renderMarkdown } from "../src/MessageContent.js";
 import { nativeSource } from "../src/NativeMessageContent.js";
 
+function percentile(values: number[], fraction: number): number {
+	const ordered = [...values].sort((left, right) => left - right);
+	return ordered[Math.ceil(ordered.length * fraction) - 1] ?? Number.POSITIVE_INFINITY;
+}
+
+function markdownStressFixture(): string {
+	const blocks: string[] = [Array.from({ length: 12 }, () => "> ").join("") + "nested"];
+	for (let index = 1; index < 200; index += 1) {
+		blocks.push(
+			index % 4 === 0
+				? `## Section ${index}\n\n\`\`\`ts\nconst value${index} = ${index};\n\`\`\``
+				: `- item ${index}: **bold** and $x_${index} = ${index}^2$`,
+		);
+	}
+	return blocks.join("\n\n").padEnd(65_536, "x");
+}
+
 describe("MessageContent", () => {
 	it("renders Markdown, highlighted code, tables, and KaTeX from reactive props", () => {
 		const [text, setText] = createSignal("**正在流式输出");
@@ -165,4 +182,47 @@ $$`);
 		expect(source).toContain("[native source truncated]");
 		expect(source).not.toContain("secret");
 	});
+
+	it("renders the frozen 64KiB and 200-block stress fixture within its timing budget", () => {
+		const source = markdownStressFixture();
+		expect(source.length).toBe(65_536);
+		const initial: number[] = [];
+		for (let run = 0; run < 20; run += 1) {
+			const started = performance.now();
+			renderMarkdown(source);
+			initial.push(performance.now() - started);
+		}
+		expect(percentile(initial, 0.95)).toBeLessThanOrEqual(500);
+
+		const [text, setText] = createSignal(source);
+		const view = render(() => <MessageContent text={text()} format="markdown" streaming />);
+		expect(view.getByTestId("message-streaming-plain")).toBeVisible();
+		const incremental: number[] = [];
+		for (let run = 0; run < 20; run += 1) {
+			const updateStarted = performance.now();
+			setText(`${source}${String(run)}`);
+			incremental.push(performance.now() - updateStarted);
+		}
+		expect(percentile(incremental, 0.95)).toBeLessThanOrEqual(50);
+		view.unmount();
+	}, 10_000);
+
+	it.runIf(typeof (globalThis as { gc?: () => void }).gc === "function")(
+		"releases the stress projection after unmount and forced garbage collection",
+		() => {
+			const forceGc = (globalThis as { gc(): void }).gc;
+			forceGc();
+			const baseline = process.memoryUsage().heapUsed;
+			for (let run = 0; run < 20; run += 1) {
+				const view = render(() => (
+					<MessageContent text={markdownStressFixture()} format="markdown" streaming />
+				));
+				view.unmount();
+			}
+			forceGc();
+			const growth = Math.max(0, process.memoryUsage().heapUsed - baseline);
+			expect(growth).toBeLessThanOrEqual(20 * 1024 * 1024);
+			expect(growth).toBeLessThanOrEqual(baseline * 0.1);
+		},
+	);
 });

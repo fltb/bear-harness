@@ -73,6 +73,7 @@ interface FakeSession {
 	abort: ReturnType<typeof vi.fn>;
 	dispose: ReturnType<typeof vi.fn>;
 	sendCustomMessage: ReturnType<typeof vi.fn>;
+	listenerCount(): number;
 	emit(event: AgentSessionEvent): void;
 }
 
@@ -127,6 +128,7 @@ function fakeSession(manager: SessionManager): FakeSession {
 		abort,
 		dispose,
 		sendCustomMessage,
+		listenerCount: () => listeners.size,
 		emit: (event) => {
 			for (const listener of listeners) listener(event);
 		},
@@ -508,6 +510,42 @@ describe("PiRuntime session registry", () => {
 		expect(runtime.snapshot(alpha)).toBeUndefined();
 		expect(runtime.snapshot(beta)?.sessionId).toBe(beta);
 	});
+
+	it.runIf(typeof (globalThis as { gc?: () => void }).gc === "function")(
+		"releases handles, subscriptions, queues, and heap across 100 open-close cycles",
+		async () => {
+			const dataDir = root();
+			const id = persistedSession(dataDir, "Repeated");
+			const { runtime, built, buildSession } = setup(dataDir);
+			const forceGc = (globalThis as { gc(): void }).gc;
+			for (let warmup = 0; warmup < 100; warmup += 1) {
+				await runtime.open(id);
+				await runtime.close(id, "preserve");
+				built.delete(id);
+				buildSession.mockClear();
+			}
+			forceGc();
+			const baseline = process.memoryUsage().heapUsed;
+			let buildCount = 0;
+			for (let cycle = 0; cycle < 100; cycle += 1) {
+				await runtime.open(id);
+				const current = built.get(id);
+				buildCount += buildSession.mock.calls.length;
+				expect(current?.listenerCount()).toBe(1);
+				await runtime.close(id, "preserve");
+				expect(runtime.snapshot(id)).toBeUndefined();
+				expect(current?.listenerCount()).toBe(0);
+				expect(current?.dispose).toHaveBeenCalledOnce();
+				built.delete(id);
+				buildSession.mockClear();
+			}
+			forceGc();
+			const growth = Math.max(0, process.memoryUsage().heapUsed - baseline);
+			expect(buildCount).toBe(100);
+			expect(growth).toBeLessThanOrEqual(10 * 1024 * 1024);
+			expect(growth).toBeLessThanOrEqual(baseline * 0.05);
+		},
+	);
 
 	it("keeps a session unavailable for the whole managed deletion", async () => {
 		const dataDir = root();

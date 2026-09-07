@@ -60,6 +60,10 @@
 	@apply min-w-0 font-serif text-base leading-relaxed;
 }
 
+.message-streaming-plain {
+	@apply whitespace-pre-wrap break-words;
+}
+
 .message-markdown {
 	@apply min-w-0 break-words;
 }

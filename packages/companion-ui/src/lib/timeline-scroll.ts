@@ -8,7 +8,40 @@ interface TimelinePosition {
 
 export interface TimelineScrollController {
 	scrollToLatest(): void;
+	preserveReadingPosition(): void;
 	dispose(): void;
+}
+
+export function installVirtualTimelineFollow(
+	timeline: HTMLElement,
+	shouldFollow: () => boolean,
+): () => void {
+	const scrollingElement = document.scrollingElement ?? document.documentElement;
+	let frame: number | undefined;
+	const follow = () => {
+		if (frame !== undefined) cancelAnimationFrame(frame);
+		frame = requestAnimationFrame(() => {
+			frame = undefined;
+			if (shouldFollow())
+				scrollingElement.scrollTop = Math.max(
+					0,
+					scrollingElement.scrollHeight - scrollingElement.clientHeight,
+				);
+		});
+	};
+	if (typeof ResizeObserver === "undefined") {
+		follow();
+		return () => {
+			if (frame !== undefined) cancelAnimationFrame(frame);
+		};
+	}
+	const observer = new ResizeObserver(follow);
+	observer.observe(timeline);
+	follow();
+	return () => {
+		observer.disconnect();
+		if (frame !== undefined) cancelAnimationFrame(frame);
+	};
 }
 
 export function notifyTimelineUserSent(conversationId: string): void {
@@ -18,6 +51,7 @@ export function notifyTimelineUserSent(conversationId: string): void {
 export function installTimelineScrollProtection(
 	timeline: HTMLElement,
 	jumpButton: HTMLButtonElement,
+	onFollowingChange?: (following: boolean) => void,
 ): TimelineScrollController {
 	const positions = new Map<string, TimelinePosition>();
 	const scrollingElement = document.scrollingElement ?? document.documentElement;
@@ -29,6 +63,7 @@ export function installTimelineScrollProtection(
 	const distanceFromBottom = () => Math.max(0, maxScrollTop() - scrollingElement.scrollTop);
 	const showDetachedState = (following: boolean) => {
 		jumpButton.hidden = following;
+		onFollowingChange?.(following);
 	};
 	const capturePosition = () => {
 		if (!currentConversationId) return;
@@ -47,6 +82,14 @@ export function installTimelineScrollProtection(
 				following: true,
 			});
 		showDetachedState(true);
+	};
+	const preserveReadingPosition = () => {
+		if (currentConversationId)
+			positions.set(currentConversationId, {
+				scrollTop: scrollingElement.scrollTop,
+				following: false,
+			});
+		showDetachedState(false);
 	};
 	const captureAfterUserScroll = () => queueMicrotask(capturePosition);
 	const restorePosition = (position: TimelinePosition) => {
@@ -77,23 +120,19 @@ export function installTimelineScrollProtection(
 	observer.observe(timeline, {
 		attributes: true,
 		attributeFilter: ["data-conversation-id"],
-		childList: true,
-		characterData: true,
-		subtree: true,
 	});
 	for (const eventName of userScrollEvents)
 		window.addEventListener(eventName, captureAfterUserScroll, { passive: true });
-	window.addEventListener("scroll", capturePosition, { passive: true });
 	window.addEventListener(USER_SENT_EVENT, onUserSent);
 	scrollToLatest();
 
 	return {
 		scrollToLatest,
+		preserveReadingPosition,
 		dispose: () => {
 			observer.disconnect();
 			for (const eventName of userScrollEvents)
 				window.removeEventListener(eventName, captureAfterUserScroll);
-			window.removeEventListener("scroll", capturePosition);
 			window.removeEventListener(USER_SENT_EVENT, onUserSent);
 			positions.clear();
 		},
