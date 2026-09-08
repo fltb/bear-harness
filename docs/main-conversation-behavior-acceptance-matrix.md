@@ -228,6 +228,10 @@
 | H-12 | reduced motion | 所有非必要动画取消；信息、焦点和状态仍完整 | U/E/C |
 | H-13 | 长回复 | 标题、段落、表格、代码节奏可读；提供复制全文和必要的顶部/底部导航 | E/C/截图 |
 | H-14 | 截图差异 | 1920×1080、1280×800、390×844 的空态/流式/富内容/工具/Run/Artifact/Error 与人工批准基线比较；结构差异为 0，整图差异≤0.5%，仅字体抗锯齿可放宽至≤1%且仍须人工批准 | E/C |
+| H-15 | 60 秒流式平滑度 | 原生 Pi 流持续 60 秒；chunk→paint p95≤50ms、>50ms 长任务为 0、丢帧率<1%、CLS≤0.1，Thread/Composer 横向位移为 0 | E/C |
+| H-16 | 主操作可见反馈 | 发送、停止、复制从输入到首个可见反馈均≤100ms；输入/滚动交互 p95≤100ms | E/C |
+| H-17 | 动画中断 | 抽屉快速开关并在动画中跨响应式断点后只保留一个确定表面，无残留遮罩或错误 `aria-expanded` | E/C |
+| H-18 | 隐藏页空闲资源 | 页面隐藏后持续动效暂停；预热后 5 分钟任务耗时≤3s、脚本耗时≤1s、强制回收后堆增长≤1MiB | E/C |
 
 ### I. 无障碍与键盘
 
@@ -514,11 +518,15 @@
 | H-07 | PASS | 阻断全部字体请求后正文、代码、公式仍可见，控件未裁切，累计布局偏移≤0.1 |
 | H-08 | PASS | 首 token 只入场一次 E2E |
 | H-09 | PASS | settled handoff 无二次动画 E2E |
-| H-10 | NOT RUN | 缺少 stop/error/edit/tool/choice 全套逐帧主观动效证据 |
+| H-10 | PASS | 后台真实 UI 逐项触发 stop/error/edit/correction/tool/choice；统一 120ms `motion-feedback-enter` 或 180ms modal，位移 3px/6px，并受 reduced-motion 总开关约束 |
 | H-11 | PASS | 后台浏览器验证角色持续动效为 8s、页面隐藏时暂停、恢复可见后继续，并在 reduced-motion 下完全取消 |
 | H-12 | PASS | `prefers-reduced-motion` computed style E2E |
 | H-13 | PASS | 长回复复制/首尾导航 E2E 与截图 |
-| H-14 | NOT RUN | 已有人工作品截图，但尚未建立批准基线差异门禁 |
+| H-14 | PASS | 建立并人工检查 21 张批准基线：空态/流式/富内容/工具/Run/Artifact/Error × 390/1280/1920；Playwright 后续按整图≤0.5% 自动拦截差异 |
+| H-15 | PASS | 60 秒、600 个原生流 chunk 连续三轮通过；最终完整套件实测 chunk→paint p95 7.5ms、长任务 0、丢帧 0.068%、CLS 0.0161、主表面横移 0px |
+| H-16 | PASS | 最终完整套件后台实测发送 4.2ms、停止 62.4ms、复制 1.9ms，均≤100ms；既有 30 分钟长程交互 p95 继续保留为滚动/输入门槛证据 |
+| H-17 | PASS | 手机抽屉开→关→开并在动画中切换 1280→390，确定收敛为关闭；再次打开后仅一个遮罩且 `aria-expanded=true` |
+| H-18 | PASS | 隐藏页预热后 5 分钟：任务 0.070s、脚本 0.014s、堆增长 12,964B；角色持续动效为 paused |
 
 ### I. 无障碍与键盘
 

@@ -428,18 +428,21 @@ function reply(payload: {
 		});
 		return { tool: "host_state", args };
 	}
-	const content = image(messages)
-		? "VISUAL_OBSERVATION: a red square\n"
-		: prompt.includes("LONG_RICH_CONTENT")
-			? longRichContent
-			: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
-				? "E2E_CONTEXT_EDITED_OK\n"
-				: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
-					? "E2E_CONTEXT_TWO_TURNS_OK\n"
-					: prompt.includes("VISUAL_OBSERVATION: a red square")
-						? "MAIN_USED_VISUAL_OBSERVATION\n"
-						: prompt.includes("RICH_CONTENT_STREAM")
-							? `# 交接结果
+	if (current.includes("UX_MODEL_ERROR")) return { errorMessage: "UX model failure" };
+	const content = current.includes("UX_STREAM_60_SECONDS")
+		? "UX_STREAM_COMPLETE\n"
+		: image(messages)
+			? "VISUAL_OBSERVATION: a red square\n"
+			: prompt.includes("LONG_RICH_CONTENT")
+				? longRichContent
+				: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
+					? "E2E_CONTEXT_EDITED_OK\n"
+					: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
+						? "E2E_CONTEXT_TWO_TURNS_OK\n"
+						: prompt.includes("VISUAL_OBSERVATION: a red square")
+							? "MAIN_USED_VISUAL_OBSERVATION\n"
+							: prompt.includes("RICH_CONTENT_STREAM")
+								? `# 交接结果
 
 **状态：完成**
 
@@ -459,28 +462,28 @@ $$
 E = mc^2
 $$
 `
-							: directMemoryText !== undefined
-								? `${directMemoryText}\n`
-								: memoryContextCheck
-									? current.includes("南星") && hostContext.includes("南星")
-										? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-										: current.includes("北辰") && hostContext.includes("北辰")
-											? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
-											: "MEMORY_CONTEXT:ABSENT\n"
-									: current.includes("规则：回复 EDITED_OK") ||
-											prompt.includes("规则：回复 EDITED_OK")
-										? "EDITED_OK\n"
-										: prompt.includes("STREAM_FOCUS_HOLD")
-											? "FOCUS_ONE FOCUS_TWO\n"
-											: prompt.includes("STREAM_HOLD_A")
-												? "HOLD_ONE HOLD_TWO\n"
-												: prompt.includes("STREAM_CHECK")
-													? "STREAM_ONE STREAM_TWO\n"
-													: prompt.includes("你是谁")
-														? "我是 E2E Rule Provider。\n"
-														: prompt.includes("E2E_OK")
-															? "E2E_OK\n"
-															: "RULE_OK\n";
+								: directMemoryText !== undefined
+									? `${directMemoryText}\n`
+									: memoryContextCheck
+										? current.includes("南星") && hostContext.includes("南星")
+											? "MEMORY_CONTEXT:我们约定暗号是南星\n"
+											: current.includes("北辰") && hostContext.includes("北辰")
+												? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
+												: "MEMORY_CONTEXT:ABSENT\n"
+										: current.includes("规则：回复 EDITED_OK") ||
+												prompt.includes("规则：回复 EDITED_OK")
+											? "EDITED_OK\n"
+											: prompt.includes("STREAM_FOCUS_HOLD")
+												? "FOCUS_ONE FOCUS_TWO\n"
+												: prompt.includes("STREAM_HOLD_A")
+													? "HOLD_ONE HOLD_TWO\n"
+													: prompt.includes("STREAM_CHECK")
+														? "STREAM_ONE STREAM_TWO\n"
+														: prompt.includes("你是谁")
+															? "我是 E2E Rule Provider。\n"
+															: prompt.includes("E2E_OK")
+																? "E2E_OK\n"
+																: "RULE_OK\n";
 	return { content };
 }
 
@@ -633,6 +636,22 @@ createServer(async (request, response) => {
 	}
 	if (payload.stream) {
 		response.writeHead(200, { "content-type": "text/event-stream" });
+		if (result.content === "UX_STREAM_COMPLETE\n") {
+			for (let index = 0; index < 600; index += 1) {
+				response.write(
+					`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { ...(index === 0 ? { role: "assistant" } : {}), content: "·" }, finish_reason: null }] })}\n\n`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: " UX_STREAM_COMPLETE\n" }, finish_reason: null }] })}\n\n`,
+			);
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+			);
+			response.end("data: [DONE]\n\n");
+			return;
+		}
 		if (result.content.includes("# 交接结果")) {
 			const pieces = [
 				"# 交接结果\n\n**状态",

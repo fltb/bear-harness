@@ -700,7 +700,10 @@ describe("Pi native tool rendering", () => {
 		const saved = assistantEntry(
 			"failed-assistant",
 			[{ type: "text", text: "Partial verified reply" }],
-			{ stopReason: "error", errorMessage: "provider quota exhausted" },
+			{
+				stopReason: "error",
+				errorMessage: '400: {"message":"provider quota exhausted","type":"invalid_request_error"}',
+			},
 		);
 		configure(client, [], THEMED_CHARACTER, {
 			version: { instanceId: "native-failed-assistant", sequence: 0 },
@@ -710,6 +713,8 @@ describe("Pi native tool rendering", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		expect(await screen.findByText("Partial verified reply")).toBeVisible();
 		expect(screen.getByRole("alert")).toHaveTextContent("provider quota exhausted");
+		expect(screen.getByRole("alert")).not.toHaveTextContent("invalid_request_error");
+		expect(screen.getByRole("alert")).not.toHaveTextContent("400:");
 		configure(client, [saved], THEMED_CHARACTER, {
 			version: { instanceId: "native-failed-assistant", sequence: 1 },
 		});

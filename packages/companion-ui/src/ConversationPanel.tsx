@@ -104,6 +104,25 @@ function hostChoices(payload: Record<string, unknown> | undefined) {
 	return items.length ? { prompt: payload.prompt, items } : undefined;
 }
 
+function displayErrorMessage(value: string): string {
+	const objectStart = value.indexOf("{");
+	if (objectStart < 0) return value;
+	try {
+		const parsed = JSON.parse(value.slice(objectStart)) as unknown;
+		if (!parsed || typeof parsed !== "object") return value;
+		const record = parsed as Record<string, unknown>;
+		if (typeof record.message === "string") return record.message;
+		if (typeof record.error === "string") return record.error;
+		if (record.error && typeof record.error === "object") {
+			const nested = record.error as Record<string, unknown>;
+			if (typeof nested.message === "string") return nested.message;
+		}
+		return value;
+	} catch {
+		return value;
+	}
+}
+
 function PiTimelineEntryView(props: {
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
@@ -172,7 +191,9 @@ function PiTimelineEntryView(props: {
 	const errorText = () =>
 		assistant()?.stopReason === "aborted"
 			? t("messages.responseStopped")
-			: assistant()?.errorMessage ||
+			: (assistant()?.errorMessage
+					? displayErrorMessage(assistant()?.errorMessage ?? "")
+					: undefined) ||
 				(assistant()?.stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const longResponse = () => !isUser && messageContentIsLong(content());
 	if (
@@ -368,7 +389,7 @@ function PiTimelineEntryView(props: {
 					</Show>
 					<span ref={messageEndRef} class="message-scroll-anchor" />
 					<Show when={editing() && isUser}>
-						<div class="message-inline-edit">
+						<div class="message-inline-edit motion-feedback">
 							<TextField class="message-inline-editor">
 								<TextField.TextArea
 									autofocus
@@ -409,7 +430,7 @@ function PiTimelineEntryView(props: {
 						</div>
 					</Show>
 					<Show when={failed() && (errorText()?.length ?? 0) > 0}>
-						<span class="stream-error" role="alert">
+						<span class="stream-error motion-feedback" role="alert">
 							{errorText()}
 						</span>
 					</Show>
@@ -453,9 +474,9 @@ function PiTimelineEntryView(props: {
 							}}
 						>
 							<Dialog.Portal>
-								<Dialog.Overlay class="correction-popover-backdrop" />
+								<Dialog.Overlay class="correction-popover-backdrop motion-fade" />
 								<Dialog.Content
-									class="message-correction-popover"
+									class="message-correction-popover motion-modal"
 									onOpenAutoFocus={(event) => {
 										event.preventDefault();
 										queueMicrotask(() => {
@@ -518,7 +539,7 @@ function PiTimelineEntryView(props: {
 					</Show>
 					<Show when={actionError()}>
 						{(error) => (
-							<span class="stream-error" role="alert">
+							<span class="stream-error motion-feedback" role="alert">
 								{error()}
 							</span>
 						)}
@@ -683,7 +704,7 @@ function NativeToolView(props: {
 	};
 	return (
 		<article
-			class="msg pi-tool-result"
+			class="msg pi-tool-result motion-feedback"
 			aria-label={`${props.toolName} ${status()}`}
 			data-status={props.status}
 			data-tool-call-id={props.toolCallId}
@@ -729,7 +750,7 @@ function NativeToolView(props: {
 			</Show>
 			<Show when={choices()}>
 				{(value) => (
-					<section class="message-choices" aria-label={value().prompt}>
+					<section class="message-choices motion-feedback" aria-label={value().prompt}>
 						<strong>{value().prompt}</strong>
 						<div class="message-choice-list">
 							<For each={value().items}>
@@ -868,7 +889,7 @@ function StreamingAssistantProjection(props: {
 	const errorText = () =>
 		message().stopReason === "aborted"
 			? t("messages.responseStopped")
-			: message().errorMessage ||
+			: (message().errorMessage ? displayErrorMessage(message().errorMessage ?? "") : undefined) ||
 				(message().stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const characterName = () => store.character?.name ?? "";
 	return (
@@ -901,7 +922,7 @@ function StreamingAssistantProjection(props: {
 					</Show>
 					<Show when={failed() && errorText()}>
 						{(error) => (
-							<span class="stream-error" role="alert">
+							<span class="stream-error motion-feedback" role="alert">
 								{error()}
 							</span>
 						)}

@@ -49,6 +49,7 @@ describe("motion system contracts", () => {
 			".motion-timeline-entry",
 			".motion-presence-change",
 			".motion-activity",
+			".motion-feedback",
 		]) {
 			expect(css).toContain(primitive);
 		}

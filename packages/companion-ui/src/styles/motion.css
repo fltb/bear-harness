@@ -24,6 +24,7 @@
 .motion-drawer-block,
 .motion-timeline-entry,
 .motion-presence-change,
+.motion-feedback,
 .motion-activity {
 	animation-fill-mode: both;
 }
@@ -85,6 +86,10 @@
 	animation: presence-reveal var(--motion-duration-scene) var(--motion-ease-enter) both;
 }
 
+.motion-feedback {
+	animation: motion-feedback-enter var(--motion-duration-micro) var(--motion-ease-standard) both;
+}
+
 .motion-activity {
 	animation: streaming-spinner var(--motion-duration-spinner) linear infinite;
 }
@@ -95,6 +100,17 @@
 	}
 	to {
 		opacity: 1;
+	}
+}
+
+@keyframes motion-feedback-enter {
+	from {
+		opacity: 0;
+		transform: translateY(var(--motion-distance-micro));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
 	}
 }
 
