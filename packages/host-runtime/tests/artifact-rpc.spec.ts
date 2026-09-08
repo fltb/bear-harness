@@ -405,7 +405,6 @@ describe("run-owned Artifact RPC", () => {
 				join(root, "runs"),
 				async () => undefined,
 			),
-			externalAgents: {} as never,
 			artifacts: store,
 			canon: { syncPackage: vi.fn() } as never,
 			providers: {} as never,

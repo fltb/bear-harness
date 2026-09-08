@@ -36,7 +36,7 @@ const VISION_MODEL = {
 	createdAt: "2026-01-02",
 };
 
-function configureActiveConversation(client: CompanionClient): void {
+function configureActiveConversation(client: CompanionClient, isStreaming = false): void {
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -49,7 +49,7 @@ function configureActiveConversation(client: CompanionClient): void {
 						modified: "2026-01-01T00:00:00.000Z",
 						messageCount: 0,
 						firstMessage: "",
-						isStreaming: false,
+						isStreaming,
 					},
 				],
 			},
@@ -64,7 +64,7 @@ function configureActiveConversation(client: CompanionClient): void {
 					name: "Test conversation",
 					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
 					live: {
-						isStreaming: false,
+						isStreaming,
 						isCompacting: false,
 						isRetrying: false,
 						retryAttempt: 0,
@@ -144,6 +144,39 @@ function configureSelectedModel(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("composer", () => {
+	it("acknowledges Stop locally while Pi cancellation is still settling", async () => {
+		const { client } = createTestClient();
+		client.message.abort = vi.fn(() => new Promise(() => undefined));
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { onboarding: COMPLETE_ONBOARDING, character: THEMED_CHARACTER } as never,
+			}),
+		);
+		configureActiveConversation(client, true);
+		configureSelectedModel(client);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					reply: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+					vision: { mode: "auto" as const },
+					onboardingComplete: true,
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole("button", { name: zhCN.composer.stopLabel }));
+		expect(client.message.abort).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("button", { name: zhCN.composer.stopLabel })).toBeNull();
+		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
+	});
+
 	it("does not repeat a provider name that is already the model label", () => {
 		expect(
 			configuredModelLabel({

@@ -11,21 +11,17 @@ import path from "node:path";
 import type { MemoryTdaiConfig } from "../../config.js";
 import type { IMemoryStore, IEmbeddingService, StoreLogger } from "./types.js";
 import { VectorStore } from "./sqlite.js";
-import { TcvdbMemoryStore } from "./tcvdb.js";
 import { createEmbeddingService, NoopEmbeddingService } from "./embedding.js";
 import type { EmbeddingService } from "./embedding.js";
-import { createBM25Encoder } from "./bm25-local.js";
-import type { BM25LocalEncoder } from "./bm25-local.js";
 
 // Re-export for convenience
-export type { IMemoryStore, IEmbeddingService, StoreLogger, BM25LocalEncoder };
+export type { IMemoryStore, IEmbeddingService, StoreLogger };
 
 const TAG = "[memory-tdai][factory]";
 
 export interface StoreBundle {
 	store: IMemoryStore;
 	embedding: IEmbeddingService;
-	bm25Encoder?: BM25LocalEncoder;
 	/** Snapshot of current store config for manifest writing. */
 	storeSnapshot: import("../../utils/manifest.js").StoreConfigSnapshot;
 }
@@ -45,54 +41,8 @@ export function createStoreBundle(
 	const { logger } = options;
 
 	switch (config.storeBackend) {
-		case "tcvdb": {
-			const tcvdbCfg = config.tcvdb;
-			if (!tcvdbCfg.url || !tcvdbCfg.apiKey) {
-				throw new Error(`${TAG} TCVDB backend requires tcvdb.url and tcvdb.apiKey`);
-			}
-			if (!tcvdbCfg.database) {
-				throw new Error(
-					`${TAG} TCVDB backend requires tcvdb.database — please set a unique database name in your openclaw.json plugin config`,
-				);
-			}
-			if (!Number.isInteger(tcvdbCfg.embeddingDimensions) || tcvdbCfg.embeddingDimensions <= 0) {
-				throw new Error(
-					`${TAG} TCVDB backend requires tcvdb.embeddingDimensions to be a positive integer matching ` +
-						`the output dimension of tcvdb.embeddingModel (${tcvdbCfg.embeddingModel})`,
-				);
-			}
-			const bm25Encoder = createBM25Encoder(config.bm25, logger);
-			const database = tcvdbCfg.database;
-			const store = new TcvdbMemoryStore({
-				url: tcvdbCfg.url,
-				username: tcvdbCfg.username,
-				apiKey: tcvdbCfg.apiKey,
-				database,
-				embeddingModel: tcvdbCfg.embeddingModel,
-				embeddingDimensions: tcvdbCfg.embeddingDimensions,
-				timeout: tcvdbCfg.timeout,
-				caPemPath: tcvdbCfg.caPemPath,
-				logger,
-				bm25Encoder: bm25Encoder ?? undefined,
-			});
-
-			logger?.debug?.(
-				`${TAG} Store created: backend=tcvdb, database=${database}, model=${tcvdbCfg.embeddingModel}, ` +
-					`bm25=${bm25Encoder ? "enabled" : "disabled"}`,
-			);
-
-			return {
-				store,
-				embedding: new NoopEmbeddingService(),
-				bm25Encoder,
-				storeSnapshot: {
-					type: "tcvdb",
-					tcvdbUrl: tcvdbCfg.url,
-					tcvdbDatabase: database,
-					tcvdbAlias: tcvdbCfg.alias || undefined,
-				},
-			};
-		}
+		case "tcvdb":
+			throw new Error(`${TAG} TCVDB backend is not part of this product release`);
 
 		case "sqlite":
 		default: {

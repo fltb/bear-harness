@@ -13,7 +13,6 @@ import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { projectPiTransientEvent } from "./companion/pi-live-events.js";
 import { PiRuntime } from "./companion/pi-runtime.js";
 import { SessionCatalog } from "./companion/session-catalog.js";
-import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import {
@@ -65,7 +64,6 @@ export class CharacterRuntime {
 	readonly pi: PiRuntime;
 	readonly sessions: SessionCatalog;
 	readonly externalAgentRuns: ExternalAgentRunService;
-	readonly externalAgents: CodexAdapter;
 	readonly auditStore: AuditStore;
 	private readonly explicitMemoryFile: ExplicitMemoryFile;
 	private memory?: TencentDbRuntime;
@@ -231,8 +229,6 @@ export class CharacterRuntime {
 			"pi",
 			new PiAcpAdapter(db, options.systemProviderDir, options.piWorkerPath, options.bundledGit),
 		);
-		this.externalAgents = new CodexAdapter(options.systemDb, db, this.invalidations);
-		executorRouter.register("codex", this.externalAgents);
 		this.externalAgentRuns = new ExternalAgentRunService(
 			db,
 			executorRouter,

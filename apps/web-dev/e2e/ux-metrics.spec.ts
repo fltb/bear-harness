@@ -322,8 +322,20 @@ for (const viewport of [
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
 			await ensureReadyForConversation(page);
 			await prepareVisualState(page, state);
+			const masks = [];
+			if (state === "artifact") {
+				const dialog = page.getByRole("dialog", { name: "e2e-report.txt" });
+				const provenance = dialog.getByRole("region", { name: zhCN.work.result.provenance });
+				masks.push(
+					dialog.getByTestId("artifact-created-at"),
+					provenance.getByTestId("artifact-producer-run"),
+					provenance.getByTestId("artifact-trigger-entry"),
+					provenance.getByRole("list", { name: zhCN.work.result.evidence }),
+				);
+			}
 			await expect(page).toHaveScreenshot(`main-conversation-${state}-${viewport.name}.png`, {
 				maxDiffPixelRatio: 0.005,
+				mask: masks,
 			});
 		});
 	}

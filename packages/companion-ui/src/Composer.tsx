@@ -228,7 +228,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				)}
 			</Show>
 			<Show
-				when={store.activePiLiveState?.isStreaming === true}
+				when={store.activePiLiveState?.isStreaming === true && !store.activeAbortPending}
 				fallback={
 					<Button
 						type="submit"
@@ -239,6 +239,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 							!workflow.modelSelected() ||
 							workflow.modelBusy() ||
 							store.conversationMutationBusy ||
+							store.activeAbortPending ||
 							!workflow.composerText().trim()
 						}
 					>

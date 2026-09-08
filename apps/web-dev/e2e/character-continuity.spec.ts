@@ -452,13 +452,13 @@ test("correction creates a native leaf while feedback stays hidden", async ({ pa
 		feedback: "这不像极昼",
 	});
 	await expect
-		.poll(
-			async () =>
-				(await projection(page, bootstrap.token, conversationId))
-					.filter((entry) => entry.type === "message" && entry.role === "assistant")
-					.at(-1)?.id,
-		)
-		.not.toBe(assistant.id);
+		.poll(async () => {
+			const candidate = (await projection(page, bootstrap.token, conversationId))
+				.filter((entry) => entry.type === "message" && entry.role === "assistant")
+				.at(-1)?.id;
+			return candidate !== undefined && candidate !== assistant.id;
+		})
+		.toBe(true);
 	const correctedId = (await projection(page, bootstrap.token, conversationId))
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.at(-1)?.id;

@@ -50,6 +50,7 @@ import {
 } from "./recovery-state.js";
 import { chooseRecoveryAction } from "./recovery-window.js";
 import { UpdateService } from "./update-service.js";
+import { windowPresentation } from "./window-presentation.js";
 
 const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
@@ -498,11 +499,15 @@ function createMainWindow(): void {
 		},
 	);
 	window.once("ready-to-show", () => {
-		// CI source E2E drives the BrowserWindow through Playwright while keeping it
-		// fully hidden. Local interactive E2E remains visible without taking focus.
-		if (process.env.BEAR_E2E_SOURCE === "1") {
-			if (process.env.CI !== "1") window.showInactive();
-		} else window.show();
+		// CI drives source and packaged windows through Playwright while keeping them
+		// fully hidden. Local E2E remains visible without taking focus.
+		const presentation = windowPresentation({
+			sourceE2E: isSourceE2E,
+			packagedE2E: isPackagedE2E,
+			ci: process.env.CI === "1",
+		});
+		if (presentation === "inactive") window.showInactive();
+		if (presentation === "active") window.show();
 	});
 	if (loadFromHtml) void window.loadFile(rendererHtmlPath);
 	else void window.loadURL(DEV_RENDERER_URL);

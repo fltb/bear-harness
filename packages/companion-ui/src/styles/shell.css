@@ -152,7 +152,7 @@
 	@apply block size-3.5 shrink-0;
 }
 .conversation-actions button[data-tooltip]::after {
-	content: attr(data-tooltip);
+	content: none;
 	@apply pointer-events-none absolute right-0 whitespace-nowrap rounded-md px-2 py-1 text-xs opacity-0;
 	top: calc(100% + 6px);
 	z-index: 20;
@@ -166,6 +166,7 @@
 }
 .conversation-actions button[data-tooltip]:hover::after,
 .conversation-actions button[data-tooltip]:focus-visible::after {
+	content: attr(data-tooltip);
 	@apply opacity-100;
 	transform: translateY(0);
 }

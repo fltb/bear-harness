@@ -35,7 +35,7 @@ function unpackedRoot() {
 	return join(release, unpacked, "resources/app.asar.unpacked");
 }
 
-const modules = join(unpackedRoot(), "dist/main/node_modules");
+const modules = join(unpackedRoot(), "node_modules");
 const expectedPath = join(modules, ...expected.split("/"));
 if (!existsSync(join(expectedPath, "package.json"))) {
 	throw new Error(`Packaged target binding is missing: ${expectedPath}`);

@@ -23,7 +23,7 @@
 		"pretypecheck": "npm --prefix ../i18n run build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test:unit": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run",
-		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run --coverage"
+		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && BEAR_COVERAGE=1 vitest run --coverage"
 	},
 	"dependencies": {
 		"@bear-harness/companion-client": "file:../companion-client",

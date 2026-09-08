@@ -188,27 +188,31 @@ $$`);
 		expect(source).not.toContain("secret");
 	});
 
-	it("renders the frozen 64KiB and 200-block stress fixture within its timing budget", () => {
-		const source = markdownStressFixture();
-		expect(source.length).toBe(65_536);
-		const repeated: number[] = [];
-		for (let run = 0; run < 12; run += 1) {
-			repeated.push(wallMilliseconds(() => renderMarkdown(source)));
-		}
-		// The amortized budget catches parser/highlighter regressions without
-		// turning one scheduler pause or forced GC into an intermittent failure.
-		expect(mean(repeated)).toBeLessThanOrEqual(350);
+	it.skipIf(process.env.BEAR_COVERAGE === "1")(
+		"renders the frozen 64KiB and 200-block stress fixture within its timing budget",
+		() => {
+			const source = markdownStressFixture();
+			expect(source.length).toBe(65_536);
+			const repeated: number[] = [];
+			for (let run = 0; run < 12; run += 1) {
+				repeated.push(wallMilliseconds(() => renderMarkdown(source)));
+			}
+			// The amortized budget catches parser/highlighter regressions without
+			// turning one scheduler pause or forced GC into an intermittent failure.
+			expect(mean(repeated)).toBeLessThanOrEqual(350);
 
-		const [text, setText] = createSignal(source);
-		const view = render(() => <MessageContent text={text()} format="markdown" streaming />);
-		expect(view.getByTestId("message-streaming-plain")).toBeVisible();
-		const incremental: number[] = [];
-		for (let run = 0; run < 20; run += 1) {
-			incremental.push(wallMilliseconds(() => setText(`${source}${String(run)}`)));
-		}
-		expect(mean(incremental)).toBeLessThanOrEqual(50);
-		view.unmount();
-	}, 10_000);
+			const [text, setText] = createSignal(source);
+			const view = render(() => <MessageContent text={text()} format="markdown" streaming />);
+			expect(view.getByTestId("message-streaming-plain")).toBeVisible();
+			const incremental: number[] = [];
+			for (let run = 0; run < 20; run += 1) {
+				incremental.push(wallMilliseconds(() => setText(`${source}${String(run)}`)));
+			}
+			expect(mean(incremental)).toBeLessThanOrEqual(50);
+			view.unmount();
+		},
+		10_000,
+	);
 
 	it.runIf(typeof (globalThis as { gc?: () => void }).gc === "function")(
 		"releases the stress projection after unmount and forced garbage collection",

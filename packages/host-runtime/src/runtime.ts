@@ -343,7 +343,6 @@ export class HostRuntime {
 			appSettings: this.appSettings,
 			credentials: this.credentials,
 			externalAgentRuns: runtime.externalAgentRuns,
-			externalAgents: runtime.externalAgents,
 			artifacts: runtime.artifacts,
 			artifactPresenter: this.options.artifactPresenter,
 			characterPackagePresenter: this.options.characterPackagePresenter,

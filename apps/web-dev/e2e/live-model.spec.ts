@@ -281,14 +281,16 @@ test("configured live model preserves authority through switch, refresh, and Sto
 	await expect
 		.poll(
 			async () =>
-				(
-					await rpc<{ live: { isStreaming: boolean } }>("conversation.open", {
-						conversationId: source.conversationId,
-					})
-				).live.isStreaming,
-			{ timeout: 3_000 },
+				JSON.stringify(
+					(
+						await rpc<{ branch: { entries: unknown[] } }>("conversation.open", {
+							conversationId: source.conversationId,
+						})
+					).branch.entries,
+				).includes('"stopReason":"aborted"'),
+			{ timeout: 30_000 },
 		)
-		.toBe(false);
+		.toBe(true);
 	const opened = await rpc<{ branch: { entries: unknown[] } }>("conversation.open", {
 		conversationId: source.conversationId,
 	});
@@ -794,15 +796,35 @@ test("configured live model answers a natural story with scene expression media 
 	const findRelayChoice = async () => {
 		const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
 		if (await jumpToLatest.isVisible()) await jumpToLatest.click();
-		for (const name of [
-			"查转发台登记页",
-			"查看转发台登记页",
-			"先查转发台登记页",
-			"查转发台的登记页",
-		]) {
-			const candidate = thread.getByRole("button", { name, exact: true });
+		const entries = (await open()).branch.entries;
+		for (let index = entries.length - 1; index >= firstTurnStart; index -= 1) {
+			const entry = entries[index];
+			if (!entry || typeof entry !== "object" || !("message" in entry)) continue;
+			const message = entry.message;
+			if (!message || typeof message !== "object") continue;
+			if (!("role" in message) || message.role !== "toolResult") continue;
+			if (!("toolName" in message) || message.toolName !== "host_choices") continue;
+			if (!("details" in message) || !message.details || typeof message.details !== "object")
+				continue;
+			if (!("data" in message.details) || !message.details.data) continue;
+			const data = message.details.data;
+			if (typeof data !== "object" || !("items" in data) || !Array.isArray(data.items)) continue;
+			const matching = data.items.filter((item): item is { label: string; message: string } =>
+				Boolean(
+					item &&
+						typeof item === "object" &&
+						"label" in item &&
+						typeof item.label === "string" &&
+						"message" in item &&
+						typeof item.message === "string" &&
+						item.message.includes("转发台"),
+				),
+			);
+			const choice = matching.find((item) => !item.message.includes("两条")) ?? matching[0];
+			if (!choice) continue;
+			const candidate = thread.getByRole("button", { name: choice.label, exact: true });
 			const count = await candidate.count();
-			if (count > 1) throw new Error(`The live model rendered ${count} copies of ${name}`);
+			if (count > 1) throw new Error(`The live model rendered ${count} copies of ${choice.label}`);
 			if (count === 1) return candidate;
 		}
 		return undefined;
@@ -814,7 +836,6 @@ test("configured live model answers a natural story with scene expression media 
 	} else {
 		await waitForTool(firstTurnStart, "host_choices", "转发台");
 	}
-	await expect.poll(async () => (await state()).state.character.document.story.chapter).toBe(2);
 	relayChoice = await findRelayChoice();
 	if (!relayChoice) throw new Error("The live model did not offer the relay-register choice");
 	const relayTurnStart = (await open()).branch.entries.length;

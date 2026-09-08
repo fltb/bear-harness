@@ -31,28 +31,63 @@ if (!existsSync(attributionPath)) {
 // Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
-// Native bindings are staged beneath dist/main/node_modules immediately before
-// packaging. Every artifact therefore contains exactly the binding built for
-// its runner target, never a foreign platform or architecture.
-const nativeBindingExcludes = {
+const productionExcludes = [
+	"!dist/main/node_modules/**/*",
+	"!dist/**/*.map",
+	"!dist/**/*.d.ts",
+	"!dist/**/*.tsbuildinfo",
+	"!node_modules/@openai/codex*/**/*",
+	"!node_modules/@agentclientprotocol/codex-acp/**/*",
+	"!node_modules/@tencentdb-agent-memory/**/*",
+	"!node_modules/tesseract.js/**/*",
+	"!node_modules/tesseract.js-core/**/*",
+	"!node_modules/officeparser/dist/officeparser.browser*",
+	"!node_modules/node-llama-cpp/llama/gitRelease.bundle",
+	"!node_modules/pdfjs-dist/build/**/*",
+	"!node_modules/pdfjs-dist/web/**/*",
+	"!**/*.map",
+	"!**/*.d.ts",
+	"!**/*.tsbuildinfo",
+];
+
+const nativePackageExcludes = {
 	mac: [
-		"!dist/main/node_modules/@node-llama-cpp/linux-*/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/win-*/**/*",
+		"!node_modules/@node-llama-cpp/linux-*/**/*",
+		"!node_modules/@node-llama-cpp/win-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-linux-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-win32-*/**/*",
 	],
 	win: [
-		"!dist/main/node_modules/@node-llama-cpp/linux-*/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/mac-*/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/win-arm64/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
+		"!node_modules/@node-llama-cpp/linux-*/**/*",
+		"!node_modules/@node-llama-cpp/mac-*/**/*",
+		"!node_modules/@node-llama-cpp/win-arm64/**/*",
+		"!node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
+		"!node_modules/**/@mariozechner/clipboard-darwin-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-linux-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-win32-arm64/**/*",
 	],
 	linux: [
-		"!dist/main/node_modules/@node-llama-cpp/mac-*/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/win-*/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/linux-arm64/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/linux-armv7l/**/*",
-		"!dist/main/node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
+		"!node_modules/@node-llama-cpp/mac-*/**/*",
+		"!node_modules/@node-llama-cpp/win-*/**/*",
+		"!node_modules/@node-llama-cpp/linux-arm64/**/*",
+		"!node_modules/@node-llama-cpp/linux-armv7l/**/*",
+		"!node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
+		"!node_modules/**/@mariozechner/clipboard-darwin-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-win32-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-linux-arm64-*/**/*",
+		"!node_modules/**/@mariozechner/clipboard-linux-riscv64-*/**/*",
 	],
 };
+
+export function applicationFilesFor(platform?: "mac" | "win" | "linux"): string[] {
+	return [
+		"dist/**",
+		"!dist/.runtime-build/**",
+		"!dist/.windows-runtime/**",
+		...productionExcludes,
+		...(platform ? nativePackageExcludes[platform] : []),
+	];
+}
 
 export function extraResourcesFor(platform: NodeJS.Platform = process.platform) {
 	return [
@@ -63,7 +98,10 @@ export function extraResourcesFor(platform: NodeJS.Platform = process.platform) 
 		...(platform === "win32"
 			? [
 					{ from: "dist/.windows-runtime/git", to: "git" },
-					{ from: "dist/.windows-runtime/manifest.json", to: "git-runtime-manifest.json" },
+					{
+						from: "dist/.windows-runtime/manifest.json",
+						to: "git-runtime-manifest.json",
+					},
 					{
 						from: "dist/.windows-runtime/notices",
 						to: "third-party/git-for-windows",
@@ -82,17 +120,18 @@ const config: Configuration = {
 		app: ".",
 		output: "release",
 	},
+	electronLanguages: ["en", "zh_CN", "zh_TW"],
 	asar: true,
 	// Native modules and dependent shared libraries cannot be loaded from ASAR.
-	// node-llama-cpp's package chooses the staged target binding at runtime.
+	// node-llama-cpp chooses the target binding from the production dependency tree.
 	asarUnpack: [
-		"dist/main/node_modules/node-llama-cpp/**/*",
-		"dist/main/node_modules/@node-llama-cpp/**/*",
+		"node_modules/node-llama-cpp/**/*",
+		"node_modules/@node-llama-cpp/**/*",
 		"node_modules/@napi-rs/canvas*/**/*",
 		"node_modules/sqlite-vec*/**/*",
 		"node_modules/@node-rs/jieba*/**/*",
 	],
-	files: ["dist/**", "!dist/.runtime-build/**", "!dist/.windows-runtime/**"],
+	files: applicationFilesFor(),
 	// Desktop identity: package.json metadata's desktopName is overridden to
 	// appId so Linux desktop integration matches the configured app id.
 	extraMetadata: {
@@ -102,7 +141,7 @@ const config: Configuration = {
 	mac: {
 		identity: null,
 		icon,
-		files: nativeBindingExcludes.mac,
+		files: applicationFilesFor("mac"),
 	},
 	linux: {
 		category: "Utility",
@@ -114,11 +153,11 @@ const config: Configuration = {
 			},
 		},
 		icon,
-		files: nativeBindingExcludes.linux,
+		files: applicationFilesFor("linux"),
 	},
 	win: {
 		icon,
-		files: nativeBindingExcludes.win,
+		files: applicationFilesFor("win"),
 	},
 };
 

@@ -152,6 +152,7 @@ export interface CompanionStore {
 	readonly activeActivity: ConversationActivity | undefined;
 	readonly liveConnectionStatus: "connecting" | "connected" | "reconnecting";
 	readonly conversationMutationBusy: boolean;
+	readonly activeAbortPending: boolean;
 	readonly activeTimeline: readonly TimelineProjectionItem[];
 	readonly runs: RunInfo[];
 	readonly character: CharacterDisplay | undefined;
@@ -273,6 +274,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const [cacheRevision, setCacheRevision] = createSignal(0);
 	const [operationError, setOperationError] = createSignal<CompanionErrorMetadata | null>(null);
 	const [mutationSessions, setMutationSessions] = createSignal<ReadonlySet<string>>(new Set());
+	const [abortSessions, setAbortSessions] = createSignal<ReadonlySet<string>>(new Set());
 	const conversationMutationBusy = () =>
 		mutationSessions().has(activeConversationId() ?? "") ||
 		submissionsBySession().get(activeConversationId() ?? "")?.state === "submitting";
@@ -1979,6 +1981,9 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		get conversationMutationBusy() {
 			return conversationMutationBusy();
 		},
+		get activeAbortPending() {
+			return abortSessions().has(activeConversationId() ?? "");
+		},
 		get activeTimeline() {
 			const detail = activeDetail();
 			const id = activeConversationId();
@@ -2278,12 +2283,23 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				text,
 				state: "submitting",
 			}),
-		abort: () =>
-			run("message.abort", async () => {
-				const conversationId = requireConversation();
-				await invoke(client, () => client.message.abort({ conversationId }));
-				await refreshConversation(conversationId);
-			}),
+		abort: async () => {
+			const conversationId = requireConversation();
+			if (abortSessions().has(conversationId)) return;
+			setAbortSessions((current) => new Set(current).add(conversationId));
+			try {
+				await run("message.abort", async () => {
+					await invoke(client, () => client.message.abort({ conversationId }));
+					await refreshConversation(conversationId);
+				});
+			} finally {
+				setAbortSessions((current) => {
+					const next = new Set(current);
+					next.delete(conversationId);
+					return next;
+				});
+			}
+		},
 		submitOnboarding: (stepId, answer) =>
 			run("onboarding.submit", async () => {
 				await onboarding.submit(stepId, answer);

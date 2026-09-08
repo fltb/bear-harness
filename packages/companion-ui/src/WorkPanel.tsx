@@ -551,7 +551,7 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 						</div>
 						<div>
 							<dt>{t("work.result.createdAt")}</dt>
-							<dd>{props.selection.artifact.createdAt}</dd>
+							<dd data-testid="artifact-created-at">{props.selection.artifact.createdAt}</dd>
 						</div>
 					</dl>
 					<section class="attachment-preview-metadata" aria-label={t("work.result.provenance")}>
@@ -560,7 +560,7 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 							<div>
 								<dt>{t("work.result.producerRun")}</dt>
 								<dd>
-									<code>{props.selection.run.id}</code>
+									<code data-testid="artifact-producer-run">{props.selection.run.id}</code>
 								</dd>
 							</div>
 							<div>
@@ -570,7 +570,9 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 							<div>
 								<dt>{t("work.result.triggerEntry")}</dt>
 								<dd>
-									<code>{props.selection.run.triggerEntryId}</code>
+									<code data-testid="artifact-trigger-entry">
+										{props.selection.run.triggerEntryId}
+									</code>
 								</dd>
 							</div>
 						</dl>

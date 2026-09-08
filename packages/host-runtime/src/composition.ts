@@ -96,27 +96,6 @@ export interface HostCompositionContext {
 	};
 	memoryScope: { readonly installationId: string; readonly userId: string };
 	externalAgentRuns: ExternalAgentRunService;
-	externalAgents: {
-		discover(): Promise<
-			Array<{
-				candidatePath: string;
-				canonicalPath: string | null;
-				version: string | null;
-				sha256: string | null;
-				status: "usable" | "not_found" | "rejected";
-			}>
-		>;
-		consent(params: {
-			canonicalPath: string;
-			version: string;
-			sha256: string;
-		}): Promise<{ profileId: string; version: string; sha256: string }>;
-		status(): Promise<
-			| { available: true; profileId: string; version: string; hash: string }
-			| { available: false; reason: "no_codex_found" }
-			| { available: false; reason: "not_connected" }
-		>;
-	};
 	artifacts: ArtifactStore;
 	/** Optional trusted OS-shell adapter; renderer code never receives artifact paths. */
 	artifactPresenter?: ArtifactPresenter;
@@ -370,7 +349,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			};
 		}
 		s.seedCharacter(character, "imported");
-		const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
 		s.invalidations.invalidate(CacheKey.characters());
 		return { character: s.characterLoader.display(character) };
 	});
@@ -872,22 +850,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { conversationId, selected: model };
 	});
 
-	// --- external agents and direct runs -----------------------------------------
-	dispatcher.registerHandler(RPC.externalAgent.discoverCodex, async () => ({
-		candidates: await s.externalAgents.discover(),
-	}));
-	dispatcher.registerHandler(RPC.externalAgent.connectCodex, async (_p) => {
-		const connected = await s.externalAgents.consent(_p);
-		return {
-			profileId: connected.profileId,
-			version: connected.version,
-			hash: connected.sha256,
-		};
-	});
-	dispatcher.registerHandler(RPC.externalAgent.status, async () => ({
-		pi: { available: true as const, profileId: "pi-default" as const },
-		codex: await s.externalAgents.status(),
-	}));
+	// --- direct Pi runs ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.run.list, async (request) => {
 		if (request.conversationId) await requireOwnedConversation(s, request.conversationId);
 		return s.externalAgentRuns.listPage(getCompanionId(s), request);

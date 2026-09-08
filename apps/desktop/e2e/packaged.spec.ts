@@ -30,6 +30,29 @@ function waitForDevTools(child: ReturnType<typeof spawn>): Promise<string> {
 	});
 }
 
+function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<boolean> {
+	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+	return new Promise((resolve) => {
+		const timeout = setTimeout(() => {
+			child.off("exit", exited);
+			resolve(false);
+		}, timeoutMs);
+		const exited = () => {
+			clearTimeout(timeout);
+			resolve(true);
+		};
+		child.once("exit", exited);
+	});
+}
+
+async function stopChild(child: ReturnType<typeof spawn>): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	child.kill("SIGTERM");
+	if (await waitForExit(child, 5_000)) return;
+	child.kill("SIGKILL");
+	await waitForExit(child, 5_000);
+}
+
 /**
  * Packaged-app smoke: launches the real installed binary (located by
  * resolve-packaged-binary.mjs, which sets BEAR_PACKAGED_BINARY) and verifies
@@ -84,7 +107,7 @@ test("packaged app shows the configured product", async () => {
 		expect(setupWindow.url().startsWith("file://")).toBe(true);
 	} finally {
 		await browser?.close().catch(() => {});
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-		rmSync(tempRoot, { recursive: true, force: true });
+		await stopChild(child);
+		rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 });
