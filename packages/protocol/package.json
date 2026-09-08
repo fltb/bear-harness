@@ -20,8 +20,8 @@
 	},
 	"dependencies": {
 		"@bear-harness/schema": "file:../schema",
-		"@earendil-works/pi-agent-core": "^0.84.3",
-		"@earendil-works/pi-coding-agent": "^0.84.3"
+		"@earendil-works/pi-agent-core": "^0.85.1",
+		"@earendil-works/pi-coding-agent": "^0.85.1"
 	},
 	"devDependencies": {
 		"typescript": "7.0.2",
