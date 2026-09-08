@@ -1,7 +1,7 @@
 import type { LivePush } from "@bear-harness/protocol";
 import { CacheKey, ProviderLoginResponse } from "@bear-harness/protocol/schema";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Credential as PiCredential, Provider } from "@earendil-works/pi-ai";
 import { eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { ArtifactPresenter } from "./artifacts/presentation.js";
@@ -58,6 +58,11 @@ export interface HostRuntimeOptions {
 	characterSeedRoot: string;
 	productConfig: RuntimeProductConfig;
 	credentialVault: CredentialVault;
+	/** Trusted Host-only credentials injected for this process and never persisted. */
+	sessionProviderCredentials?: readonly {
+		readonly providerId: string;
+		readonly credential: PiCredential;
+	}[];
 	memoryScope?: { readonly installationId: string; readonly userId: string };
 	nativeProviders?: readonly Provider[];
 	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
@@ -246,6 +251,13 @@ export class HostRuntime {
 		if (this.closed) throw new Error("Host runtime is closed");
 		const role = this.lifecycle.active().runtime;
 		try {
+			for (const seed of this.options.sessionProviderCredentials ?? []) {
+				await this.credentials.set(
+					seed.providerId,
+					{ piCredential: seed.credential },
+					{ sessionOnly: true },
+				);
+			}
 			this.uninstallFsAudit = installFsAudit({
 				auditRoots: this.options.auditRoots ?? [this.options.dataDir],
 				logger: this.options.logger,

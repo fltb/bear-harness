@@ -21,7 +21,13 @@
 			"ignoreDependencies": ["node-llama-cpp"]
 		},
 		"apps/web-dev": {
-			"entry": ["server/index.ts", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"],
+			"entry": [
+				"server/index.ts",
+				"server/**/*.spec.ts",
+				"e2e/**/*.ts",
+				"scripts/**/*.mjs",
+				"*.config.ts"
+			],
 			"project": [
 				"src/**/*.{ts,tsx}",
 				"server/**/*.ts",

@@ -12,11 +12,25 @@ const secondaryModelId = process.env.BEAR_E2E_SECONDARY_MODEL_ID ?? "";
 const apiKey = process.env.BEAR_E2E_API_KEY ?? "";
 const customBaseUrl = process.env.BEAR_E2E_CUSTOM_BASE_URL ?? "";
 const usePiConfig = process.env.BEAR_E2E_USE_PI_CONFIG === "1";
-const credentialsAvailable = apiKey.length > 0 || usePiConfig;
-const configuredProviderId = usePiConfig ? "e2e-live-openai" : providerId;
+const useCodexSession = process.env.BEAR_E2E_USE_CODEX_SESSION === "1";
+const credentialsAvailable = apiKey.length > 0 || usePiConfig || useCodexSession;
+const configuredProviderId = useCodexSession
+	? "openai-codex"
+	: usePiConfig
+		? "e2e-live-openai"
+		: providerId;
 const liveReplyTimeout = 180_000;
 
 type LiveRpc = <T>(channel: string, data: unknown) => Promise<T>;
+
+async function setSelectedApiKey(rpc: LiveRpc, selectedApiKey: string): Promise<void> {
+	if (useCodexSession || !selectedApiKey) return;
+	await rpc("provider.setApiKey", {
+		providerId: configuredProviderId,
+		apiKey: selectedApiKey,
+		sessionOnly: true,
+	});
+}
 
 async function completeLiveOnboarding(rpc: LiveRpc, context: string): Promise<void> {
 	await rpc("systemOnboarding.completeModel", {
@@ -112,12 +126,7 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 			models: [{ id: modelId }],
 		});
 	}
-	if (selectedApiKey)
-		await rpc("provider.setApiKey", {
-			providerId: configuredProviderId,
-			apiKey: selectedApiKey,
-			sessionOnly: true,
-		});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	await rpc("model.enable", {
 		providerId: configuredProviderId,
 		modelId,
@@ -199,11 +208,7 @@ test("configured live model preserves authority through switch, refresh, and Sto
 			models: [{ id: modelId }],
 		});
 	}
-	await rpc("provider.setApiKey", {
-		providerId: configuredProviderId,
-		apiKey: selectedApiKey,
-		sessionOnly: true,
-	});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	await rpc("model.enable", {
 		providerId: configuredProviderId,
 		modelId,
@@ -237,8 +242,17 @@ test("configured live model preserves authority through switch, refresh, and Sto
 	);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	const streaming = page.getByTestId("streaming-assistant-message");
-	await expect(streaming).not.toHaveText("", { timeout: liveReplyTimeout });
-	const partialBeforeSwitch = (await streaming.textContent()) ?? "";
+	const streamedText = () =>
+		streaming.getByTestId("message-content").evaluateAll((elements) =>
+			elements
+				.filter((element) => element.parentElement?.classList.contains("msg"))
+				.map((element) => element.textContent ?? "")
+				.join("\n"),
+		);
+	await expect
+		.poll(async () => (await streamedText()).trim().length, { timeout: liveReplyTimeout })
+		.toBeGreaterThan(0);
+	const partialBeforeSwitch = await streamedText();
 	expect(partialBeforeSwitch.length).toBeGreaterThan(0);
 	await parallelButton.click();
 	await activeConversationId(page, parallel.conversationId);
@@ -282,7 +296,12 @@ test("configured live model preserves authority through switch, refresh, and Sto
 			"stopReason" in entry.message &&
 			entry.message.stopReason === "aborted",
 	) as { message?: { content?: unknown[] } } | undefined;
-	expect(aborted?.message?.content?.length).toBeGreaterThan(0);
+	expect(aborted).toBeDefined();
+	const preservedAssistantText = projectPiEntries(opened.branch.entries)
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
+		.map((entry) => entry.text ?? "")
+		.join("\n");
+	expect(preservedAssistantText).toContain(partialBeforeSwitch.trim());
 	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
 	await page.reload();
 	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
@@ -323,12 +342,7 @@ test("configured live model answers in character and obeys the explicit-memory b
 			models: [{ id: modelId }],
 		});
 	}
-	if (selectedApiKey)
-		await rpc("provider.setApiKey", {
-			providerId: configuredProviderId,
-			apiKey: selectedApiKey,
-			sessionOnly: true,
-		});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	await rpc("model.enable", {
 		providerId: configuredProviderId,
 		modelId,
@@ -425,7 +439,7 @@ test("configured live model answers through the native conversation journey", as
 		const selected = selectedPiProviderConfig([modelId, secondaryModelId]);
 		selectedApiKey = selected.apiKey;
 		await rpc("provider.importPiConfig", { configJson: selected.configJson });
-	} else {
+	} else if (!useCodexSession) {
 		test.skip(!customBaseUrl, "The complete journey needs a custom provider base URL");
 		await rpc("provider.customUpsert", {
 			providerId: configuredProviderId,
@@ -434,11 +448,7 @@ test("configured live model answers through the native conversation journey", as
 			models: [{ id: modelId }, { id: secondaryModelId }],
 		});
 	}
-	await rpc("provider.setApiKey", {
-		providerId: configuredProviderId,
-		apiKey: selectedApiKey,
-		sessionOnly: true,
-	});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	for (const liveModelId of [modelId, secondaryModelId]) {
 		await rpc("model.enable", {
 			providerId: configuredProviderId,
@@ -480,9 +490,27 @@ test("configured live model answers through the native conversation journey", as
 			.map((entry) => entry.text?.trim() ?? "");
 	const waitSettled = async (conversationId: string, marker: string) => {
 		await expect
-			.poll(async () => (await assistantTexts(conversationId)).join("\n"), {
-				timeout: liveReplyTimeout,
-			})
+			.poll(
+				async () => {
+					const snapshot = await open(conversationId);
+					const failed = snapshot.branch.entries.findLast(
+						(entry) =>
+							entry !== null &&
+							typeof entry === "object" &&
+							"message" in entry &&
+							entry.message !== null &&
+							typeof entry.message === "object" &&
+							"stopReason" in entry.message &&
+							entry.message.stopReason === "error",
+					);
+					if (failed) throw new Error(`Live journey model error: ${JSON.stringify(failed)}`);
+					return projectPiEntries(snapshot.branch.entries)
+						.filter((entry) => entry.type === "message" && entry.role === "assistant")
+						.map((entry) => entry.text?.trim() ?? "")
+						.join("\n");
+				},
+				{ timeout: liveReplyTimeout },
+			)
 			.toContain(marker);
 		await expect
 			.poll(async () => (await open(conversationId)).live.isStreaming, {
@@ -645,11 +673,7 @@ test("configured live model answers a natural story with scene expression media 
 			models: [{ id: modelId }],
 		});
 	}
-	await rpc("provider.setApiKey", {
-		providerId: configuredProviderId,
-		apiKey: selectedApiKey,
-		sessionOnly: true,
-	});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	await rpc("model.enable", {
 		providerId: configuredProviderId,
 		modelId,
@@ -727,7 +751,12 @@ test("configured live model answers a natural story with scene expression media 
 	expect(firstChapterText).not.toContain("06:40");
 	expect(firstChapterText).not.toContain("风向");
 	await expect.poll(async () => (await state()).state.character.document.story.active).toBe(true);
-	await expect.poll(async () => (await state()).state.character.document.story.chapter).toBe(1);
+	await expect
+		.poll(async () => {
+			const chapter = (await state()).state.character.document.story.chapter;
+			return chapter === 1 || chapter === 2;
+		})
+		.toBe(true);
 	await expect.poll(async () => (await state()).state.display.sceneId).toBe("archive_gallery");
 	await expect.poll(async () => (await state()).state.display.expressionId).toBe("reflective");
 
@@ -754,7 +783,9 @@ test("configured live model answers a natural story with scene expression media 
 			"查转发台的登记页",
 		]) {
 			const candidate = thread.getByRole("button", { name, exact: true });
-			if ((await candidate.count()) === 1) return candidate;
+			const count = await candidate.count();
+			if (count > 1) throw new Error(`The live model rendered ${count} copies of ${name}`);
+			if (count === 1) return candidate;
 		}
 		return undefined;
 	};
@@ -765,6 +796,7 @@ test("configured live model answers a natural story with scene expression media 
 	} else {
 		await waitForTool(firstTurnStart, "host_choices", "转发台");
 	}
+	await expect.poll(async () => (await state()).state.character.document.story.chapter).toBe(2);
 	relayChoice = await findRelayChoice();
 	if (!relayChoice) throw new Error("The live model did not offer the relay-register choice");
 	const relayTurnStart = (await open()).branch.entries.length;
@@ -821,11 +853,7 @@ test("configured live model answers naturally with rendered structured content",
 			models: [{ id: modelId }],
 		});
 	}
-	await rpc("provider.setApiKey", {
-		providerId: configuredProviderId,
-		apiKey: selectedApiKey,
-		sessionOnly: true,
-	});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	await rpc("model.enable", {
 		providerId: configuredProviderId,
 		modelId,
@@ -951,7 +979,7 @@ test("both configured release models survive ten natural mixed-content turns", a
 		const selected = selectedPiProviderConfig([modelId, secondaryModelId]);
 		selectedApiKey = selected.apiKey;
 		await rpc("provider.importPiConfig", { configJson: selected.configJson });
-	} else {
+	} else if (!useCodexSession) {
 		test.skip(!customBaseUrl, "The two-model corpus needs a custom provider base URL");
 		await rpc("provider.customUpsert", {
 			providerId: configuredProviderId,
@@ -960,11 +988,7 @@ test("both configured release models survive ten natural mixed-content turns", a
 			models: [{ id: modelId }, { id: secondaryModelId }],
 		});
 	}
-	await rpc("provider.setApiKey", {
-		providerId: configuredProviderId,
-		apiKey: selectedApiKey,
-		sessionOnly: true,
-	});
+	await setSelectedApiKey(rpc, selectedApiKey);
 	for (const currentModelId of [modelId, secondaryModelId]) {
 		await rpc("model.enable", {
 			providerId: configuredProviderId,
@@ -1005,10 +1029,12 @@ test("both configured release models survive ten natural mixed-content turns", a
 		await activeConversationId(page, conversation.conversationId);
 		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 		for (const prompt of prompts) {
-			const before = projectPiEntries(
-				(await rpc<Opened>("conversation.open", { conversationId: conversation.conversationId }))
-					.branch.entries,
-			).filter((entry) => entry.type === "message" && entry.role === "assistant").length;
+			const beforeSnapshot = await rpc<Opened>("conversation.open", {
+				conversationId: conversation.conversationId,
+			});
+			const before = projectPiEntries(beforeSnapshot.branch.entries).filter(
+				(entry) => entry.type === "message" && entry.role === "assistant",
+			).length;
 			await composer.fill(prompt);
 			await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 			await expect
@@ -1018,6 +1044,17 @@ test("both configured release models survive ten natural mixed-content turns", a
 							conversationId: conversation.conversationId,
 						});
 						if (opened.live.isStreaming) return before;
+						const failed = opened.branch.entries.findLast(
+							(entry) =>
+								entry !== null &&
+								typeof entry === "object" &&
+								"message" in entry &&
+								entry.message !== null &&
+								typeof entry.message === "object" &&
+								"stopReason" in entry.message &&
+								entry.message.stopReason === "error",
+						);
+						if (failed) throw new Error(`Live corpus model error: ${JSON.stringify(failed)}`);
 						return projectPiEntries(opened.branch.entries).filter(
 							(entry) => entry.type === "message" && entry.role === "assistant",
 						).length;
@@ -1033,6 +1070,8 @@ test("both configured release models survive ten natural mixed-content turns", a
 				(entry) => entry.type === "message" && entry.role === "assistant",
 			);
 			if (!latestAssistant) throw new Error("The live model turn has no authoritative reply");
+			if (!latestAssistant.text?.trim())
+				throw new Error("The live model turn has an empty authoritative reply");
 			await expect(
 				page
 					.getByRole("region", { name: zhCN.messages.conversation })

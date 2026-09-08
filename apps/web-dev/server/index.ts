@@ -14,6 +14,7 @@ import {
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
+import { readCodexSessionCredential } from "./codex-session-credential.ts";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
 import { MAX_RPC_REQUEST_BYTES } from "./http-contract.ts";
@@ -52,6 +53,9 @@ if (configuredPiWorkerPath && !isAbsolute(configuredPiWorkerPath)) {
 }
 const piWorkerPath = configuredPiWorkerPath
 	? realpathSync.native(configuredPiWorkerPath)
+	: undefined;
+const codexSessionCredential = process.env.BEAR_WEB_DEV_CODEX_AUTH_FILE
+	? readCodexSessionCredential(process.env.BEAR_WEB_DEV_CODEX_AUTH_FILE)
 	: undefined;
 const diagnostics: Diagnostics = createDiagnostics({
 	app: {
@@ -191,6 +195,7 @@ const runtime = createHostRuntime({
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
 	credentialVault: createWebCredentialVault(runtimeLayout.systemRoot),
+	...(codexSessionCredential ? { sessionProviderCredentials: [codexSessionCredential] } : {}),
 	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
 });

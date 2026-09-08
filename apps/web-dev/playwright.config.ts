@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "playwright/test";
@@ -22,6 +22,10 @@ const piWorkerPath = realpathSync.native(
 	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
 );
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
+const codexAuthFile =
+	process.env.BEAR_E2E_USE_CODEX_SESSION === "1"
+		? (process.env.BEAR_E2E_CODEX_AUTH_FILE ?? resolve(homedir(), ".codex", "auth.json"))
+		: "";
 const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");
 process.env.BEAR_WEB_DEV_DATA_DIR = dataDirectory;
 process.env.BEAR_WEB_DEV_DATA_SCOPE = dataScope;
@@ -64,6 +68,7 @@ export default defineConfig({
 				BEAR_WEB_DEV_LAST_RUN_FILE: lastRunFile,
 				BEAR_WEB_DEV_PI_WORKER_PATH: piWorkerPath,
 				BEAR_WEB_DEV_DEBUG: "1",
+				BEAR_WEB_DEV_CODEX_AUTH_FILE: codexAuthFile,
 				BEAR_CUSTOM_PROVIDER_ID: "",
 				BEAR_CUSTOM_PROVIDER_NAME: "",
 				BEAR_CUSTOM_BASE_URL: "",
