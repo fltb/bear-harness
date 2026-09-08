@@ -208,7 +208,9 @@ test("rapid motion interruption and resize leave one coherent surface", async ({
 	await close.click();
 	await trigger.click();
 	await page.setViewportSize({ width: 1280, height: 800 });
+	await expect(page.getByRole("application")).toHaveAttribute("data-layout", "window");
 	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(page.getByRole("application")).toHaveAttribute("data-layout", "mobile");
 	// Crossing responsive modes intentionally closes a UI-local drawer. The
 	// interrupted exit must settle closed, with no orphaned backdrop.
 	const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
@@ -227,47 +229,73 @@ test("stop, error, edit, correction, tool and choice feedback use the shared mot
 	page,
 }) => {
 	await ensureReadyForConversation(page);
-	const animationName = async (target: Locator) => {
+	await page.evaluate(() => {
+		const motionEvents: string[] = [];
+		(window as unknown as { acceptanceMotionEvents: string[] }).acceptanceMotionEvents =
+			motionEvents;
+		document.addEventListener(
+			"animationstart",
+			(event) => motionEvents.push((event as AnimationEvent).animationName),
+			true,
+		);
+	});
+	const resetMotionEvents = () =>
+		page.evaluate(() => {
+			(window as unknown as { acceptanceMotionEvents: string[] }).acceptanceMotionEvents.length = 0;
+		});
+	const expectMotion = async (target: Locator, name: string) => {
 		await expect(target).toBeVisible();
-		return target.evaluate((element) => getComputedStyle(element).animationName);
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() => (window as unknown as { acceptanceMotionEvents: string[] }).acceptanceMotionEvents,
+				),
+			)
+			.toContain(name);
 	};
 
 	await sendMessage(page, "E2E_OK motion states");
 	const userMessage = page
 		.getByRole("article", { name: zhCN.messages.you })
 		.filter({ hasText: "E2E_OK motion states" });
+	await resetMotionEvents();
 	await userMessage.getByRole("button", { name: zhCN.messages.edit }).click();
 	// test-quality-allow locator: the edit surface class is the reusable feedback-motion contract.
-	expect(await animationName(page.locator(".message-inline-edit"))).toBe("motion-feedback-enter");
+	await expectMotion(page.locator(".message-inline-edit"), "motion-feedback-enter");
 	await page.getByRole("button", { name: zhCN.messages.cancel }).click();
 
 	const assistantMessage = page
 		.getByRole("article", { name: "极昼" })
 		.filter({ hasText: "E2E_OK" });
+	await resetMotionEvents();
 	await assistantMessage.getByRole("button", { name: "这不像极昼" }).click();
 	const correction = page.getByRole("dialog", { name: "这不像极昼" });
-	expect(await animationName(correction)).toBe("motion-modal-enter");
+	await expectMotion(correction, "motion-modal-enter");
 	await page.keyboard.press("Escape");
 
+	await resetMotionEvents();
 	await sendMessage(page, "E2E_TOOL_TRIGGER_DAMAGED_LOG");
 	const tool = page.getByRole("article", { name: "host_state 已完成", exact: true });
-	expect(await animationName(tool)).toBe("motion-feedback-enter");
+	await expectMotion(tool, "motion-feedback-enter");
 
+	await resetMotionEvents();
 	await sendMessage(page, "E2E_STORY_ENTRY");
 	const choices = page.getByRole("region", { name: "要进入《未送达的回报》吗？" });
-	expect(await animationName(choices)).toBe("motion-feedback-enter");
+	await expectMotion(choices, "motion-feedback-enter");
 
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	await composer.fill("STREAM_HOLD_A");
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	await expect(page.getByTestId("streaming-assistant-message")).toContainText("HOLD_ONE");
+	await resetMotionEvents();
 	await page.getByRole("button", { name: zhCN.composer.stopLabel }).click();
 	const stopped = page.getByRole("alert").filter({ hasText: zhCN.messages.responseStopped });
-	expect(await animationName(stopped)).toBe("motion-feedback-enter");
+	await expectMotion(stopped, "motion-feedback-enter");
 
+	await resetMotionEvents();
 	await sendMessage(page, "UX_MODEL_ERROR");
 	const error = page.getByRole("alert").filter({ hasText: "UX model failure" });
-	expect(await animationName(error)).toBe("motion-feedback-enter");
+	await expectMotion(error, "motion-feedback-enter");
 	await expect(error).not.toContainText("invalid_request_error");
 });
 

@@ -26,6 +26,7 @@ import {
 	notifyTimelineUserSent,
 	type TimelineScrollController,
 } from "./lib/timeline-scroll.js";
+import { reconcileVirtualTimelineMeasurements } from "./lib/virtual-timeline.js";
 import { MessageContent } from "./MessageContent.js";
 import { NativeMessageContent, nativeRecord, nativeSource } from "./NativeMessageContent.js";
 import {
@@ -1043,9 +1044,10 @@ function PiTimelineRenderer(props: {
 		useAnimationFrameWithResizeObserver: true,
 	});
 	const virtualItems = createMemo(() => virtualizer.getVirtualItems());
-	const virtualItemsByKey = createMemo(
-		() => new Map(virtualItems().map((item) => [item.key, item] as const)),
+	const virtualItemsByKey = createMemo(() =>
+		reconcileVirtualTimelineMeasurements(virtualItems(), items()),
 	);
+	const renderedVirtualKeys = createMemo(() => [...virtualItemsByKey().keys()]);
 	const loadOlder = async () => {
 		const anchor = Array.from(
 			timelineRef?.querySelectorAll<HTMLElement>("[data-virtual-item-id]") ?? [],
@@ -1126,15 +1128,17 @@ function PiTimelineRenderer(props: {
 			data-item-count={props.items.length}
 			style={{ height: `${virtualizer.getTotalSize()}px` }}
 		>
-			<For each={virtualItems().map((item) => item.key)}>
+			<For each={renderedVirtualKeys()}>
 				{(key) => {
+					let lastVirtualItem = virtualItemsByKey().get(key);
 					const virtualItem = () => {
-						const value = virtualItemsByKey().get(key);
-						if (!value) throw new Error("Virtual timeline item lost its keyed measurement");
-						return value;
+						lastVirtualItem = virtualItemsByKey().get(key) ?? lastVirtualItem;
+						return lastVirtualItem;
 					};
 					const item = () => itemsById().get(String(key));
 					const itemId = () => item()?.id ?? String(key);
+					const itemIndex = () => virtualItem()?.index ?? itemIndexes().get(itemId()) ?? 0;
+					const virtualItemStart = () => virtualItem()?.start ?? 0;
 					const historyItem = () => {
 						const value = item();
 						return value?.kind === "history-control" ? value : undefined;
@@ -1178,14 +1182,16 @@ function PiTimelineRenderer(props: {
 						<li
 							class="virtual-timeline-item"
 							data-testid="virtual-timeline-item"
-							data-index={virtualItem().index}
-							data-virtual-item-id={String(key)}
-							aria-posinset={virtualItem().index + 1}
+							data-index={itemIndex()}
+							data-virtual-item-id={itemId()}
+							aria-posinset={itemIndex() + 1}
 							aria-setsize={items().length}
 							onFocusIn={() => setFocusedItemId(item()?.id)}
-							style={{ transform: `translateY(${virtualItem().start - scrollMargin()}px)` }}
+							style={{
+								transform: `translateY(${virtualItemStart() - scrollMargin()}px)`,
+							}}
 							ref={(element) => {
-								element.dataset.index = String(virtualItem().index);
+								element.dataset.index = String(itemIndex());
 								virtualizer.measureElement(element);
 							}}
 						>

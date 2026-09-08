@@ -68,6 +68,21 @@ function copyCharacterPackage(destination: string, characterId: string, label: s
 }
 
 describe("character package visual projection", () => {
+	it("reuses one validated package until its manifest bytes change", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-load-cache-"));
+		temporaryDirectories.push(libraryRoot);
+		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "cached");
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		const first = loader.load("jizhou");
+		expect(loader.load("jizhou")).toBe(first);
+
+		const manifestPath = join(libraryRoot, "jizhou", "character.yaml");
+		writeFileSync(manifestPath, `${readFileSync(manifestPath, "utf8")}\n# externally-updated\n`);
+		const updated = loader.load("jizhou");
+		expect(updated).not.toBe(first);
+		expect(loader.load("jizhou")).toBe(updated);
+	});
+
 	it("projects declared SVG assets as renderer-safe data URLs", () => {
 		const loader = new CharacterLoader(characterRoot);
 		const character = loader.load("jizhou");

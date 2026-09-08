@@ -89,6 +89,7 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 
 - `npm audit --audit-level=high` 与 `npm audit signatures`；
 - 真实 provider/model 的 live E2E；
+- 单进程、零重试的 120 分钟后台 Chromium 耐久测试；
 - 非 placeholder 版本；
 - 干净且唯一的 release commit；
 - 每个平台从该提交新构建的包；
@@ -104,6 +105,8 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 - `release-attestation.mjs package` 在 packaged smoke 之后重新读取安装包、SBOM 与 lockfile，任何字节变化都会拒绝出证；
 - 每个平台上传 `package-<target>.json`、`package-evidence-<target>.json` 和 `sbom-<target>.cdx.json`；final gate 校验其 commit、schema、文件摘要和完整平台集合；
 - attestation 只忽略自身的 `release-attestations/` 输出目录。其他 tracked 或 untracked 变化都被视为 dirty tree，任何阶段均拒绝生成通过记录。
+
+RC 耐久门禁固定使用三个并发 Pi Session，连续混合执行发送、流式切换、停止、编辑、历史分页、媒体查看和 Run/Artifact 工作区操作。发布报告至少证明 120 分钟、5000 轮、1000 次切换、500 次停止、10000 个权威条目、100 次历史加载、各 50 次媒体和 Artifact 交互；会话串扰、漏项/重复、停止后 token、卡流、页面/进程/持久化/归属错误和孤儿资源必须全部为零。Renderer 与 Host 每分钟强制 GC 后采样，前 10 分钟只作预热，不参与增长预算；逐点资源序列单独保存并以 SHA-256 绑定到报告，开始/中点/结束截图只作排障材料。该确定性耐久门禁与同一提交上的真实模型验收互补，不能互相替代。
 
 这些摘要和 SBOM 是可核验的构建证据，不是代码签名。没有平台证书、签名和 notarization 时，公开发行仍然是 **NO-GO**，不得用 attestation 替代或宣称已经签名。
 

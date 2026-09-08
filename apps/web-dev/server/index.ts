@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
 	createDiagnostics,
@@ -18,6 +19,7 @@ import { readCodexSessionCredential } from "./codex-session-credential.ts";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
 import { MAX_RPC_REQUEST_BYTES } from "./http-contract.ts";
+import { collectSoakProcessMetrics } from "./soak-metrics.ts";
 
 // Fail fast on an invalid product identity before serving it: the shared
 // shape/fork-identity contract is enforced here (filesystem checks are the
@@ -240,6 +242,33 @@ function sendError(
 }
 
 const eventResponses = new Set<ServerResponse>();
+
+function persistentDatabaseErrors(): number {
+	const paths = [
+		runtimeLayout.systemDatabase,
+		runtimeLayout.companion(productConfig.defaultCharacterId).database,
+	];
+	let errors = 0;
+	for (const path of paths) {
+		let database: DatabaseSync | undefined;
+		try {
+			database = new DatabaseSync(path, { readOnly: true });
+			const integrity = database.prepare("PRAGMA quick_check").get() as
+				| { quick_check?: unknown }
+				| undefined;
+			const version = database.prepare("PRAGMA user_version").get() as
+				| { user_version?: unknown }
+				| undefined;
+			if (integrity?.quick_check !== "ok" || version?.user_version !== 1) errors += 1;
+		} catch {
+			errors += 1;
+		} finally {
+			database?.close();
+		}
+	}
+	return errors;
+}
+
 const server = createServer(async (request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
 	const isRpcRequest = request.method === "POST" && url.pathname.startsWith("/rpc/");
@@ -273,6 +302,17 @@ const server = createServer(async (request, response) => {
 	}
 	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/channels") {
 		send(response, 200, { channels: Object.keys(CHANNEL_CONTRACTS).sort() });
+		return;
+	}
+	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/soak-metrics") {
+		send(
+			response,
+			200,
+			collectSoakProcessMetrics({
+				eventSubscriptions: eventResponses.size,
+				persistenceErrors: persistentDatabaseErrors(),
+			}),
+		);
 		return;
 	}
 	if (

@@ -3,23 +3,26 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { get } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { webLaunchArguments } from "./web-launch-mode.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const repoEnv = resolve(repoRoot, ".env");
 if (existsSync(repoEnv)) process.loadEnvFile(repoEnv);
-for (const workspace of [
-	"@bear-harness/product-config",
-	"@bear-harness/protocol",
-	"@bear-harness/companion-client",
-	"@bear-harness/host-runtime",
-	"@bear-harness/companion-ui",
-]) {
-	const result = spawnSync("npm", ["run", "build", "--workspace", workspace], {
-		cwd: repoRoot,
-		stdio: "inherit",
-	});
-	if (result.status !== 0) process.exit(result.status ?? 1);
-}
+const soak = Number(process.env.BEAR_E2E_SOAK_MINUTES ?? "0") > 0;
+if (!soak)
+	for (const workspace of [
+		"@bear-harness/product-config",
+		"@bear-harness/protocol",
+		"@bear-harness/companion-client",
+		"@bear-harness/host-runtime",
+		"@bear-harness/companion-ui",
+	]) {
+		const result = spawnSync("npm", ["run", "build", "--workspace", workspace], {
+			cwd: repoRoot,
+			stdio: "inherit",
+		});
+		if (result.status !== 0) process.exit(result.status ?? 1);
+	}
 const children = new Set();
 const childFatal = new WeakSet();
 let shuttingDown = false;
@@ -103,7 +106,7 @@ async function start() {
 	const host = await launchWithRetry({
 		startPort: baseHostPort,
 		command: process.execPath,
-		args: ["server/index.ts"],
+		args: [...(soak ? ["--expose-gc"] : []), "server/index.ts"],
 		env: {
 			...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),
 		},
@@ -116,7 +119,7 @@ async function start() {
 	const web = await launchWithRetry({
 		startPort: baseWebPort,
 		command: "npx",
-		args: ["--no-install", "rsbuild", "dev"],
+		args: webLaunchArguments(soak),
 		env: {
 			BEAR_WEB_DEV_HOST_PORT: String(host.port),
 			...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),

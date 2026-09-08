@@ -140,6 +140,39 @@ jobs:
           path: release-attestations/live-model.json
           if-no-files-found: error
 
+  soak:
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 135
+    env:
+      CI: "1"
+      BEAR_E2E_SOAK_MINUTES: "120"
+      BEAR_E2E_SOAK_MODE: release
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:e2e:web:soak
+      - run: node scripts/release-attestation.mjs soak
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-soak
+          path: |
+            release-attestations/soak.json
+            release-attestations/soak-report.json
+            release-attestations/soak-resource-samples.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: soak-forensics
+          path: test-results/web-dev/soak/
+          if-no-files-found: warn
+
   package:
     needs: [quality, web-e2e, e2e]
     runs-on: ${{ matrix.os }}
@@ -273,7 +306,7 @@ jobs:
           if-no-files-found: error
 
   release-gate:
-    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, live-model, package]
+    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, live-model, soak, package]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

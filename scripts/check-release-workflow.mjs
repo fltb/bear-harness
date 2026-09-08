@@ -12,6 +12,7 @@ const requiredJobs = [
 	"e2e",
 	"web-e2e",
 	"live-model",
+	"soak",
 	"package",
 	"release-gate",
 ];
@@ -54,6 +55,7 @@ const requiredCommands = new Map([
 	["e2e", ["npm run test:e2e:electron"]],
 	["web-e2e", ["npm run test:e2e:web:required"]],
 	["live-model", ["npm run test:e2e:web:live"]],
+	["soak", ["npm run test:e2e:web:soak", "node scripts/release-attestation.mjs soak"]],
 	[
 		"package",
 		[
@@ -78,6 +80,16 @@ for (const name of ["BEAR_E2E_PROVIDER_ID", "BEAR_E2E_MODEL_ID", "BEAR_E2E_SECON
 	if (typeof liveModelEnvironment[name] !== "string" || liveModelEnvironment[name] === "") {
 		throw new Error(`live-model is missing required environment value: ${name}`);
 	}
+}
+
+const soakEnvironment = jobs.soak?.env ?? {};
+if (
+	soakEnvironment.CI !== "1" ||
+	soakEnvironment.BEAR_E2E_SOAK_MINUTES !== "120" ||
+	soakEnvironment.BEAR_E2E_SOAK_MODE !== "release" ||
+	jobs.soak?.["timeout-minutes"] !== 135
+) {
+	throw new Error("soak must run the frozen 120-minute background release profile");
 }
 
 const packageEvidenceUpload = jobs.package.steps.find(

@@ -425,6 +425,10 @@ function resolveTheme(value: unknown, characterId: string): ThemeTokens {
  */
 export class CharacterLoader {
 	private readonly packageRecoveryFailures = new Map<string, unknown>();
+	private readonly loadedPackages = new Map<
+		string,
+		{ sourceManifest: string; character: CharacterPackage }
+	>();
 	constructor(
 		private readonly seedRoot: string,
 		private readonly libraryRoot: string = seedRoot,
@@ -643,7 +647,10 @@ export class CharacterLoader {
 		}
 		const path = join(this.packageDirectory(id), "character.yaml");
 		if (!existsSync(path)) return null;
-		const manifestResult = CharacterManifestSchema.safeParse(parse(readFileSync(path, "utf8")));
+		const sourceManifest = readFileSync(path, "utf8");
+		const cached = this.loadedPackages.get(id);
+		if (cached?.sourceManifest === sourceManifest) return cached.character;
+		const manifestResult = CharacterManifestSchema.safeParse(parse(sourceManifest));
 		if (!manifestResult.success) {
 			const issue = manifestResult.error.issues[0];
 			throw new Error(
@@ -784,7 +791,7 @@ export class CharacterLoader {
 				this.characterPackagePath(id, item.captions);
 			}
 		}
-		return {
+		const character = {
 			format_version: parsed.format_version,
 			id: parsed.id,
 			name: parsed.name,
@@ -800,6 +807,8 @@ export class CharacterLoader {
 			skills,
 			canon: { manifest: canonManifest, sources: canonSources },
 		};
+		this.loadedPackages.set(id, { sourceManifest, character });
+		return character;
 	}
 
 	pluginHash(character: CharacterPackage): string {

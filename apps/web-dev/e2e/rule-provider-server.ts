@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { appendBoundedTrace } from "./bounded-trace.ts";
 
 // Authored deterministic model responses, not a simulated executor: the real
 // built-in Pi ACP worker must execute every filesystem tool and produce its own
@@ -45,6 +46,8 @@ let toolSequence = 0;
 let completionSequence = 0;
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
 const prompts: string[] = [];
+const MAX_TOOL_TRACE = 2_048;
+const MAX_PROMPT_TRACE = 256;
 const retriedRequests = new Set<string>();
 interface ResponseHold {
 	entered: boolean;
@@ -100,7 +103,7 @@ function reply(payload: {
 	const prompt = messages.map((message) => text(message.content)).join("\n");
 	const hostContext =
 		[...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(-1)?.[1] ?? "";
-	prompts.push(prompt);
+	appendBoundedTrace(prompts, prompt, MAX_PROMPT_TRACE);
 	const latestUser = [...messages].reverse().find((message) => message.role === "user");
 	const latestUserContent = text(latestUser?.content);
 	const current =
@@ -113,7 +116,7 @@ function reply(payload: {
 	);
 	const externalRun = prompt.includes("You are an independent external agent.");
 	const invoke = (tool: string, args: Record<string, unknown>) => {
-		calls.push({ tool, args });
+		appendBoundedTrace(calls, { tool, args }, MAX_TOOL_TRACE);
 		return { tool, args };
 	};
 	const nativeHistory = current.match(/^E2E_NATIVE_HISTORY_(\d+)$/);
@@ -422,10 +425,14 @@ function reply(payload: {
 			action: "update",
 			changes: [{ path: "/character/continuity/stage", value: 1 }],
 		};
-		calls.push({
-			tool: "host_state",
-			args,
-		});
+		appendBoundedTrace(
+			calls,
+			{
+				tool: "host_state",
+				args,
+			},
+			MAX_TOOL_TRACE,
+		);
 		return { tool: "host_state", args };
 	}
 	if (current.includes("UX_MODEL_ERROR")) return { errorMessage: "UX model failure" };
@@ -441,7 +448,7 @@ function reply(payload: {
 						? "E2E_CONTEXT_TWO_TURNS_OK\n"
 						: prompt.includes("VISUAL_OBSERVATION: a red square")
 							? "MAIN_USED_VISUAL_OBSERVATION\n"
-							: prompt.includes("RICH_CONTENT_STREAM")
+							: current.includes("RICH_CONTENT_STREAM")
 								? `# 交接结果
 
 **状态：完成**
@@ -473,11 +480,11 @@ $$
 										: current.includes("规则：回复 EDITED_OK") ||
 												prompt.includes("规则：回复 EDITED_OK")
 											? "EDITED_OK\n"
-											: prompt.includes("STREAM_FOCUS_HOLD")
+											: current.includes("STREAM_FOCUS_HOLD")
 												? "FOCUS_ONE FOCUS_TWO\n"
-												: prompt.includes("STREAM_HOLD_A")
+												: current.includes("STREAM_HOLD_A")
 													? "HOLD_ONE HOLD_TWO\n"
-													: prompt.includes("STREAM_CHECK")
+													: current.includes("STREAM_CHECK")
 														? "STREAM_ONE STREAM_TWO\n"
 														: prompt.includes("你是谁")
 															? "我是 E2E Rule Provider。\n"

@@ -114,7 +114,8 @@ test("final attestation validates and binds every stage and platform evidence fi
 		});
 		await createReleaseAttestation({ repoRoot: root, stage: "package", target });
 	}
-	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e", "live-model"]) {
+	writePassingSoakReport(root);
+	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e", "live-model", "soak"]) {
 		await createReleaseAttestation({ repoRoot: root, stage, target: "test-x64" });
 	}
 
@@ -123,7 +124,7 @@ test("final attestation validates and binds every stage and platform evidence fi
 		stage: "final",
 		target: "test-x64",
 	});
-	assert.equal(final.record.inputs.stages.length, 5);
+	assert.equal(final.record.inputs.stages.length, 6);
 	assert.equal(final.record.inputs.packages.length, 4);
 	assert.deepEqual(
 		new Set(final.record.inputs.packages.map(({ target }) => target)),
@@ -141,6 +142,22 @@ test("final attestation validates and binds every stage and platform evidence fi
 		createReleaseAttestation({ repoRoot: root, stage: "final", target: "test-x64" }),
 		/mac-x64 package evidence digest mismatch/,
 	);
+});
+
+test("soak attestation rejects missing evidence and binds a valid release report", async () => {
+	const root = gitFixture();
+	await assert.rejects(
+		createReleaseAttestation({ repoRoot: root, stage: "soak", target: "test-x64" }),
+	);
+	writePassingSoakReport(root);
+	const result = await createReleaseAttestation({
+		repoRoot: root,
+		stage: "soak",
+		target: "test-x64",
+	});
+	assert.equal(result.record.soakReport.path, "soak-report.json");
+	assert.equal(result.record.soakReport.mode, "release");
+	assert.equal(result.record.soakReport.durationMs, 7_200_000);
 });
 
 test("CycloneDX validation rejects a mislabeled or dependency-free document", () => {
@@ -225,6 +242,67 @@ function cycloneDx(options = {}) {
 		],
 		dependencies: [],
 	};
+}
+
+function writePassingSoakReport(root) {
+	const evidenceRoot = join(root, "release-attestations");
+	mkdirSync(evidenceRoot, { recursive: true });
+	const commit = git(root, ["rev-parse", "HEAD"]).trim();
+	const resourceTrace = "[]\n";
+	writeFileSync(join(evidenceRoot, "soak-resource-samples.json"), resourceTrace);
+	writeFileSync(
+		join(evidenceRoot, "soak-report.json"),
+		`${JSON.stringify({
+			schemaVersion: 1,
+			mode: "release",
+			commit,
+			durationMs: 7_200_000,
+			counts: {
+				cycles: 5_000,
+				switches: 1_000,
+				stops: 500,
+				authoritativeEntries: 10_000,
+				historyLoads: 100,
+				runArtifactInteractions: 50,
+				mediaChoiceInteractions: 50,
+			},
+			correctness: {
+				crossConversationEvents: 0,
+				duplicateEntries: 0,
+				missingEntries: 0,
+				postStopTokens: 0,
+				stuckStreams: 0,
+				pageErrors: 0,
+				unhandledRejections: 0,
+				processCrashes: 0,
+				ownershipErrors: 0,
+				persistenceErrors: 0,
+				orphanedResources: 0,
+			},
+			metrics: {
+				rendererHeapSlopeBytesPerTenMinutes: 0,
+				rendererHeapNetGrowthBytes: 0,
+				hostHeapSlopeBytesPerTenMinutes: 0,
+				hostHeapNetGrowthBytes: 0,
+				residentSetNetGrowthBytes: 0,
+				residentSetMonotonicFinalSamples: 0,
+				maxRenderedTimelineRows: 1,
+				interactionP95Ms: 1,
+				conversationSwitchP95Ms: 1,
+				stopFeedbackP95Ms: 1,
+				streamExitP95Ms: 1,
+				cancelConfirmationP95Ms: 1,
+				maxNonGcLongTaskMs: 0,
+				maxNoProgressMs: 1,
+			},
+			samples: { resource: 121, interaction: 5_000 },
+			resourceTrace: {
+				path: "soak-resource-samples.json",
+				size: Buffer.byteLength(resourceTrace),
+				sha256: sha256Text(resourceTrace),
+			},
+		})}\n`,
+	);
 }
 
 function git(root, args) {

@@ -13,6 +13,7 @@ import {
 	validatePackageEvidence,
 	writeJsonAtomic,
 } from "./release-evidence.mjs";
+import { validateSoakReport } from "./soak-evidence.mjs";
 
 const ALLOWED_STAGES = new Set([
 	"quality",
@@ -20,6 +21,7 @@ const ALLOWED_STAGES = new Set([
 	"electron-e2e",
 	"web-e2e",
 	"live-model",
+	"soak",
 	"package",
 	"final",
 ]);
@@ -29,6 +31,7 @@ const REQUIRED_STAGE_ATTESTATIONS = [
 	"electron-e2e",
 	"web-e2e",
 	"live-model",
+	"soak",
 ];
 
 export async function createReleaseAttestation(options = {}) {
@@ -59,6 +62,11 @@ export async function createReleaseAttestation(options = {}) {
 			...common,
 			...(await attestPackage({ repoRoot, evidenceRoot, target, commit })),
 		};
+	} else if (stage === "soak") {
+		record = {
+			...common,
+			...(await attestSoak({ evidenceRoot, commit })),
+		};
 	} else if (stage === "final") {
 		record = {
 			...common,
@@ -72,6 +80,25 @@ export async function createReleaseAttestation(options = {}) {
 	const file = `${stage}${suffix}.json`;
 	const written = writeJsonAtomic(join(evidenceRoot, file), record);
 	return { record, file, sha256: written.sha256 };
+}
+
+async function attestSoak({ evidenceRoot, commit }) {
+	const file = "soak-report.json";
+	const path = join(evidenceRoot, file);
+	const source = assertContainedFile(evidenceRoot, path, "soak report");
+	const report = validateSoakReport(readJson(path, "soak report"));
+	if (report.mode !== "release") throw new Error("soak attestation requires a release report");
+	if (report.commit !== commit) throw new Error("soak report commit does not match HEAD");
+	await verifySoakResourceTrace({ evidenceRoot, report });
+	return {
+		soakReport: {
+			path: file,
+			size: source.size,
+			sha256: await sha256File(path),
+			mode: report.mode,
+			durationMs: report.durationMs,
+		},
+	};
 }
 
 export function workingTreeChanges(repoRoot) {
@@ -133,6 +160,7 @@ async function verifyFinalInputs({ repoRoot, evidenceRoot, commit }) {
 		const source = assertContainedFile(evidenceRoot, path, `${stage} attestation`);
 		const record = readJson(path, `${stage} attestation`);
 		validateStageRecord(record, { stage, commit });
+		if (stage === "soak") await verifySoakAttestation({ evidenceRoot, record, commit });
 		stages.push({ stage, path: file, size: source.size, sha256: await sha256File(path) });
 	}
 
@@ -181,6 +209,50 @@ async function verifyFinalInputs({ repoRoot, evidenceRoot, commit }) {
 		});
 	}
 	return { stages, packages };
+}
+
+async function verifySoakAttestation({ evidenceRoot, record, commit }) {
+	if (!plainObject(record.soakReport)) throw new Error("soak attestation is missing its report");
+	const reference = record.soakReport;
+	if (
+		typeof reference.path !== "string" ||
+		basename(reference.path) !== reference.path ||
+		!Number.isSafeInteger(reference.size) ||
+		reference.size <= 0 ||
+		reference.mode !== "release"
+	) {
+		throw new Error("soak attestation report reference is invalid");
+	}
+	requireSha256(reference.sha256, "soak report");
+	const reportPath = join(evidenceRoot, reference.path);
+	const source = assertContainedFile(evidenceRoot, reportPath, "soak report");
+	if (source.size !== reference.size || (await sha256File(reportPath)) !== reference.sha256) {
+		throw new Error("soak report digest mismatch");
+	}
+	const report = validateSoakReport(readJson(reportPath, "soak report"));
+	if (
+		report.mode !== "release" ||
+		report.commit !== commit ||
+		report.durationMs !== reference.durationMs
+	) {
+		throw new Error("soak report does not match its attestation");
+	}
+	await verifySoakResourceTrace({ evidenceRoot, report });
+}
+
+async function verifySoakResourceTrace({ evidenceRoot, report }) {
+	const tracePath = join(evidenceRoot, report.resourceTrace.path);
+	const trace = assertContainedFile(evidenceRoot, tracePath, "soak resource trace");
+	if (
+		trace.size !== report.resourceTrace.size ||
+		(await sha256File(tracePath)) !== report.resourceTrace.sha256
+	) {
+		throw new Error("soak resource trace digest mismatch");
+	}
+}
+
+function plainObject(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function verifyPackageEvidenceFiles({ repoRoot, evidenceRoot, evidence, verifyArtifacts }) {
