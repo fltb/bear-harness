@@ -1,0 +1,174 @@
+/* Bear motion language: presentation-only tokens and reusable surface recipes. */
+
+:root {
+	--motion-duration-instant: 0ms;
+	--motion-duration-micro: 120ms;
+	--motion-duration-surface-exit: 150ms;
+	--motion-duration-surface: 180ms;
+	--motion-duration-scene: 240ms;
+	--motion-duration-emphasis: 700ms;
+	--motion-duration-spinner: 750ms;
+	--motion-duration-ambient: 1600ms;
+	--motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+	--motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+	--motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+	--motion-distance-micro: 3px;
+	--motion-distance-small: 6px;
+	--motion-distance-panel: 16px;
+	--motion-scale-enter: 0.985;
+}
+
+.motion-fade,
+.motion-modal,
+.motion-drawer-inline,
+.motion-drawer-block,
+.motion-timeline-entry,
+.motion-presence-change,
+.motion-activity {
+	animation-fill-mode: both;
+}
+
+.motion-fade[data-expanded],
+.motion-fade[data-motion-state="open"] {
+	animation: motion-fade-enter var(--motion-duration-surface) var(--motion-ease-enter) both;
+}
+
+.motion-fade[data-closed],
+.motion-fade[data-motion-state="closed"] {
+	animation: motion-fade-exit var(--motion-duration-surface-exit) var(--motion-ease-exit) both;
+}
+
+.motion-modal[data-expanded] {
+	animation: motion-modal-enter var(--motion-duration-surface) var(--motion-ease-enter) both;
+}
+
+.motion-modal[data-closed] {
+	animation: motion-modal-exit var(--motion-duration-surface-exit) var(--motion-ease-exit) both;
+}
+
+.motion-drawer-inline {
+	--motion-surface-offset-x: var(--motion-distance-panel);
+	--motion-surface-offset-y: 0px;
+}
+
+.motion-drawer-block {
+	--motion-surface-offset-x: 0px;
+	--motion-surface-offset-y: var(--motion-distance-panel);
+}
+
+.motion-drawer-inline[data-expanded],
+.motion-drawer-block[data-expanded] {
+	animation: motion-surface-enter var(--motion-duration-surface) var(--motion-ease-enter) both;
+}
+
+.motion-drawer-inline[data-closed],
+.motion-drawer-block[data-closed] {
+	animation: motion-surface-exit var(--motion-duration-surface-exit) var(--motion-ease-exit) both;
+}
+
+.motion-drawer-inline[data-motion-state="open"],
+.motion-drawer-block[data-motion-state="open"] {
+	animation: motion-drawer-enter var(--motion-duration-surface) var(--motion-ease-enter) both;
+}
+
+.motion-drawer-inline[data-motion-state="closed"],
+.motion-drawer-block[data-motion-state="closed"] {
+	animation: motion-drawer-exit var(--motion-duration-surface-exit) var(--motion-ease-exit) both;
+}
+
+.motion-timeline-entry,
+.timeline-entry-enter {
+	animation: timeline-entry-in var(--motion-duration-micro) var(--motion-ease-standard) both;
+}
+
+.motion-presence-change {
+	animation: presence-reveal var(--motion-duration-scene) var(--motion-ease-enter) both;
+}
+
+.motion-activity {
+	animation: streaming-spinner var(--motion-duration-spinner) linear infinite;
+}
+
+@keyframes motion-fade-enter {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes motion-fade-exit {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes motion-modal-enter {
+	from {
+		opacity: 0;
+		transform: translateY(var(--motion-distance-small)) scale(var(--motion-scale-enter));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes motion-modal-exit {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translateY(var(--motion-distance-small)) scale(var(--motion-scale-enter));
+	}
+}
+
+@keyframes motion-surface-enter {
+	from {
+		opacity: 0;
+		transform: translate(var(--motion-surface-offset-x), var(--motion-surface-offset-y));
+	}
+	to {
+		opacity: 1;
+		transform: translate(0, 0);
+	}
+}
+
+@keyframes motion-surface-exit {
+	from {
+		opacity: 1;
+		transform: translate(0, 0);
+	}
+	to {
+		opacity: 0;
+		transform: translate(var(--motion-surface-offset-x), var(--motion-surface-offset-y));
+	}
+}
+
+@keyframes motion-drawer-enter {
+	from {
+		opacity: 0;
+		transform: translate(var(--motion-surface-offset-x), var(--motion-surface-offset-y));
+	}
+	to {
+		opacity: 1;
+		transform: translate(0, 0);
+	}
+}
+
+@keyframes motion-drawer-exit {
+	from {
+		opacity: 1;
+		transform: translate(0, 0);
+	}
+	to {
+		opacity: 0;
+		transform: translate(var(--motion-surface-offset-x), var(--motion-surface-offset-y));
+	}
+}

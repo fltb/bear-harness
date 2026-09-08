@@ -104,8 +104,8 @@
 	--shadow-overlay: 0 24px 64px var(--shadow-color);
 	--shadow-tooltip: 0 6px 18px color-mix(in srgb, var(--sys-canvas) 24%, transparent);
 	--shadow-empty-state: 0 18px 48px color-mix(in srgb, var(--sys-canvas) 16%, transparent);
-	--motion-fast: 120ms;
-	--motion-normal: 180ms;
+	--motion-fast: var(--motion-duration-micro);
+	--motion-normal: var(--motion-duration-surface);
 }
 
 html,

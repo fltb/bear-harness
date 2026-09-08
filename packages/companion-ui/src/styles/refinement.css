@@ -653,14 +653,10 @@ button[data-variant="primary"]:hover:not(:disabled),
 	contain: layout style;
 }
 
-.timeline-entry-enter {
-	animation: timeline-entry-in var(--motion-fast) cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
 @keyframes timeline-entry-in {
 	from {
 		opacity: 0;
-		transform: translateY(3px);
+		transform: translateY(var(--motion-distance-micro));
 	}
 	to {
 		opacity: 1;

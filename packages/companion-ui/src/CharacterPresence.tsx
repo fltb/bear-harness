@@ -79,6 +79,7 @@ export function CharacterPresence(props: {
 					style={{ "--presence-aspect-ratio": presenceStyle(asset) }}
 				>
 					<img
+						class="motion-presence-change"
 						src={asset}
 						alt=""
 						draggable={false}

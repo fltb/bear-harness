@@ -13,6 +13,7 @@ import { Backstage } from "./features/Backstage.js";
 import { Icon } from "./Icon.js";
 import { type AppLayoutMode, layoutModeForWidth } from "./layout.js";
 import { syncDocumentTitle } from "./lib/dom-effects.js";
+import { finishMotionExitImmediately } from "./lib/motion.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { createCompanionStore, DesktopProvider, useCompanionStore } from "./stores/companion.js";
@@ -96,17 +97,25 @@ function DesktopFrame() {
 	});
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
+	const [mobileNavigationPresent, setMobileNavigationPresent] = createSignal(false);
 	let appRef: HTMLDivElement | undefined;
 	let mobileNavigationTriggerRef: HTMLButtonElement | undefined;
+	let restoreMobileNavigationFocus = false;
 	let backstageReturnFocus: HTMLElement | undefined;
+	const finishMobileNavigationClose = () => {
+		if (mobileNavigationOpen()) return;
+		setMobileNavigationPresent(false);
+		if (restoreMobileNavigationFocus && layoutMode() === "mobile") {
+			mobileNavigationTriggerRef?.focus();
+		}
+		restoreMobileNavigationFocus = false;
+	};
 	const closeMobileNavigation = (restoreFocus: boolean) => {
 		if (!mobileNavigationOpen()) return;
+		restoreMobileNavigationFocus = restoreFocus;
 		setMobileNavigationOpen(false);
-		if (restoreFocus) {
-			queueMicrotask(() => {
-				if (layoutMode() === "mobile") mobileNavigationTriggerRef?.focus();
-			});
-		}
+		if (layoutMode() !== "mobile") queueMicrotask(finishMobileNavigationClose);
+		else finishMotionExitImmediately(finishMobileNavigationClose);
 	};
 	const openBackstage = (tab: "roles" | "settings" | "archived") => {
 		if (layoutMode() === "mobile") {
@@ -184,10 +193,11 @@ function DesktopFrame() {
 			aria-label={t("shell.productName")}
 		>
 			<div class="shell" data-mobile-navigation-open={mobileNavigationOpen() ? "true" : "false"}>
-				<Show when={layoutMode() === "mobile" && mobileNavigationOpen()}>
+				<Show when={layoutMode() === "mobile" && mobileNavigationPresent()}>
 					<Button
 						type="button"
-						class="mobile-navigation-backdrop"
+						class="mobile-navigation-backdrop motion-fade"
+						data-motion-state={mobileNavigationOpen() ? "open" : "closed"}
 						aria-label={t("backstage.close")}
 						onClick={() => closeMobileNavigation(true)}
 					/>
@@ -195,8 +205,11 @@ function DesktopFrame() {
 				<Sidebar
 					character={workflow.character()}
 					onOpenBackstage={openBackstage}
-					navigationHidden={layoutMode() === "mobile" && !mobileNavigationOpen()}
+					navigationHidden={layoutMode() === "mobile" ? !mobileNavigationOpen() : undefined}
 					onNavigate={() => closeMobileNavigation(true)}
+					onNavigationMotionEnd={(event) => {
+						if (event.target === event.currentTarget) finishMobileNavigationClose();
+					}}
 				/>
 				<main class="main">
 					<Button
@@ -213,6 +226,7 @@ function DesktopFrame() {
 								closeMobileNavigation(true);
 								return;
 							}
+							setMobileNavigationPresent(true);
 							setMobileNavigationOpen(true);
 							queueMicrotask(() => {
 								document

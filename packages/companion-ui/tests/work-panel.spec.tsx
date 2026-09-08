@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createQuery, QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -509,6 +509,9 @@ describe("work timeline controls", () => {
 				name: zhCN.work.result.close,
 			}),
 		);
+		expect(secondPreview).toHaveAttribute("data-closed");
+		fireEvent.animationEnd(secondPreview);
+		await waitFor(() => expect(secondPreview).not.toBeInTheDocument());
 		expect(revokeObjectURL).toHaveBeenCalledWith("blob:second");
 		await user.click(screen.getByRole("button", { name: /查看成果: third\.mp3/ }));
 		const thirdPreview = screen.getByRole("dialog", { name: "third.mp3" });

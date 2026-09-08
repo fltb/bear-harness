@@ -165,10 +165,8 @@
 .app[data-layout="mobile"] .sidebar {
 	@apply fixed inset-y-0 left-0 z-100 w-80;
 	max-inline-size: 86cqw;
-	transform: translateX(-100%);
-	transition: transform 180ms ease-out;
+	--motion-surface-offset-x: -100%;
 	pointer-events: none;
-	visibility: hidden;
 }
 
 .app[data-layout="mobile"] .shell[data-mobile-navigation-open="true"] .sidebar {
@@ -334,7 +332,7 @@
 	grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
-.media-viewer[data-expanded="true"],
+.media-viewer[data-bear-media-expanded="true"],
 html[data-app-layout="mobile"] .media-viewer {
 	@apply inset-0 max-w-none rounded-none border-0;
 }
@@ -363,6 +361,15 @@ html[data-app-layout="mobile"] .intro {
 
 html[data-app-layout="mobile"] .intro-card {
 	@apply w-full max-w-lg rounded-2xl p-5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+	}
 }
 
 html[data-app-layout="mobile"] .settings-workbench {
@@ -471,18 +478,5 @@ html[data-app-layout="fullscreen"] .backstage-sheet-settings {
 
 	.conversation-state-field output {
 		@apply text-left;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
-		transition: none !important;
-		animation: none !important;
-	}
-
-	.app[data-layout="mobile"] .sidebar {
-		transition: none;
 	}
 }

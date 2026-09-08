@@ -170,9 +170,14 @@ test("media opens above a persistent two-column result workspace without selecti
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await artifactTrigger.click();
 	await expect(result).toBeVisible();
+	await expect
+		.poll(async () => {
+			const drawer = await result.boundingBox();
+			return drawer ? Math.round(drawer.x + drawer.width) : undefined;
+		})
+		.toBe(1280);
 	const drawer = await result.boundingBox();
 	expect(drawer?.x).toBeGreaterThan(0);
-	expect((drawer?.x ?? 0) + (drawer?.width ?? 0)).toBe(1280);
 	await result.getByRole("button", { name: zhCN.work.result.close }).click();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await mediaTrigger.click();
@@ -189,7 +194,10 @@ test("media opens above a persistent two-column result workspace without selecti
 	await artifactTrigger.click();
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
 	await expect(result).toHaveCount(0);
-	await page.locator(`[data-conversation-id="${originalConversation}"]`).click();
+	await page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.locator(`[data-conversation-id="${originalConversation}"]`)
+		.click();
 	await expect(artifactTrigger).toBeVisible();
 	await expect(result).toHaveCount(0);
 	await expect(viewer).toHaveCount(0);

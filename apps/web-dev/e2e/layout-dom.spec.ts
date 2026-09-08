@@ -188,6 +188,38 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	await expect(workButton).toBeFocused();
 
 	const navigation = await revealSidebar(page, viewport);
+	if (viewport.mode === "mobile") {
+		const closeNavigation = page.getByRole("button", {
+			name: `${zhCN.backstage.close} ${zhCN.sidebar.conversations}`,
+		});
+		const closingState = await closeNavigation.evaluate((closeButton) => {
+			const element = closeButton.closest("aside");
+			if (!(element instanceof HTMLElement))
+				throw new Error("mobile navigation surface is unavailable");
+			closeButton.click();
+			return {
+				ariaHidden: element.getAttribute("aria-hidden"),
+				inert: element.hasAttribute("inert"),
+				visibility: getComputedStyle(element).visibility,
+				animations: element.getAnimations().map((animation) => ({
+					name: (animation as CSSAnimation).animationName,
+					playState: animation.playState,
+				})),
+			};
+		});
+		expect(closingState).toMatchObject({
+			ariaHidden: "true",
+			inert: true,
+			visibility: "visible",
+		});
+		expect(
+			closingState.animations.some((animation) => animation.name === "motion-drawer-exit"),
+		).toBe(true);
+		await expect(
+			page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }),
+		).toBeFocused();
+		await revealSidebar(page, viewport);
+	}
 	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
 	await search.fill("没有这段对话");
 	await expect(navigation.getByText(zhCN.sidebar.noSearchResults)).toBeVisible();
@@ -337,6 +369,10 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	await expect(mediaPreview).toHaveCount(0);
 	await mediaTrigger.click();
 	await assertSurface(page, viewport, mediaPreview);
+	expect(await mediaPreview.evaluate((element) => getComputedStyle(element).animationName)).toBe(
+		"motion-modal-enter",
+	);
+	await expect(mediaPreview).toHaveAttribute("data-bear-media-expanded", "false");
 	const picture = mediaPreview.getByRole("img", { name: "极昼的来处" });
 	await expect(picture).toBeVisible();
 	await expect
@@ -349,9 +385,12 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 		await expect(mediaPreview).toHaveJSProperty("clientHeight", viewport.height);
 	} else {
 		await mediaPreview.getByRole("button", { name: zhCN.messages.expandMedia }).click();
+		await expect(mediaPreview).toHaveAttribute("data-expanded");
+		await expect(mediaPreview).toHaveAttribute("data-bear-media-expanded", "true");
 		await expect(mediaPreview).toHaveJSProperty("clientWidth", viewport.width);
 		await expect(mediaPreview).toHaveJSProperty("clientHeight", viewport.height);
 		await mediaPreview.getByRole("button", { name: zhCN.messages.restoreMedia }).click();
+		await expect(mediaPreview).toHaveAttribute("data-bear-media-expanded", "false");
 		await assertSurface(page, viewport, mediaPreview);
 	}
 	await mediaPreview.getByRole("button", { name: zhCN.messages.originalMediaSize }).click();
@@ -361,7 +400,13 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	await expect(
 		mediaPreview.getByRole("button", { name: zhCN.messages.originalMediaSize }),
 	).toHaveAttribute("aria-pressed", "false");
-	await mediaPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
+	await mediaPreview
+		.getByRole("button", { name: zhCN.messages.closeMedia })
+		.evaluate((button: HTMLButtonElement) => button.click());
+	await expect(mediaPreview).toHaveAttribute("data-closed");
+	expect(await mediaPreview.evaluate((element) => getComputedStyle(element).animationName)).toBe(
+		"motion-modal-exit",
+	);
 	await expect(mediaPreview).toHaveCount(0);
 	await expect(mediaTrigger).toBeFocused();
 
@@ -374,6 +419,9 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	const artifactPreview = page.getByRole("dialog", { name: "e2e-report.txt" });
 	await expect(artifactPreview).toHaveCount(0);
 	await artifact.click();
+	expect(await artifactPreview.evaluate((element) => getComputedStyle(element).animationName)).toBe(
+		"motion-surface-enter",
+	);
 	const safePreview = artifactPreview.getByRole("region", { name: "e2e-report.txt", exact: true });
 	await expect(safePreview).toHaveAttribute("data-preview-state", "ready");
 	await expect(safePreview).toHaveAttribute("aria-busy", "false");
@@ -418,7 +466,23 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 		await expect(artifactPreview).toHaveJSProperty("clientWidth", viewport.width);
 		await expect(artifactPreview).toHaveJSProperty("clientHeight", viewport.height);
 	}
-	await artifactPreview.getByRole("button", { name: zhCN.work.result.close }).click();
+	const closingArtifact = await artifactPreview.evaluate((element, closeLabel) => {
+		// test-quality-allow querySelectorAll: capture the same synchronous frame as the close event
+		const closeButton = [...element.querySelectorAll("button")].find(
+			(button) => button.getAttribute("aria-label") === closeLabel,
+		);
+		if (!(closeButton instanceof HTMLButtonElement))
+			throw new Error("artifact close button is unavailable");
+		closeButton.click();
+		return {
+			closed: element.hasAttribute("data-closed"),
+			animationName: getComputedStyle(element).animationName,
+		};
+	}, zhCN.work.result.close);
+	expect(closingArtifact).toEqual({
+		closed: true,
+		animationName: "motion-surface-exit",
+	});
 	await expect(artifactPreview).toHaveCount(0);
 	if (viewport.mode === "fullscreen") await expect(presence).toBeVisible();
 	if (viewport.mode !== "fullscreen") {

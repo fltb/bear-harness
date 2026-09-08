@@ -43,11 +43,6 @@
 
 .presence-stage {
 	aspect-ratio: var(--presence-aspect-ratio, 2 / 3);
-	transition:
-		block-size 0.5s ease,
-		inline-size 0.5s ease,
-		transform 0.5s ease,
-		filter 0.5s ease;
 }
 
 .presence-stage img {
@@ -55,11 +50,7 @@
 }
 
 .scene-backdrop img {
-	animation: scene-reveal 420ms cubic-bezier(0.22, 0.8, 0.25, 1);
-}
-
-.presence-stage img {
-	animation: presence-reveal 360ms cubic-bezier(0.22, 0.8, 0.25, 1);
+	animation: scene-reveal var(--motion-duration-scene) var(--motion-ease-enter);
 }
 
 @keyframes scene-reveal {
@@ -87,7 +78,7 @@
 	border: 1px solid color-mix(in srgb, var(--sys-border) 78%, var(--sys-accent) 22%);
 	color: var(--sys-text-muted);
 	background: color-mix(in srgb, var(--sys-surface-raised) 85%, transparent);
-	animation: tool-trace-enter var(--motion-fast) ease-out;
+	animation: tool-trace-enter var(--motion-duration-micro) var(--motion-ease-enter);
 }
 
 .tool-trace summary {

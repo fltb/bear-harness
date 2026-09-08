@@ -1,6 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import { finishMotionExitImmediately } from "./lib/motion.js";
 import type {
 	ArtifactActionResponse,
 	ArtifactIdentity,
@@ -358,6 +359,18 @@ function LoadedArtifactPreviewContent(props: { loaded: LoadedArtifactPreview; na
 function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = useShellWorkflowStore();
+	const [open, setOpen] = createSignal(true);
+	let completed = false;
+	const completeClose = () => {
+		if (open() || completed) return;
+		completed = true;
+		workflow.closeArtifact();
+	};
+	const requestClose = () => {
+		if (!open()) return;
+		setOpen(false);
+		finishMotionExitImmediately(completeClose);
+	};
 	const kind = previewKind(props.selection.artifact.mime);
 	const previewSupported =
 		props.selection.artifact.status !== "verification_failed" &&
@@ -438,17 +451,23 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 		return "loading";
 	};
 	return (
-		<Dialog open modal={false} onOpenChange={(open) => !open && workflow.closeArtifact()}>
+		<Dialog open={open()} modal={false} forceMount onOpenChange={(next) => !next && requestClose()}>
 			<Button
 				type="button"
-				class="artifact-preview-backdrop"
+				class="artifact-preview-backdrop motion-fade"
 				aria-label={t("work.result.close")}
-				onClick={workflow.closeArtifact}
+				onClick={requestClose}
 			/>
 			<Dialog.Content
-				class="attachment-preview-column"
+				class="attachment-preview-column motion-drawer-inline"
 				data-artifact-preview={props.selection.artifact.id}
 				aria-label={props.selection.artifact.name}
+				onAnimationEnd={(event) => {
+					if (event.target === event.currentTarget) completeClose();
+				}}
+				onAnimationCancel={(event) => {
+					if (event.target === event.currentTarget) completeClose();
+				}}
 				onOpenAutoFocus={(event) => event.preventDefault()}
 				onCloseAutoFocus={(event) => event.preventDefault()}
 				onInteractOutside={(event) => event.preventDefault()}
@@ -458,11 +477,7 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 						<small>{t("work.result.sourceFrom", { summary: props.selection.run.title })}</small>
 						<strong>{props.selection.artifact.name}</strong>
 					</div>
-					<Button
-						type="button"
-						aria-label={t("work.result.close")}
-						onClick={workflow.closeArtifact}
-					>
+					<Button type="button" aria-label={t("work.result.close")} onClick={requestClose}>
 						×
 					</Button>
 				</header>

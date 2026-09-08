@@ -150,10 +150,31 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 		await page.setViewportSize({ width, height: 800 });
 		await expect
 			.poll(async () => {
-				const box = await thread.boundingBox();
-				return box ? Math.round(width - box.x - box.width) : null;
+				const [box, form] = await Promise.all([thread.boundingBox(), composerForm.boundingBox()]);
+				if (!box || !form) return null;
+				return {
+					formWidth: Math.round(form.width),
+					formX: Math.round(form.x),
+					rightInset: Math.round(width - box.x - box.width),
+					threadWidth: Math.round(box.width),
+					threadX: Math.round(box.x),
+				};
 			})
-			.toBe(24);
+			.toMatchObject({
+				formX: expect.any(Number),
+				formWidth: expect.any(Number),
+				rightInset: 24,
+				threadX: expect.any(Number),
+				threadWidth: expect.any(Number),
+			});
+		await expect
+			.poll(async () => {
+				const [box, form] = await Promise.all([thread.boundingBox(), composerForm.boundingBox()]);
+				return box && form
+					? Math.max(Math.abs(form.x - box.x), Math.abs(form.width - box.width))
+					: Number.POSITIVE_INFINITY;
+			})
+			.toBeLessThan(0.05);
 		const box = await thread.boundingBox();
 		const form = await composerForm.boundingBox();
 		if (!box || !form) throw new Error("conversation surfaces must remain visible");

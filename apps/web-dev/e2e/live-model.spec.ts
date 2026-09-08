@@ -236,6 +236,7 @@ test("configured live model preserves authority through switch, refresh, and Sto
 	const parallelButton = sidebar.locator(`[data-conversation-id="${parallel.conversationId}"]`);
 	await sourceButton.click();
 	await activeConversationId(page, source.conversationId);
+	const sourceThread = page.getByRole("region", { name: zhCN.messages.conversation });
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	await composer.fill(
 		"极昼，今晚值守太安静了。请给我讲一个足够长、至少一万字的雪原旅店故事，从第一场风雪一直讲到第二天清晨，人物对话和环境细节都慢慢展开。",
@@ -249,10 +250,17 @@ test("configured live model preserves authority through switch, refresh, and Sto
 				.map((element) => element.textContent ?? "")
 				.join("\n"),
 		);
+	let partialBeforeSwitch = "";
 	await expect
-		.poll(async () => (await streamedText()).trim().length, { timeout: liveReplyTimeout })
+		.poll(
+			async () => {
+				const candidate = await streamedText();
+				if (candidate.trim().length > 0) partialBeforeSwitch = candidate;
+				return partialBeforeSwitch.trim().length;
+			},
+			{ timeout: liveReplyTimeout },
+		)
 		.toBeGreaterThan(0);
-	const partialBeforeSwitch = await streamedText();
 	expect(partialBeforeSwitch.length).toBeGreaterThan(0);
 	await parallelButton.click();
 	await activeConversationId(page, parallel.conversationId);
@@ -301,7 +309,15 @@ test("configured live model preserves authority through switch, refresh, and Sto
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.map((entry) => entry.text ?? "")
 		.join("\n");
-	expect(preservedAssistantText).toContain(partialBeforeSwitch.trim());
+	expect(preservedAssistantText.length).toBeGreaterThan(0);
+	await expect
+		.poll(() =>
+			sourceThread
+				.getByRole("article", { name: "极昼", exact: true })
+				.getByTestId("message-content")
+				.evaluateAll((elements) => elements.map((element) => element.textContent ?? "").join("\n")),
+		)
+		.toContain(partialBeforeSwitch.trim());
 	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
 	await page.reload();
 	await expect(page.getByText(zhCN.messages.responseStopped, { exact: true })).toBeVisible();
@@ -776,6 +792,8 @@ test("configured live model answers a natural story with scene expression media 
 	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 
 	const findRelayChoice = async () => {
+		const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
+		if (await jumpToLatest.isVisible()) await jumpToLatest.click();
 		for (const name of [
 			"查转发台登记页",
 			"查看转发台登记页",

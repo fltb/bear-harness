@@ -342,11 +342,14 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	await sendMessage(page, "STREAM_HOLD_A");
 	await expect(
 		sidebar.locator(`[data-conversation-id="${sessionAId}"] .conversation-running`),
-	).toBeVisible();
+	).toBeHidden();
 	await expect(page.getByTestId("conversation-activity")).toBeVisible();
 	await expect(assistant.getByText(/HOLD_ONE/)).toBeVisible();
 
 	await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
+	await expect(
+		sidebar.locator(`[data-conversation-id="${sessionAId}"] .conversation-running`),
+	).toBeVisible();
 	await expect(assistant.getByText(/HOLD_ONE/)).toBeHidden();
 	await expect(page.getByTestId("conversation-activity")).toBeHidden();
 	await expect(page.getByTestId("conversation-submission")).toBeHidden();

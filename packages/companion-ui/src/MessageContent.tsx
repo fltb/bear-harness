@@ -57,6 +57,7 @@ export function renderMarkdown(text: string, codeActions?: CodeActions): string 
 		FORBID_TAGS: ["button", "embed", "form", "iframe", "input", "object", "select", "textarea"],
 	});
 	if (typeof document === "undefined") return sanitized;
+	if (!codeActions && !sanitized.includes("<a ")) return sanitized;
 	const template = document.createElement("template");
 	template.innerHTML = sanitized;
 	for (const link of template.content.querySelectorAll("a")) {

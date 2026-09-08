@@ -22,6 +22,7 @@ export function Sidebar(props: {
 	onOpenBackstage: (tab: "roles" | "settings" | "archived") => void;
 	onNavigate?: () => void;
 	navigationHidden?: boolean;
+	onNavigationMotionEnd?(event: AnimationEvent): void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
@@ -113,9 +114,17 @@ export function Sidebar(props: {
 	return (
 		<aside
 			id="conversation-navigation"
-			class="sidebar"
+			class="sidebar motion-drawer-inline"
+			data-motion-state={
+				props.navigationHidden === undefined
+					? undefined
+					: props.navigationHidden
+						? "closed"
+						: "open"
+			}
 			aria-hidden={props.navigationHidden ? "true" : undefined}
 			inert={props.navigationHidden ? true : undefined}
+			onAnimationEnd={props.onNavigationMotionEnd}
 		>
 			<Button
 				type="button"
@@ -285,7 +294,7 @@ export function Sidebar(props: {
 													t("sidebar.newConversation")}
 												<Show when={conversation.isStreaming}>
 													<span
-														class="conversation-running"
+														class="conversation-running motion-activity"
 														role="status"
 														aria-label={t("messages.responding")}
 													/>

@@ -28,7 +28,6 @@
 	@apply inline-block size-3.5 rounded-full;
 	border: 2px solid color-mix(in srgb, var(--sys-accent) 28%, transparent);
 	border-top-color: var(--sys-accent);
-	animation: streaming-spinner 0.75s linear infinite;
 }
 
 .message-send-status {
@@ -379,7 +378,10 @@
 	@apply ml-2 inline-block size-3 rounded-full align-middle;
 	border: 2px solid color-mix(in srgb, var(--sys-accent) 28%, transparent);
 	border-top-color: var(--sys-accent);
-	animation: streaming-spinner 0.75s linear infinite;
+}
+
+.nav-item[aria-current="page"] .conversation-running {
+	@apply hidden;
 }
 
 .conversation-completed {
@@ -764,11 +766,11 @@
 }
 
 .presence-stage[data-activity-state="result_ready"] {
-	animation: presence-result 1.6s ease-in-out;
+	animation: presence-result var(--motion-duration-emphasis) var(--motion-ease-standard);
 }
 
-.presence-stage[data-activity-state="needs_user"] img {
-	animation: presence-amber-pulse 1.8s ease-in-out infinite;
+.presence-stage[data-activity-state="needs_user"] {
+	animation: presence-attention var(--motion-duration-ambient) ease-in-out infinite;
 }
 
 .presence-stage[data-activity-state="problem"] {
@@ -805,7 +807,7 @@
 		transform: translateY(0) scale(1);
 	}
 	30% {
-		transform: translateY(-14px) scale(1.02);
+		transform: translateY(-8px) scale(1.015);
 	}
 	60%,
 	100% {
@@ -813,12 +815,14 @@
 	}
 }
 
-@keyframes presence-amber-pulse {
+@keyframes presence-attention {
 	0%,
 	100% {
-		filter: drop-shadow(0 0 0 color-mix(in srgb, var(--sys-warning) 35%, transparent));
+		transform: scale(1);
+		opacity: 1;
 	}
 	50% {
-		filter: drop-shadow(0 0 14px color-mix(in srgb, var(--sys-warning) 72%, transparent));
+		transform: scale(1.012);
+		opacity: 0.92;
 	}
 }

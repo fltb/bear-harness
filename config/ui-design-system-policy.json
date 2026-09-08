@@ -4,6 +4,7 @@
 		"packages/companion-ui/src/styles/base.css",
 		"packages/companion-ui/src/styles/interaction.css",
 		"packages/companion-ui/src/styles/layout.css",
+		"packages/companion-ui/src/styles/motion.css",
 		"packages/companion-ui/src/styles/refinement.css",
 		"packages/companion-ui/src/styles/settings.css",
 		"packages/companion-ui/src/styles/shell.css",

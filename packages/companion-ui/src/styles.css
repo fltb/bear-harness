@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
 @import "./styles/base.css";
+@import "./styles/motion.css";
 @import "./styles/shell.css";
 @import "./styles/visuals.css";
 @import "./styles/thread.css";

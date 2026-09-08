@@ -19,6 +19,7 @@ import {
 } from "@tanstack/solid-virtual";
 import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
+import { finishMotionExitImmediately } from "./lib/motion.js";
 import {
 	installTimelineScrollProtection,
 	installVirtualTimelineFollow,
@@ -871,7 +872,10 @@ function StreamingAssistantProjection(props: {
 				(message().stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const characterName = () => store.character?.name ?? "";
 	return (
-		<div class="timeline-entry-row timeline-entry-enter" data-testid="streaming-assistant-message">
+		<div
+			class="timeline-entry-row timeline-entry-enter motion-timeline-entry"
+			data-testid="streaming-assistant-message"
+		>
 			<Show when={store.character !== undefined}>
 				<img
 					class="agent-message-avatar"
@@ -893,7 +897,7 @@ function StreamingAssistantProjection(props: {
 						streaming={store.activePiLiveState?.isStreaming === true}
 					/>
 					<Show when={store.activePiLiveState?.isStreaming === true}>
-						<span class="streaming-status" aria-hidden="true" />
+						<span class="streaming-status motion-activity" aria-hidden="true" />
 					</Show>
 					<Show when={failed() && errorText()}>
 						{(error) => (
@@ -1481,19 +1485,37 @@ function CharacterMediaContent(props: { media: CharacterMedia; onError(): void }
 
 export function MediaViewer(props: { media: CharacterMedia; onClose(): void }) {
 	const [t] = useTranslation(undefined, { i18n });
+	const [open, setOpen] = createSignal(true);
 	const [expanded, setExpanded] = createSignal(false);
 	const [originalSize, setOriginalSize] = createSignal(false);
 	const [failed, setFailed] = createSignal(false);
 	const image = props.media.kind === "image" || props.media.kind === "animation";
 	const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
 	let closeButton: HTMLButtonElement | undefined;
+	let completed = false;
+	const completeClose = () => {
+		if (open() || completed) return;
+		completed = true;
+		props.onClose();
+	};
+	const requestClose = () => {
+		if (!open()) return;
+		setOpen(false);
+		finishMotionExitImmediately(completeClose);
+	};
 	return (
-		<Dialog open modal onOpenChange={(open) => !open && props.onClose()}>
+		<Dialog open={open()} modal forceMount onOpenChange={(next) => !next && requestClose()}>
 			<Dialog.Portal>
-				<Dialog.Overlay class="media-viewer-backdrop" />
+				<Dialog.Overlay class="media-viewer-backdrop motion-fade" />
 				<Dialog.Content
-					class="media-viewer"
-					data-expanded={expanded()}
+					class="media-viewer motion-modal"
+					data-bear-media-expanded={expanded()}
+					onAnimationEnd={(event) => {
+						if (event.target === event.currentTarget) completeClose();
+					}}
+					onAnimationCancel={(event) => {
+						if (event.target === event.currentTarget) completeClose();
+					}}
 					onOpenAutoFocus={(event) => {
 						event.preventDefault();
 						closeButton?.focus();
@@ -1528,7 +1550,7 @@ export function MediaViewer(props: { media: CharacterMedia; onClose(): void }) {
 								ref={closeButton}
 								type="button"
 								aria-label={t("messages.closeMedia")}
-								onClick={props.onClose}
+								onClick={requestClose}
 							>
 								×
 							</Button>
