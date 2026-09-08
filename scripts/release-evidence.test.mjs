@@ -28,6 +28,7 @@ test("quality and final refuse tracked or untracked dirty state but ignore gener
 		stage: "quality",
 		target: "test-x64",
 	});
+	assert.equal(first.record.schema, 1);
 	assert.equal(first.record.dirty, false);
 	assert.match(
 		readFileSync(join(root, "release-attestations/quality.json"), "utf8"),

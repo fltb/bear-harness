@@ -646,6 +646,7 @@ async function searchHybrid(
 							const records = ftsResults.map(
 								(r): ScoredRecord => ({
 									record: {
+										schemaVersion: 1,
 										id: r.record_id,
 										content: r.content,
 										type: r.type as MemoryRecord["type"],

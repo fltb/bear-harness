@@ -10,6 +10,7 @@ const LOG_FILE = /^app-.+-\d{8}-\d+\.jsonl$/;
 const DEFAULT_MAX_RECORDS = 10_000;
 
 export interface DiagnosticTraceQueryResult {
+	schemaVersion: 1;
 	traceId: string;
 	records: DiagnosticRecord[];
 	invalidLines: number;
@@ -81,7 +82,7 @@ export async function readDiagnosticTrace(
 			records.push(record);
 		}
 	}
-	return { traceId, records, invalidLines, truncated };
+	return { schemaVersion: 1, traceId, records, invalidLines, truncated };
 }
 
 /** Find the most recently completed companion turn in the retained local logs. */

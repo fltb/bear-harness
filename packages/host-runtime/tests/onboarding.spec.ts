@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -261,6 +261,22 @@ describe("role-defined onboarding", () => {
 				phase: "completed",
 			}),
 		);
+		const acquisitionRecord = JSON.parse(
+			readFileSync(
+				join(
+					temporaryDirectories.at(-1)!,
+					"system",
+					"models",
+					"embeddings",
+					"acquisition-state.json",
+				),
+				"utf8",
+			),
+		) as Record<string, unknown>;
+		expect(acquisitionRecord).toMatchObject({
+			schemaVersion: 1,
+			state: { phase: "completed" },
+		});
 		const inventory = await data(runtime, "memory.localEmbeddingInventory", {});
 		expect(inventory).toMatchObject({
 			candidates: expect.arrayContaining([expect.objectContaining({ target, installed: true })]),

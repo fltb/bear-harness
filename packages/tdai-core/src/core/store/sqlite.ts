@@ -399,10 +399,10 @@ export class VectorStore implements IMemoryStore {
 	private stmtL0QueryAll!: StatementSync;
 	/** L0 query for L1 runner: messages after a timestamp cursor */
 	private stmtL0QueryAfter!: StatementSync;
-	/** L1 cursor-based pagination for migration (by PK) */
-	private stmtL1QueryMigrationCursor!: StatementSync;
-	/** L0 cursor-based pagination for migration (by PK) */
-	private stmtL0QueryMigrationCursor!: StatementSync;
+	/** L1 cursor-based pagination by primary key. */
+	private stmtL1QueryCursor!: StatementSync;
+	/** L0 cursor-based pagination by primary key. */
+	private stmtL0QueryCursor!: StatementSync;
 
 	// FTS5 tables availability flag (created best-effort — may be false if fts5 is not compiled in)
 	private ftsAvailable = false;
@@ -501,6 +501,17 @@ export class VectorStore implements IMemoryStore {
 	 * catch errors at the top level and degrade gracefully.
 	 */
 	private initSchema(providerInfo?: EmbeddingProviderInfo): VectorStoreInitResult {
+		const version = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
+		const existingSchema = this.db
+			.prepare(
+				"SELECT 1 AS present FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' LIMIT 1",
+			)
+			.get();
+		if (version.user_version !== 1 && (version.user_version !== 0 || existingSchema)) {
+			throw new Error("TDAI SQLite database must use schema version 1");
+		}
+		if (version.user_version === 0) this.db.exec("PRAGMA user_version = 1");
+
 		// Tracks which provider/model/dimensions were used to generate vectors.
 		this.db.exec(`
       CREATE TABLE IF NOT EXISTS embedding_meta (
@@ -692,14 +703,6 @@ export class VectorStore implements IMemoryStore {
       )
     `);
 
-		// Migration: add timestamp column if missing (existing DBs pre-v3.x)
-		try {
-			this.db.exec("ALTER TABLE l0_conversations ADD COLUMN timestamp INTEGER DEFAULT 0");
-			this.logger?.debug?.(`${TAG} Migrated l0_conversations: added timestamp column`);
-		} catch {
-			// Column already exists — expected on non-first run
-		}
-
 		// Indexes for L0 queries
 		this.db.exec("CREATE INDEX IF NOT EXISTS idx_l0_session ON l0_conversations(session_key)");
 		this.db.exec("CREATE INDEX IF NOT EXISTS idx_l0_session_id ON l0_conversations(session_id)");
@@ -770,7 +773,7 @@ export class VectorStore implements IMemoryStore {
       LIMIT ?
     `);
 
-		this.stmtL0QueryMigrationCursor = this.db.prepare(`
+		this.stmtL0QueryCursor = this.db.prepare(`
       SELECT record_id, session_key, session_id, role, message_text, recorded_at, timestamp
       FROM l0_conversations
       WHERE record_id > ?
@@ -779,18 +782,20 @@ export class VectorStore implements IMemoryStore {
     `);
 
 		// ── FTS5 tables (best-effort — gracefully degrade if fts5 is not compiled in) ──
-		// Schema v2: `content` column stores jieba-segmented text (for indexing),
+		// Schema v1: `content` stores jieba-segmented text (for indexing),
 		// `content_original` (UNINDEXED) stores the raw text (for display).
-		// If old v1 tables exist (no content_original column), drop + recreate.
 		try {
-			// ── Migrate old FTS5 tables (v1 → v2) ──
-			// v1 tables stored raw text in the `content` column. v2 stores segmented
-			// text in `content` and raw text in `content_original` / `message_text_original`.
-			// FTS5 virtual tables don't support ALTER TABLE ADD COLUMN, so we must
-			// drop and recreate. The data will be repopulated by `rebuildFtsIndex()`.
-			const needsFtsRebuild = this.migrateFtsTablesIfNeeded();
+			const hadL1Fts = this.db
+				.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='l1_fts'")
+				.get();
+			const hadL0Fts = this.db
+				.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='l0_fts'")
+				.get();
+			const hasL1Data = this.db.prepare("SELECT 1 AS present FROM l1_records LIMIT 1").get();
+			const hasL0Data = this.db.prepare("SELECT 1 AS present FROM l0_conversations LIMIT 1").get();
+			const needsFtsBuild = (!hadL1Fts && !!hasL1Data) || (!hadL0Fts && !!hasL0Data);
 
-			// L1 FTS5 virtual table (v2 schema)
+			// L1 FTS5 virtual table (v1 schema)
 			this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS l1_fts USING fts5(
           content,
@@ -808,7 +813,7 @@ export class VectorStore implements IMemoryStore {
         )
       `);
 
-			// L0 FTS5 virtual table (v2 schema)
+			// L0 FTS5 virtual table (v1 schema)
 			this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS l0_fts USING fts5(
           message_text,
@@ -861,11 +866,10 @@ export class VectorStore implements IMemoryStore {
 
 			this.ftsAvailable = true;
 			this.logger?.debug?.(
-				`${TAG} FTS5 tables initialized (l1_fts, l0_fts) [schema v2 — jieba segmented]`,
+				`${TAG} FTS5 tables initialized (l1_fts, l0_fts) [schema v1]`,
 			);
 
-			// Rebuild FTS index if migrated from v1 or tables were freshly created
-			if (needsFtsRebuild) {
+			if (needsFtsBuild) {
 				this.rebuildFtsIndex();
 			}
 		} catch (err) {
@@ -928,7 +932,7 @@ export class VectorStore implements IMemoryStore {
       ORDER BY updated_time ASC
     `);
 
-		this.stmtL1QueryMigrationCursor = this.db.prepare(`
+		this.stmtL1QueryCursor = this.db.prepare(`
       SELECT ${l1QueryCols} FROM l1_records
       WHERE record_id > ?
       ORDER BY record_id ASC
@@ -2123,7 +2127,7 @@ export class VectorStore implements IMemoryStore {
 		}
 	}
 
-	// ── Cursor-based pagination for migration ──────────────────
+	// Cursor-based pagination
 
 	/**
 	 * Read a page of L1 records using primary key cursor.
@@ -2132,12 +2136,12 @@ export class VectorStore implements IMemoryStore {
 	 */
 	queryL1RecordsCursor(afterId: string, pageSize: number): L1RecordRow[] {
 		if (this.closed || this.degraded) {
-			throw Object.assign(new Error("L1 migration enumeration unavailable"), { code: "memory_search_unavailable" });
+			throw Object.assign(new Error("L1 cursor enumeration unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
-			return this.stmtL1QueryMigrationCursor.all(afterId, pageSize) as unknown as L1RecordRow[];
+			return this.stmtL1QueryCursor.all(afterId, pageSize) as unknown as L1RecordRow[];
 		} catch (err) {
-			throw Object.assign(new Error("L1 migration enumeration failed", { cause: err }), { code: "memory_search_failed" });
+			throw Object.assign(new Error("L1 cursor enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2148,12 +2152,12 @@ export class VectorStore implements IMemoryStore {
 	 */
 	queryL0RecordsCursor(afterId: string, pageSize: number): L0RecordRow[] {
 		if (this.closed || this.degraded) {
-			throw Object.assign(new Error("L0 migration enumeration unavailable"), { code: "memory_search_unavailable" });
+			throw Object.assign(new Error("L0 cursor enumeration unavailable"), { code: "memory_search_unavailable" });
 		}
 		try {
-			return this.stmtL0QueryMigrationCursor.all(afterId, pageSize) as unknown as L0RecordRow[];
+			return this.stmtL0QueryCursor.all(afterId, pageSize) as unknown as L0RecordRow[];
 		} catch (err) {
-			throw Object.assign(new Error("L0 migration enumeration failed", { cause: err }), { code: "memory_search_failed" });
+			throw Object.assign(new Error("L0 cursor enumeration failed", { cause: err }), { code: "memory_search_failed" });
 		}
 	}
 
@@ -2255,62 +2259,11 @@ export class VectorStore implements IMemoryStore {
 		}
 	}
 
-	// ── FTS5 migration & rebuild ──────────────────────────────────────────────
-
-	/**
-	 * Detect old FTS5 v1 schema (no `content_original` column) and drop the
-	 * tables so they can be recreated with the v2 schema.
-	 *
-	 * FTS5 virtual tables do NOT support `ALTER TABLE ADD COLUMN`, so the only
-	 * migration path is DROP + recreate + repopulate.
-	 *
-	 * @returns `true` if migration was performed (= FTS index needs rebuilding).
-	 * @internal
-	 */
-	private migrateFtsTablesIfNeeded(): boolean {
-		try {
-			// Check if l1_fts exists at all
-			const l1Exists = this.db
-				.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='l1_fts'")
-				.get();
-			if (!l1Exists) {
-				// Fresh install — tables will be created with v2 schema.
-				// Still need rebuild if there's existing data in l1_records.
-				const hasData = this.db.prepare("SELECT 1 FROM l1_records LIMIT 1").get();
-				return !!hasData;
-			}
-
-			// Check if the v2 column `content_original` exists.
-			// FTS5 tables appear in pragma_table_info with their column names.
-			const cols = this.db.prepare("SELECT name FROM pragma_table_info('l1_fts')").all() as Array<{
-				name: string;
-			}>;
-			const hasV2Col = cols.some((c) => c.name === "content_original");
-
-			if (hasV2Col) {
-				return false; // Already v2 — no migration needed
-			}
-
-			// v1 → v2: drop both FTS tables (data will be repopulated by rebuildFtsIndex)
-			this.logger?.info(`${TAG} Migrating FTS5 tables from v1 to v2 (jieba segmented)`);
-			this.db.exec("DROP TABLE IF EXISTS l1_fts");
-			this.db.exec("DROP TABLE IF EXISTS l0_fts");
-			return true;
-		} catch (err) {
-			this.logger?.warn(
-				`${TAG} FTS migration check failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return false;
-		}
-	}
-
 	/**
 	 * Rebuild the FTS5 index from scratch by reading all records from the
 	 * metadata tables and re-inserting them with jieba-segmented text.
 	 *
-	 * Called automatically after:
-	 *  - Schema migration from v1 to v2
-	 *  - Fresh table creation when existing data exists
+	 * Called automatically after fresh table creation when existing data exists.
 	 *
 	 * Safe to call multiple times (idempotent — clears FTS tables first).
 	 */

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
-export const RELEASE_ATTESTATION_SCHEMA = 2;
+export const RELEASE_ATTESTATION_SCHEMA = 1;
 export const PACKAGE_EVIDENCE_SCHEMA = 1;
 export const PACKAGE_TARGETS = Object.freeze({
 	"mac-x64": Object.freeze(["dmg", "zip"]),

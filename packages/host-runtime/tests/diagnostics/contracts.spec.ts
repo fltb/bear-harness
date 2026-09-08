@@ -11,6 +11,7 @@ import { createSpanId, createTraceId } from "../../src/diagnostics/trace.js";
 
 function validRecord() {
 	return {
+		schemaVersion: 1,
 		timestamp: "2026-08-13T00:00:00.000Z",
 		sequence: 1,
 		launchId: "launch-1",

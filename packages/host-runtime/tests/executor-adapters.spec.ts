@@ -138,7 +138,11 @@ describe("ACP executor adapters", () => {
 						.get("run-1") as { manifest_json: string }
 				).manifest_json,
 			) as Record<string, unknown>;
-			expect(manifest).toMatchObject({ executor: "pi-acp", workerPath: fixturePath });
+			expect(manifest).toMatchObject({
+				schemaVersion: 1,
+				executor: "pi-acp",
+				workerPath: fixturePath,
+			});
 			expect(JSON.stringify(manifest)).not.toContain("apiKey");
 			runDatabase.close();
 			system.close();
@@ -205,7 +209,12 @@ describe("ACP executor adapters", () => {
 							.get("run-1") as { manifest_json: string }
 					).manifest_json,
 				),
-			).toMatchObject({ executor: "codex", triggerEntryId: "entry-1", sha256: hash });
+			).toMatchObject({
+				schemaVersion: 1,
+				executor: "codex",
+				triggerEntryId: "entry-1",
+				sha256: hash,
+			});
 			runDatabase.close();
 			system.close();
 		},

@@ -237,6 +237,7 @@ async function findCandidatesByVector(
 			.filter((r) => !newRecordIds.has(r.record_id))
 			.slice(0, topK)
 			.map((r) => ({
+				schemaVersion: 1,
 				id: r.record_id,
 				content: r.content,
 				type: r.type as MemoryRecord["type"],
@@ -283,6 +284,7 @@ async function findCandidatesByFts(
 				.filter((r) => !newRecordIds.has(r.record_id))
 				.slice(0, 5)
 				.map((r) => ({
+					schemaVersion: 1,
 					id: r.record_id,
 					content: r.content,
 					type: r.type as MemoryRecord["type"],

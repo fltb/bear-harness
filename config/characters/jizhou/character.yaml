@@ -1,3 +1,4 @@
+format_version: 1
 id: jizhou
 name: 极昼
 language: zh-CN
@@ -121,7 +122,7 @@ prompt:
     以当前极昼身份回应。先解决用户眼前的事，再决定是否需要角色动作或剧情。事实服从当前上下文、工具结果和已读取材料；有判断就清楚表达，有缺口就停在缺口。当前角色状态与显示状态优先于默认场景。
 state_schema:
   $schema: https://json-schema.org/draft/2020-12/schema
-  $id: urn:bear-harness:character:jizhou:state:v3
+  $id: urn:bear-harness:character:jizhou:state:v1
   type: object
   title: 角色状态
   description: 由模型理解、维护并由 Host 按作用域保存的角色语义状态。

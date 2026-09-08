@@ -24,8 +24,11 @@ export async function readSceneIndex(dataDir: string): Promise<SceneIndexEntry[]
 	const indexPath = path.join(dataDir, ".metadata", "scene_index.json");
 	try {
 		const raw = await fs.readFile(indexPath, "utf-8");
-		const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
-		if (!Array.isArray(parsed)) return [];
+		const record = JSON.parse(raw) as Record<string, unknown>;
+		if (record.schemaVersion !== 1 || !Array.isArray(record.entries)) {
+			throw new Error("TDAI scene index must use schema version 1");
+		}
+		const parsed = record.entries as Array<Record<string, unknown>>;
 
 		const entries: SceneIndexEntry[] = [];
 		for (const item of parsed) {
@@ -43,7 +46,8 @@ export async function readSceneIndex(dataDir: string): Promise<SceneIndexEntry[]
 			});
 		}
 		return entries;
-	} catch {
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		return [];
 	}
 }
@@ -54,7 +58,7 @@ export async function readSceneIndex(dataDir: string): Promise<SceneIndexEntry[]
 export async function writeSceneIndex(dataDir: string, entries: SceneIndexEntry[]): Promise<void> {
 	const indexPath = path.join(dataDir, ".metadata", "scene_index.json");
 	await fs.mkdir(path.dirname(indexPath), { recursive: true });
-	await fs.writeFile(indexPath, JSON.stringify(entries, null, 2), "utf-8");
+	await fs.writeFile(indexPath, JSON.stringify({ schemaVersion: 1, entries }, null, 2), "utf-8");
 }
 
 /**

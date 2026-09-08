@@ -79,6 +79,8 @@ export interface PipelineSessionState {
 }
 
 export interface Checkpoint {
+	/** Bear 1.0 persistent checkpoint schema. */
+	schemaVersion: 1;
 	// ═══ Global counters ═══
 	/** Epoch ms of the newest message successfully uploaded. Messages with ts > this are new. */
 	last_captured_timestamp: number;
@@ -125,6 +127,7 @@ const DEFAULT_PIPELINE_STATE: PipelineSessionState = {
 };
 
 const DEFAULT_CHECKPOINT: Checkpoint = {
+	schemaVersion: 1,
 	last_captured_timestamp: 0,
 	total_processed: 0,
 	last_persona_at: 0,
@@ -197,57 +200,29 @@ export class CheckpointManager {
 		try {
 			const raw = await fs.readFile(this.filePath, "utf-8");
 			const parsed = JSON.parse(raw) as Record<string, unknown>;
-			// Merge with defaults for backward compat (old checkpoints lack new fields).
-			// structuredClone avoids shallow-copy pitfall: without it, the nested
-			// runner_states/pipeline_states objects in DEFAULT_CHECKPOINT would be
-			// shared across all callers and mutated in place — corrupting the default.
-			const cp = { ...structuredClone(DEFAULT_CHECKPOINT), ...parsed } as Checkpoint;
-
-			// Migrate from old session_states format (pre-split)
-			const oldStates = parsed.session_states as
-				| Record<string, Record<string, unknown>>
-				| undefined;
-			if (oldStates && !parsed.runner_states && !parsed.pipeline_states) {
-				cp.runner_states = {};
-				cp.pipeline_states = {};
-				for (const [key, state] of Object.entries(oldStates)) {
-					cp.runner_states[key] = {
-						...DEFAULT_RUNNER_STATE,
-						last_captured_timestamp: (state.last_captured_timestamp as number) ?? 0,
-						last_l1_cursor: (state.last_l1_cursor as number) ?? 0,
-						last_scene_name: (state.last_scene_name as string) ?? "",
-					};
-					cp.pipeline_states[key] = {
-						...DEFAULT_PIPELINE_STATE,
-						conversation_count: (state.conversation_count as number) ?? 0,
-						last_extraction_time: (state.last_extraction_time as string) ?? "",
-						last_extraction_updated_time: (state.last_extraction_updated_time as string) ?? "",
-						last_active_time: (state.last_active_time as number) ?? 0,
-						l2_pending_l1_count: (state.l2_pending_l1_count as number) ?? 0,
-						l2_last_extraction_time: (state.l2_last_extraction_time as string) ?? "",
-					};
-				}
-			} else {
-				// Ensure per-session states have all fields with defaults
-				if (cp.runner_states) {
-					for (const [key, state] of Object.entries(cp.runner_states)) {
-						cp.runner_states[key] = { ...DEFAULT_RUNNER_STATE, ...state };
-					}
-				}
-				if (cp.pipeline_states) {
-					for (const [key, state] of Object.entries(cp.pipeline_states)) {
-						cp.pipeline_states[key] = { ...DEFAULT_PIPELINE_STATE, ...state };
-					}
-				}
+			if (
+				parsed.schemaVersion !== 1 ||
+				typeof parsed.runner_states !== "object" ||
+				parsed.runner_states === null ||
+				Array.isArray(parsed.runner_states) ||
+				typeof parsed.pipeline_states !== "object" ||
+				parsed.pipeline_states === null ||
+				Array.isArray(parsed.pipeline_states)
+			) {
+				throw new Error("TDAI checkpoint must use schema version 1");
 			}
-			return cp;
-		} catch {
+			return parsed as unknown as Checkpoint;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			return structuredClone(DEFAULT_CHECKPOINT);
 		}
 	}
 
 	/** Atomic write: write to tmp file, then rename into place. */
 	private async writeRaw(checkpoint: Checkpoint): Promise<void> {
+		if (checkpoint.schemaVersion !== 1) {
+			throw new Error("TDAI checkpoint must use schema version 1");
+		}
 		const dir = path.dirname(this.filePath);
 		await fs.mkdir(dir, { recursive: true });
 		const tmp = `${this.filePath}.tmp.${randomBytes(4).toString("hex")}`;

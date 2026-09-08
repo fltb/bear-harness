@@ -151,6 +151,7 @@ export interface CharacterPrompt {
  * input records.
  */
 export interface CharacterPackage {
+	format_version: 1;
 	id: string;
 	name: string;
 	language: string;
@@ -348,6 +349,7 @@ const CharacterExpressionSchema = z.strictObject({
 /** The single runtime contract for character.yaml; UI and Host consume this schema. */
 export const CharacterManifestSchema = z
 	.strictObject({
+		format_version: z.literal(1),
 		id: CharacterPackageIdSchema,
 		name: z.string().min(1).max(4096),
 		language: LanguageTagSchema,
@@ -783,6 +785,7 @@ export class CharacterLoader {
 			}
 		}
 		return {
+			format_version: parsed.format_version,
 			id: parsed.id,
 			name: parsed.name,
 			language: parsed.language,

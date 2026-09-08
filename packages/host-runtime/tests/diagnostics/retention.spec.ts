@@ -238,6 +238,7 @@ describe("markUncleanExits", () => {
 		expect(count).toBe(1);
 
 		const stale = JSON.parse(readFileSync(join(root, "state", "run-stale.json"), "utf8")) as {
+			schemaVersion: number;
 			state: string;
 		};
 		const live = JSON.parse(readFileSync(join(root, "state", "run-live.json"), "utf8")) as {
@@ -246,6 +247,7 @@ describe("markUncleanExits", () => {
 		const clean = JSON.parse(readFileSync(join(root, "state", "run-clean.json"), "utf8")) as {
 			state: string;
 		};
+		expect(stale.schemaVersion).toBe(1);
 		expect(stale.state).toBe("unclean");
 		expect(live.state).toBe("running");
 		expect(clean.state).toBe("clean");

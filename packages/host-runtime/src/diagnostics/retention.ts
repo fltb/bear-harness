@@ -130,8 +130,12 @@ export function scanUnits(root: string): Map<string, LaunchUnit> {
 			const unit = ensure(match[1]);
 			addFile(unit, join(stateDir, name));
 			const marker = safeReadJson(join(stateDir, name));
-			if (marker && typeof marker.pid === "number") unit.markerPid = marker.pid;
-			if (marker && typeof marker.state === "string") unit.markerState = marker.state;
+			if (marker?.schemaVersion === 1 && typeof marker.pid === "number") {
+				unit.markerPid = marker.pid;
+			}
+			if (marker?.schemaVersion === 1 && typeof marker.state === "string") {
+				unit.markerState = marker.state;
+			}
 		}
 	} catch {
 		// missing state dir
@@ -346,7 +350,14 @@ export function markUncleanExits(options: UncleanScanOptions): number {
 		if (!match?.[1]) continue;
 		const file = join(stateDir, name);
 		const marker = safeReadJson(file);
-		if (!marker || marker.state !== "running" || typeof marker.pid !== "number") continue;
+		if (
+			!marker ||
+			marker.schemaVersion !== 1 ||
+			marker.state !== "running" ||
+			typeof marker.pid !== "number"
+		) {
+			continue;
+		}
 		if (isPidAlive(marker.pid)) continue;
 		const updated = { ...marker, state: "unclean" };
 		writeMarkerAtomic(file, updated);
@@ -360,7 +371,7 @@ export function writeMarkerAtomic(file: string, marker: Record<string, unknown>)
 	const temp = `${file}.tmp-${process.pid}`;
 	const fd = openSync(temp, "w", 0o600);
 	try {
-		writeSync(fd, JSON.stringify(marker));
+		writeSync(fd, JSON.stringify({ schemaVersion: 1, ...marker }));
 	} finally {
 		closeSync(fd);
 	}

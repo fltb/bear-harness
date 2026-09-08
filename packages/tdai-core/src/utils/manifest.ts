@@ -74,19 +74,34 @@ export function manifestPath(dataDir: string): string {
  */
 export function readManifest(dataDir: string): Manifest | null {
 	const p = manifestPath(dataDir);
+	if (!fs.existsSync(p)) return null;
+	let value: unknown;
 	try {
-		if (!fs.existsSync(p)) return null;
-		const raw = fs.readFileSync(p, "utf-8");
-		return JSON.parse(raw) as Manifest;
-	} catch {
-		return null;
+		value = JSON.parse(fs.readFileSync(p, "utf-8"));
+	} catch (error) {
+		throw new Error("TDAI manifest must use format version 1", { cause: error });
 	}
+	if (typeof value !== "object" || value === null) {
+		throw new Error("TDAI manifest must use format version 1");
+	}
+	const manifest = value as Record<string, unknown>;
+	if (
+		manifest.version !== 1 ||
+		typeof manifest.createdAt !== "string" ||
+		typeof manifest.store !== "object" ||
+		manifest.store === null ||
+		!(manifest.seed === null || (typeof manifest.seed === "object" && manifest.seed !== null))
+	) {
+		throw new Error("TDAI manifest must use format version 1");
+	}
+	return manifest as unknown as Manifest;
 }
 
 /**
  * Write a manifest to disk (creates `.metadata/` if needed).
  */
 export function writeManifest(dataDir: string, manifest: Manifest): void {
+	if (manifest.version !== 1) throw new Error("TDAI manifest must use format version 1");
 	const dir = path.join(dataDir, METADATA_DIR);
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(manifestPath(dataDir), JSON.stringify(manifest, null, 2) + "\n", "utf-8");

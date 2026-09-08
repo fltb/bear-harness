@@ -46,7 +46,11 @@ async function fixture() {
 				payload = {
 					code: 0,
 					documents: state.partialPage
-						? Array.from({ length: 100 }, (_, id) => ({ id: String(id), text: "kept" }))
+						? Array.from({ length: 100 }, (_, id) => ({
+								schema_version: 1,
+								id: String(id),
+								text: "kept",
+							}))
 						: [],
 				};
 			} else if (path === "/document/search" || path === "/document/hybridSearch") {

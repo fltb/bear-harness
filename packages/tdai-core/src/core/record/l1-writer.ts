@@ -45,6 +45,7 @@ export interface EpisodicMetadata {
  * - MemoryType reduced from 4 to 3 (removed "preference", folded into "persona")
  */
 export interface MemoryRecord {
+	schemaVersion: 1;
 	/** Unique ID for dedup updates */
 	id: string;
 	/** Memory content */
@@ -138,8 +139,8 @@ export function generateMemoryId(): string {
  * - merge: remove target records + append merged record
  * - skip: do nothing
  *
- * v3: supports multi-target removal for update/merge.
- * v3.1: optional VectorStore + EmbeddingService for dual-write (JSONL + vector).
+ * Supports multi-target removal for update/merge and optional dual-write to a
+ * VectorStore when an EmbeddingService is provided.
  */
 export async function writeMemory(params: {
 	memory: ExtractedMemory;
@@ -191,6 +192,7 @@ export async function writeMemory(params: {
 	}
 
 	const record: MemoryRecord = {
+		schemaVersion: 1,
 		id: decision.record_id || generateMemoryId(),
 		content: finalContent,
 		type: finalType,

@@ -73,6 +73,13 @@ for (const [job, expected] of requiredCommands) {
 	}
 }
 
+const liveModelEnvironment = jobs["live-model"]?.env ?? {};
+for (const name of ["BEAR_E2E_PROVIDER_ID", "BEAR_E2E_MODEL_ID", "BEAR_E2E_SECONDARY_MODEL_ID"]) {
+	if (typeof liveModelEnvironment[name] !== "string" || liveModelEnvironment[name] === "") {
+		throw new Error(`live-model is missing required environment value: ${name}`);
+	}
+}
+
 const packageEvidenceUpload = jobs.package.steps.find(
 	(step) =>
 		typeof step?.uses === "string" &&

@@ -121,6 +121,7 @@ jobs:
       BEAR_E2E_LIVE_MODEL: "1"
       BEAR_E2E_PROVIDER_ID: ${{ secrets.BEAR_E2E_PROVIDER_ID }}
       BEAR_E2E_MODEL_ID: ${{ secrets.BEAR_E2E_MODEL_ID }}
+      BEAR_E2E_SECONDARY_MODEL_ID: ${{ secrets.BEAR_E2E_SECONDARY_MODEL_ID }}
       BEAR_E2E_API_KEY: ${{ secrets.BEAR_E2E_API_KEY }}
       BEAR_E2E_CUSTOM_BASE_URL: ${{ secrets.BEAR_E2E_CUSTOM_BASE_URL }}
     steps:

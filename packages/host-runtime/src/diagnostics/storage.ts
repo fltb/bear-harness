@@ -188,6 +188,7 @@ export class LocalWriter {
 	private completeRecord(pending: PendingRecord) {
 		this.sequence += 1;
 		return {
+			schemaVersion: 1 as const,
 			timestamp: new Date(this.clock()).toISOString(),
 			sequence: this.sequence,
 			launchId: this.launchId,

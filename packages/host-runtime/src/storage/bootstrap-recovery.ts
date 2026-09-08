@@ -13,7 +13,7 @@ import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SettingsData, SystemModelDefaultsGetResponse } from "@bear-harness/protocol/schema";
 import { CharacterLoader } from "../companion/character-loader.js";
-import { CompanionDatabase, SystemDatabase } from "./database.js";
+import { CompanionDatabase, DATABASE_SCHEMA_VERSION, SystemDatabase } from "./database.js";
 import { RuntimeLayout, requireCompanionId } from "./layout.js";
 import { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL } from "./schema-sql.js";
 
@@ -271,7 +271,7 @@ function validateCompanionIdentity(path: string, companionId: string): boolean {
 		database?.close();
 	}
 }
-function upgradeSystemDatabase(path: string): void {
+function validateSystemDatabase(path: string): void {
 	if (!existsSync(path)) return;
 	const database = new SystemDatabase(path);
 	try {
@@ -281,7 +281,7 @@ function upgradeSystemDatabase(path: string): void {
 	}
 }
 
-function upgradeCompanionDatabase(path: string, companionId: string): void {
+function validateCompanionDatabase(path: string, companionId: string): void {
 	if (!existsSync(path)) return;
 	const database = new CompanionDatabase(path, companionId);
 	try {
@@ -302,7 +302,7 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 		return { status: "fatal", issue: { kind: "filesystem", message: message(error) } };
 	}
 	try {
-		upgradeSystemDatabase(layout.systemDatabase);
+		validateSystemDatabase(layout.systemDatabase);
 	} catch (error) {
 		return {
 			status: "fatal",
@@ -370,7 +370,7 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 		return { status: "fatal", issue: { kind: "filesystem", message: message(error) } };
 	}
 	try {
-		upgradeCompanionDatabase(companion.database, activeCharacterId);
+		validateCompanionDatabase(companion.database, activeCharacterId);
 	} catch (error) {
 		return {
 			status: "fatal",
@@ -544,6 +544,7 @@ function createRecoveredDatabase(options: {
 		target.exec("PRAGMA foreign_keys = ON");
 		target.exec("BEGIN IMMEDIATE");
 		target.exec(options.schema);
+		target.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
 		target.exec("COMMIT");
 		if (options.companionId) {
 			target

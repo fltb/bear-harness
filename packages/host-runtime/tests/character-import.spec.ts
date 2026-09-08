@@ -56,6 +56,7 @@ function persistImportedRecoveryCopy(
 			? "30000000-0000-4000-8000-000000000001"
 			: "30000000-0000-4000-8000-000000000002";
 	const marker: DurableFileTransactionMarker = {
+		schemaVersion: 1,
 		transactionId,
 		target: join(libraryRoot, characterId),
 		staging: join(libraryRoot, `.${characterId}.staging-${transactionId}`),

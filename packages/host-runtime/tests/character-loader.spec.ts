@@ -41,6 +41,7 @@ function characterTransaction(
 	state: DurableFileTransactionMarker["state"],
 ): DurableFileTransactionMarker {
 	return {
+		schemaVersion: 1,
 		transactionId: characterTransactionId,
 		target: join(libraryRoot, characterId),
 		staging: join(libraryRoot, `.${characterId}.staging-${characterTransactionId}`),
@@ -72,6 +73,11 @@ describe("character package visual projection", () => {
 		const character = loader.load("jizhou");
 		expect(character).not.toBeNull();
 		if (!character) throw new Error("jizhou package is required for the official build");
+		expect(character.format_version).toBe(1);
+		const sourceManifest = parse(
+			readFileSync(join(characterRoot, "jizhou", "character.yaml"), "utf8"),
+		);
+		expect(sourceManifest.state_schema.$id).toBe("urn:bear-harness:character:jizhou:state:v1");
 
 		const display = loader.display(character);
 		expect(CharacterDisplay.safeParse(display).success).toBe(true);
@@ -95,6 +101,7 @@ describe("character package visual projection", () => {
 		});
 		expect(character.canon.manifest).toEqual(
 			expect.objectContaining({
+				format_version: 1,
 				language: "zh-CN",
 				sources: expect.arrayContaining([
 					expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" }),

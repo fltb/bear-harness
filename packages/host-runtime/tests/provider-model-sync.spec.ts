@@ -61,6 +61,7 @@ function restartMarker(dataDir: string): DurableFileTransactionMarker {
 	const base = basename(target);
 	const transactionId = "30000000-0000-4000-8000-000000000003";
 	return {
+		schemaVersion: 1,
 		transactionId,
 		target,
 		staging: join(parent, `.${base}.staging-${transactionId}`),

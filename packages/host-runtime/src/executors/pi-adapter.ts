@@ -17,6 +17,7 @@ import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./
 import type { ExecutorLaunchRequest } from "./router.js";
 
 export interface PiRunManifest {
+	schemaVersion: 1;
 	executor: "pi-acp";
 	profileId: string;
 	runId: string;
@@ -61,6 +62,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 
 	override async launch(request: ExecutorLaunchRequest): Promise<void> {
 		const manifest: PiRunManifest = {
+			schemaVersion: 1,
 			executor: "pi-acp",
 			profileId: request.profile.id,
 			runId: request.run.runId,

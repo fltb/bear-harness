@@ -3,6 +3,7 @@ import { z } from "@bear-harness/schema";
 const IdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 
 export const CanonPackageManifestSchema = z.strictObject({
+	format_version: z.literal(1),
 	language: z.string().min(2).max(35),
 	sources: z.array(
 		z.strictObject({

@@ -53,6 +53,7 @@ function transactionMarker(
 	const parent = dirname(target);
 	const base = basename(target);
 	return {
+		schemaVersion: 1,
 		transactionId,
 		target,
 		staging: join(parent, `.${base}.staging-${transactionId}`),

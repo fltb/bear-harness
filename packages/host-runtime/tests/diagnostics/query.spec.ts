@@ -16,6 +16,7 @@ function createTempRoot(prefix: string): string {
 
 function record(traceId: string, name = "app.started", timestamp = "2026-08-27T00:00:00.000Z") {
 	return {
+		schemaVersion: 1,
 		timestamp,
 		sequence: 1,
 		launchId: "query-test",
@@ -75,6 +76,7 @@ describe("diagnostics trace query", () => {
 		expect(await findLatestCompanionTurnTraceId(root)).toBe(latest);
 		await exportDiagnosticTrace(root, latest, output);
 		const exported = JSON.parse(readFileSync(output, "utf8"));
+		expect(exported.schemaVersion).toBe(1);
 		expect(exported.traceId).toBe(latest);
 		expect(exported.records).toHaveLength(1);
 	});

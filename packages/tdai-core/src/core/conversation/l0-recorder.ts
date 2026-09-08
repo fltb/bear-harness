@@ -42,6 +42,7 @@ function generateMessageId(): string {
  * New flat format: one message per JSONL line.
  */
 export interface L0MessageRecord {
+	schemaVersion: 1;
 	sessionKey: string;
 	sessionId: string;
 	recordedAt: string; // ISO timestamp
@@ -288,6 +289,7 @@ export async function recordConversation(params: {
 	const lines: string[] = [];
 	for (const msg of filtered) {
 		const record: L0MessageRecord = {
+			schemaVersion: 1,
 			sessionKey,
 			sessionId: sessionId || "",
 			recordedAt: now,
@@ -366,14 +368,22 @@ export async function readConversationRecords(
 		const lines = raw.split("\n").filter((line: string) => line.trim());
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
+			let parsed: Record<string, unknown>;
 			try {
-				const parsed = JSON.parse(line) as Record<string, unknown>;
+				parsed = JSON.parse(line) as Record<string, unknown>;
+			} catch {
+				logger?.warn?.(`${TAG} Skipping malformed JSONL line in ${filePath}:${i + 1}`);
+				continue;
+			}
+			if (parsed.schemaVersion !== 1) {
+				throw new Error("TDAI L0 record must use schema version 1");
+			}
 
-				// Filter by sessionKey at line level
-				const lineSessionKey = parsed.sessionKey as string | undefined;
-				if (lineSessionKey !== sessionKey) continue;
+			// Filter by sessionKey at line level
+			const lineSessionKey = parsed.sessionKey as string | undefined;
+			if (lineSessionKey !== sessionKey) continue;
 
-				if (typeof parsed.role === "string" && typeof parsed.content === "string") {
+			if (typeof parsed.role === "string" && typeof parsed.content === "string") {
 					// Flat format: { sessionKey, sessionId, recordedAt, id, role, content, timestamp }
 					// Wrap into L0ConversationRecord for uniform downstream consumption
 					const msg: ConversationMessage = {
@@ -389,11 +399,8 @@ export async function readConversationRecords(
 						messageCount: 1,
 						messages: [msg],
 					});
-				} else {
-					logger?.warn?.(`${TAG} Unrecognized JSONL line format in ${filePath}:${i + 1}`);
-				}
-			} catch {
-				logger?.warn?.(`${TAG} Skipping malformed JSONL line in ${filePath}:${i + 1}`);
+			} else {
+				logger?.warn?.(`${TAG} Unrecognized JSONL line format in ${filePath}:${i + 1}`);
 			}
 		}
 	}

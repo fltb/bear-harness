@@ -29,6 +29,7 @@ describe("LocalWriter", () => {
 		const records = readJsonlLines(root);
 		expect(records).toHaveLength(2);
 		expect(records[0]).toMatchObject({
+			schemaVersion: 1,
 			sequence: 1,
 			launchId: LAUNCH,
 			kind: "event",

@@ -38,6 +38,7 @@ const VERIFIED_RESOLUTION_MESSAGES: Record<RecoveryVerifiedResolution, string> =
 };
 
 interface RecoveryIncidentBase {
+	schemaVersion: 1;
 	id: string;
 	kind: RecoveryIncidentKind;
 	status: RecoveryIncidentStatus;
@@ -100,6 +101,7 @@ export class RecoveryStateValidationError extends Error {
 
 const ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
 const BASE_KEYS = [
+	"schemaVersion",
 	"id",
 	"kind",
 	"status",
@@ -166,6 +168,7 @@ function validateStoredRecord(value: unknown): RecoveryIncident | null {
 	if (!isPlainObject(value) || !isIncidentKind(value.kind)) return null;
 	if (!hasExactKeys(value, [...BASE_KEYS, ...KIND_KEYS[value.kind]])) return null;
 	if (
+		value.schemaVersion !== 1 ||
 		typeof value.id !== "string" ||
 		!ID_PATTERN.test(value.id) ||
 		(value.status !== "pending" && value.status !== "resolved") ||
@@ -184,6 +187,7 @@ function validateStoredRecord(value: unknown): RecoveryIncident | null {
 		if (value.updatedAt !== value.resolvedAt) return null;
 	}
 	const common: Omit<RecoveryIncidentBase, "kind"> = {
+		schemaVersion: 1,
 		id: value.id,
 		status: value.status,
 		createdAt: value.createdAt,
@@ -352,6 +356,7 @@ export class RecoveryStateStore {
 		}
 		const timestamp = this.timestamp();
 		const record: RecoveryIncident = {
+			schemaVersion: 1,
 			...input,
 			status: "pending",
 			createdAt: existing.status === "ok" ? existing.record.createdAt : timestamp,

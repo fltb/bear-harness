@@ -86,6 +86,7 @@ export interface CodexProfileCapability extends CodexConsentRequest {
 
 /** The manifest recorded in `run_manifests.manifest_json` at launch. */
 export interface CodexRunManifest {
+	schemaVersion: 1;
 	executor: "codex";
 	profileId: string;
 	runId: string;
@@ -338,6 +339,7 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 
 		const manifest: CodexRunManifest = {
+			schemaVersion: 1,
 			executor: "codex",
 			profileId: request.profile.id,
 			runId: request.run.runId,

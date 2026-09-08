@@ -28,6 +28,31 @@ const STATE_FILENAME = "acquisition-state.json";
 const CANDIDATE_DIRECTORY = "candidates";
 const UNKNOWN_TOTAL_PROGRESS_STEP = 1024 * 1024;
 
+interface LocalEmbeddingAcquisitionRecord {
+	readonly schemaVersion: 1;
+	readonly state: LocalEmbeddingAcquisitionState;
+}
+
+function parseAcquisitionRecord(value: unknown): LocalEmbeddingAcquisitionRecord {
+	if (typeof value !== "object" || value === null) {
+		throw new Error("local embedding acquisition state must be a v1 record");
+	}
+	const record = value as Record<string, unknown>;
+	const keys = Object.keys(record).sort();
+	if (
+		record.schemaVersion !== 1 ||
+		keys.length !== 2 ||
+		keys[0] !== "schemaVersion" ||
+		keys[1] !== "state"
+	) {
+		throw new Error("local embedding acquisition state must be a v1 record");
+	}
+	return {
+		schemaVersion: 1,
+		state: LocalEmbeddingAcquisitionStateSchema.parse(record.state),
+	};
+}
+
 type AcquisitionErrorCode = Extract<
 	LocalEmbeddingAcquisitionState,
 	{ errorCode: string }
@@ -372,9 +397,9 @@ export class LocalEmbeddingAcquisitionService {
 	private async initialize(): Promise<void> {
 		await mkdir(this.cacheRoot, { recursive: true });
 		try {
-			const stored = LocalEmbeddingAcquisitionStateSchema.parse(
+			const stored = parseAcquisitionRecord(
 				JSON.parse(await readFile(this.statePath, "utf8")),
-			);
+			).state;
 			this.state = copyState(stored);
 			if (isActiveState(stored)) {
 				await this.transition(stored.operationId, {
@@ -609,7 +634,8 @@ export class LocalEmbeddingAcquisitionService {
 		let handle: FileHandle | undefined;
 		try {
 			handle = await open(temporary, "wx");
-			await handle.writeFile(`${JSON.stringify(state)}\n`, "utf8");
+			const record: LocalEmbeddingAcquisitionRecord = { schemaVersion: 1, state };
+			await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
 			await handle.sync();
 			await handle.close();
 			handle = undefined;

@@ -68,12 +68,13 @@ describe("AuditStore hash chain", () => {
 
 		const records = readRecords(dir);
 		expect(records).toHaveLength(3);
+		expect(records.every((record) => record.schemaVersion === 1)).toBe(true);
 		expect(records[0]!.prevHash).toBe(HASH_EMPTY);
 		for (let i = 0; i < records.length; i += 1) {
 			const r = records[i]!;
 			if (i > 0) expect(r.prevHash).toBe(records[i - 1]!.hash);
 			const expected = sha256(
-				`${r.seq}|${r.kind}|${r.action}|${r.detail}|${r.createdAt}|${r.prevHash}`,
+				`${r.schemaVersion}|${r.seq}|${r.kind}|${r.action}|${r.detail}|${r.createdAt}|${r.prevHash}`,
 			);
 			expect(r.hash).toBe(expected);
 		}
@@ -162,6 +163,20 @@ describe("AuditStore hash chain", () => {
 		const records = readRecords(dir);
 		expect(records[2]!.prevHash).toBe(records[1]!.hash);
 		expect((await restarted.exportLines()).verified).toBe(true);
+	});
+
+	it("refuses to append after an unversioned pre-release record", async () => {
+		const dir = tempDir();
+		writeFileSync(
+			join(dir, "segment-000001.jsonl"),
+			`${JSON.stringify({ id: "old", seq: 1, kind: "run", action: "started" })}\n`,
+			"utf8",
+		);
+		const store = makeStore(dir);
+		await expect(store.append("run", "completed", "new")).rejects.toThrow(
+			"audit segment contains an invalid or unsupported record",
+		);
+		expect(readFileSync(join(dir, "segment-000001.jsonl"), "utf8")).not.toContain('"completed"');
 	});
 });
 

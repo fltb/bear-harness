@@ -83,6 +83,7 @@ function rowToMemoryRecord(row: L1RecordRow): MemoryRecord {
 	}
 
 	return {
+		schemaVersion: 1,
 		id: row.record_id,
 		content: row.content,
 		type: row.type as MemoryType,
@@ -151,11 +152,17 @@ export async function readMemoryRecords(
 			const line = lines[i];
 			try {
 				const parsed = JSON.parse(line) as Partial<MemoryRecord>;
+				if (parsed.schemaVersion !== 1) {
+					throw new Error("TDAI L1 record must use schema version 1");
+				}
 				if (parsed.sessionKey !== sessionKey) {
 					continue;
 				}
 				records.push(parsed as MemoryRecord);
-			} catch {
+			} catch (error) {
+				if (error instanceof Error && error.message === "TDAI L1 record must use schema version 1") {
+					throw error;
+				}
 				logger?.warn?.(`${TAG} Skipping malformed JSONL line in ${filePath}:${i + 1}`);
 			}
 		}
@@ -190,8 +197,18 @@ export async function readAllMemoryRecords(
 				const lines = raw.split("\n").filter((line: string) => line.trim());
 				for (const line of lines) {
 					try {
-						allRecords.push(JSON.parse(line) as MemoryRecord);
-					} catch {
+						const parsed = JSON.parse(line) as Partial<MemoryRecord>;
+						if (parsed.schemaVersion !== 1) {
+							throw new Error("TDAI L1 record must use schema version 1");
+						}
+						allRecords.push(parsed as MemoryRecord);
+					} catch (error) {
+						if (
+							error instanceof Error &&
+							error.message === "TDAI L1 record must use schema version 1"
+						) {
+							throw error;
+						}
 						logger?.warn?.(`${TAG} Skipping malformed JSONL line in ${file}`);
 					}
 				}

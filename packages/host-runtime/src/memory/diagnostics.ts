@@ -64,7 +64,7 @@ export function createMemoryDiagnosticsLogger(directory: string): Logger {
 						? "complete"
 						: "observed";
 		const reason = REASONS.exec(prefix)?.[1];
-		const line = `${JSON.stringify({ at: new Date().toISOString(), level, stage, operation, outcome, ...(reason ? { reason } : {}) })}\n`;
+		const line = `${JSON.stringify({ schemaVersion: 1, at: new Date().toISOString(), level, stage, operation, outcome, ...(reason ? { reason } : {}) })}\n`;
 		let fd: number | undefined;
 		try {
 			mkdirSync(directory, { recursive: true, mode: 0o700 });

@@ -75,6 +75,7 @@ const QUERY_PAGE_SIZE = 100;
 
 /** All L1 output fields returned by query/search (excludes vector/sparse_vector). */
 const L1_OUTPUT_FIELDS = [
+	"schema_version",
 	"id",
 	"text",
 	"type",
@@ -92,6 +93,7 @@ const L1_OUTPUT_FIELDS = [
 
 /** All L0 output fields returned by query/search. */
 const L0_OUTPUT_FIELDS = [
+	"schema_version",
 	"id",
 	"message_text",
 	"agent_id",
@@ -103,6 +105,7 @@ const L0_OUTPUT_FIELDS = [
 ];
 
 const PROFILE_OUTPUT_FIELDS = [
+	"schema_version",
 	"id",
 	"type",
 	"filename",
@@ -115,6 +118,7 @@ const PROFILE_OUTPUT_FIELDS = [
 ];
 
 const PROFILE_METADATA_OUTPUT_FIELDS = [
+	"schema_version",
 	"id",
 	"type",
 	"filename",
@@ -138,6 +142,14 @@ function isoToEpochMs(iso: string): number {
 function epochMsToIso(ms: number): string {
 	if (!ms || ms <= 0) return "";
 	return new Date(ms).toISOString();
+}
+
+function requireSchemaV1(document: Record<string, unknown>): void {
+	if (document.schema_version !== 1) {
+		throw Object.assign(new Error("TDAI remote record must use schema version 1"), {
+			code: "unsupported_persistent_format",
+		});
+	}
 }
 
 /**
@@ -362,6 +374,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 					},
 				},
 				[
+					{ fieldName: "schema_version", fieldType: "uint64", indexType: "filter" },
 					{ fieldName: "type", fieldType: "string", indexType: "filter" },
 					{ fieldName: "priority", fieldType: "uint64", indexType: "filter" },
 					{ fieldName: "scene_name", fieldType: "string", indexType: "filter" },
@@ -390,6 +403,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 					},
 				},
 				[
+					{ fieldName: "schema_version", fieldType: "uint64", indexType: "filter" },
 					{ fieldName: "agent_id", fieldType: "string", indexType: "filter" },
 					{ fieldName: "session_key", fieldType: "string", indexType: "filter" },
 					{ fieldName: "session_id", fieldType: "string", indexType: "filter" },
@@ -407,6 +421,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				embedding: { status: "disabled" },
 				indexes: [
 					{ fieldName: "id", fieldType: "string", indexType: "primaryKey" },
+					{ fieldName: "schema_version", fieldType: "uint64", indexType: "filter" },
 					{
 						fieldName: "vector",
 						fieldType: "vector",
@@ -485,11 +500,16 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				offset,
 			};
 			if (filter) queryParams.filter = filter;
-			if (outputFields) queryParams.outputFields = outputFields;
+			if (outputFields) {
+				queryParams.outputFields = outputFields.includes("schema_version")
+					? outputFields
+					: ["schema_version", ...outputFields];
+			}
 			if (sort) queryParams.sort = sort;
 
 			const resp = await this.client.query(collection, queryParams);
 			const docs = resp.documents ?? [];
+			for (const document of docs) requireSchemaV1(document);
 			allDocs.push(...docs);
 
 			// Stop if: we got fewer than page size (last page), or we hit caller's limit
@@ -528,6 +548,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			record.timestamps.length > 0 ? record.timestamps.reduce((a, b) => (a > b ? a : b)) : tsStr;
 
 		const doc: Record<string, unknown> = {
+			schema_version: 1,
 			id: record.id,
 			text: record.content,
 			type: record.type,
@@ -577,6 +598,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 						: tsStr;
 
 				const doc: Record<string, unknown> = {
+					schema_version: 1,
 					id: record.id,
 					text: record.content,
 					type: record.type,
@@ -911,6 +933,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		if (this.degraded) return;
 
 		const doc: Record<string, unknown> = {
+			schema_version: 1,
 			id: record.id,
 			message_text: record.messageText,
 			agent_id: extractAgentId(record.sessionKey),
@@ -953,6 +976,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 
 			const docs = records.map((record) => {
 				const doc: Record<string, unknown> = {
+					schema_version: 1,
 					id: record.id,
 					message_text: record.messageText,
 					agent_id: extractAgentId(record.sessionKey),
@@ -1307,6 +1331,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				if (!current) {
 					const createdAtMs = record.createdAtMs > 0 ? record.createdAtMs : now;
 					upserts.push({
+						schema_version: 1,
 						id: record.id,
 						vector: [0],
 						type: record.type,
@@ -1337,6 +1362,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				}
 
 				upserts.push({
+					schema_version: 1,
 					id: record.id,
 					vector: [0],
 					type: record.type,
@@ -1401,6 +1427,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		// hybridSearch/search returns [[doc, doc, ...]] (one array per query)
 		const docs = docArrays?.[0] ?? [];
 		for (const doc of docs) {
+			requireSchemaV1(doc);
 			results.push({
 				record_id: String(doc.id ?? ""),
 				content: String(doc.text ?? ""),
@@ -1425,6 +1452,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		const results: L0SearchResult[] = [];
 		const docs = docArrays?.[0] ?? [];
 		for (const doc of docs) {
+			requireSchemaV1(doc);
 			results.push({
 				record_id: String(doc.id ?? ""),
 				session_key: String(doc.session_key ?? ""),

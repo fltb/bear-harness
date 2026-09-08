@@ -71,6 +71,7 @@ export function auditKindForRpcMutation(channel: string): AuditKind {
 }
 
 export interface AuditRecord {
+	schemaVersion: 1;
 	id: string;
 	seq: number;
 	kind: AuditKind;
@@ -136,7 +137,7 @@ export function auditReasonCode(reason: string): string {
 function hashRecord(record: Omit<AuditRecord, "hash">): string {
 	return createHash("sha256")
 		.update(
-			`${record.seq}|${record.kind}|${record.action}|${record.detail}|${record.createdAt}|${record.prevHash}`,
+			`${record.schemaVersion}|${record.seq}|${record.kind}|${record.action}|${record.detail}|${record.createdAt}|${record.prevHash}`,
 		)
 		.digest("hex");
 }
@@ -147,6 +148,7 @@ function parseRecord(line: string): AuditRecord | null {
 		if (typeof value !== "object" || value === null) return null;
 		const record = value as Record<string, unknown>;
 		if (
+			record.schemaVersion !== 1 ||
 			typeof record.id !== "string" ||
 			typeof record.seq !== "number" ||
 			typeof record.kind !== "string" ||
@@ -328,19 +330,21 @@ export class AuditStore {
 		const active = names.at(-1);
 		if (active === undefined) return;
 		this.segment = segmentIndex(active);
-		// Scan newest → oldest until a record is found (an empty segment can
-		// only exist as the newest, created by a rotation before any append).
-		for (let i = names.length - 1; i >= 0; i -= 1) {
-			const name = names[i];
-			if (name === undefined) continue;
-			const records = await this.readRecords(join(this.dir, name));
-			if (records.length > 0) {
-				const latest = records.at(-1);
-				if (latest === undefined) continue;
-				this.seq = latest.seq;
-				this.lastHash = latest.hash;
-				return;
+		let latest: AuditRecord | undefined;
+		for (const name of names) {
+			const text = await fsp.readFile(join(this.dir, name), "utf8");
+			for (const raw of text.split("\n")) {
+				if (raw.trim() === "") continue;
+				const record = parseRecord(raw);
+				if (!record) {
+					throw new Error("audit segment contains an invalid or unsupported record");
+				}
+				latest = record;
 			}
+		}
+		if (latest) {
+			this.seq = latest.seq;
+			this.lastHash = latest.hash;
 		}
 	}
 
@@ -413,6 +417,7 @@ export class AuditStore {
 		await this.ensureInit();
 		this.seq += 1;
 		const record: AuditRecord = {
+			schemaVersion: 1,
 			id: this.randomId(),
 			seq: this.seq,
 			kind,

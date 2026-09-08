@@ -53,6 +53,11 @@ describe("RecoveryStateStore", () => {
 			journalPath: join(root, "journal.json"),
 			reason: "Interrupted durable replacement",
 		});
+		expect(
+			JSON.parse(readFileSync(join(root, "recovery", "replace-character.json"), "utf8")),
+		).toMatchObject({
+			schemaVersion: 1,
+		});
 		expect(created).toMatchObject({
 			status: "ok",
 			record: { kind: "filesystem_recovery", status: "pending" },

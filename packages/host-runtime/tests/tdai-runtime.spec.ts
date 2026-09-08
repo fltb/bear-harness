@@ -173,6 +173,7 @@ describe("TencentDbRuntime standard TDAI path", () => {
 				expect(text).not.toMatch(/private-midnight|secret-token|private-other-role|private/);
 				for (const line of text.trim().split("\n")) {
 					expect(JSON.parse(line)).toMatchObject({
+						schemaVersion: 1,
 						stage: "sqlite",
 						operation: "reindex",
 						outcome: "failed",
