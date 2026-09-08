@@ -47,8 +47,11 @@ function passingReport() {
 			maxNoProgressMs: 20_000,
 		},
 		samples: {
-			resource: 121,
+			resource: 110,
 			interaction: 5_000,
+			resourceCoverageMs: 7_200_000,
+			postWarmupCoverageMs: 6_540_000,
+			maxResourceGapMs: 60_000,
 		},
 		resourceTrace: {
 			path: "soak-resource-samples.json",
@@ -89,6 +92,14 @@ test("release soak evidence rejects short, under-loaded, incorrect, or leaking r
 			...passingReport(),
 			resourceTrace: { ...passingReport().resourceTrace, sha256: "not-a-digest" },
 		},
+		{
+			...passingReport(),
+			samples: { ...passingReport().samples, resourceCoverageMs: 7_199_999 },
+		},
+		{
+			...passingReport(),
+			samples: { ...passingReport().samples, maxResourceGapMs: 75_001 },
+		},
 	]) {
 		assert.throws(() => validateSoakReport(report));
 	}
@@ -108,7 +119,13 @@ test("calibration reports enforce correctness and interaction budgets without lo
 				hostHeapSlopeBytesPerTenMinutes: 100 * 1024 * 1024,
 				residentSetNetGrowthBytes: 100 * 1024 * 1024,
 			},
-			samples: { resource: 2, interaction: 1 },
+			samples: {
+				resource: 2,
+				interaction: 1,
+				resourceCoverageMs: 1_000,
+				postWarmupCoverageMs: 0,
+				maxResourceGapMs: 1_000,
+			},
 		}).mode,
 		"calibration",
 	);

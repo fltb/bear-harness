@@ -99,6 +99,22 @@ function trailingIncreases(samples: ResourceSample[]): number {
 	return increasing;
 }
 
+function sampleCoverage(samples: ResourceSample[]): number {
+	const first = samples[0];
+	const last = samples.at(-1);
+	return first && last ? Math.max(0, last.at - first.at) : 0;
+}
+
+function maximumSampleGap(samples: ResourceSample[]): number {
+	let maximum = 0;
+	for (let index = 1; index < samples.length; index += 1) {
+		const current = samples[index];
+		const previous = samples[index - 1];
+		if (current && previous) maximum = Math.max(maximum, current.at - previous.at);
+	}
+	return maximum;
+}
+
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
 	const response = await page.request.post(`/rpc/${channel}`, {
 		headers: { "x-bear-web-dev-token": token },
@@ -544,6 +560,9 @@ if (Number.isFinite(soakMinutes) && soakMinutes > 0)
 			samples: {
 				resource: warmSamples.length,
 				interaction: browserInteractionTimings.length + scrollTimings.length,
+				resourceCoverageMs: sampleCoverage(resourceSamples),
+				postWarmupCoverageMs: sampleCoverage(warmSamples),
+				maxResourceGapMs: maximumSampleGap(resourceSamples),
 			},
 			resourceTrace: {
 				path: "soak-resource-samples.json",

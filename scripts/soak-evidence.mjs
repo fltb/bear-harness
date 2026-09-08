@@ -140,15 +140,28 @@ export function validateSoakReport(input) {
 		}
 	}
 
-	const samples = exactKeys(report.samples, ["resource", "interaction"], "soak samples");
+	const samples = exactKeys(
+		report.samples,
+		["resource", "interaction", "resourceCoverageMs", "postWarmupCoverageMs", "maxResourceGapMs"],
+		"soak samples",
+	);
 	for (const key of ["resource", "interaction"]) {
 		const value = nonNegativeNumber(samples[key], `soak samples ${key}`);
 		if (!Number.isSafeInteger(value) || value < 1) {
 			throw new Error(`soak samples ${key} must be a positive integer`);
 		}
 	}
-	if (report.mode === "release" && samples.resource < 111) {
-		throw new Error("release soak requires at least 111 post-warmup resource samples");
+	for (const key of ["resourceCoverageMs", "postWarmupCoverageMs", "maxResourceGapMs"]) {
+		nonNegativeNumber(samples[key], `soak samples ${key}`);
+	}
+	if (
+		report.mode === "release" &&
+		(samples.resource < 110 ||
+			samples.resourceCoverageMs < 7_200_000 ||
+			samples.postWarmupCoverageMs < 6_540_000 ||
+			samples.maxResourceGapMs > 75_000)
+	) {
+		throw new Error("release soak resource sampling does not continuously cover its duration");
 	}
 	const resourceTrace = exactKeys(
 		report.resourceTrace,
