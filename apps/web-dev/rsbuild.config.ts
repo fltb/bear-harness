@@ -2,20 +2,25 @@ import { defineConfig, type ProxyOptions } from "@rsbuild/core";
 import { pluginBabel } from "@rsbuild/plugin-babel";
 import { pluginSolid } from "@rsbuild/plugin-solid";
 import { pluginTailwindcss } from "@rsbuild/plugin-tailwindcss";
+import { observeProxyFailure } from "./scripts/proxy-failure.mjs";
 
 const hostTarget = `http://127.0.0.1:${process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201"}`;
+const soak = Number(process.env.BEAR_E2E_SOAK_MINUTES ?? "0") > 0;
 const hostProxy: ProxyOptions = {
 	target: hostTarget,
 	plugins: [
 		(proxy) => {
 			// Rsbuild's logger drops HPM's interpolation arguments. Keep the
-			// socket error code without logging request URLs, headers, or bodies.
+			// bounded socket error code and fixed route category without logging
+			// request URLs, headers, query strings, or bodies.
 			// A plugin preserves HPM's default error response handler.
-			proxy.on("error", (error) => {
-				const code = "code" in error ? error.code : undefined;
+			proxy.on("error", (error, request, response) => {
+				const observation = observeProxyFailure(error, request, response);
+				if (observation.clientAborted) return;
 				console.error(
-					`[web-dev proxy failure] code=${typeof code === "string" && /^[A-Z0-9_]{1,40}$/.test(code) ? code : "unknown"}`,
+					`[web-dev proxy failure] route=${observation.route} code=${observation.code}`,
 				);
+				if (soak) queueMicrotask(() => process.exit(1));
 			});
 		},
 	],
