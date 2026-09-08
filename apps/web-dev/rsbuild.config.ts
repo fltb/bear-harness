@@ -3,11 +3,13 @@ import { pluginBabel } from "@rsbuild/plugin-babel";
 import { pluginSolid } from "@rsbuild/plugin-solid";
 import { pluginTailwindcss } from "@rsbuild/plugin-tailwindcss";
 import { observeProxyFailure } from "./scripts/proxy-failure.mjs";
+import { loopbackProxyTransport } from "./scripts/proxy-transport.mjs";
 
 const hostTarget = `http://127.0.0.1:${process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201"}`;
 const soak = Number(process.env.BEAR_E2E_SOAK_MINUTES ?? "0") > 0;
 const hostProxy: ProxyOptions = {
 	target: hostTarget,
+	...loopbackProxyTransport,
 	plugins: [
 		(proxy) => {
 			// Rsbuild's logger drops HPM's interpolation arguments. Keep the

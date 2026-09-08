@@ -7,7 +7,7 @@
 		"dev": "node scripts/dev.mjs",
 		"build": "node scripts/build.mjs",
 		"typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-		"test:unit": "node --test server/data-directory.spec.ts server/codex-session-credential.spec.ts server/soak-metrics.spec.ts e2e/bounded-trace.test.ts scripts/proxy-failure.test.mjs scripts/web-launch-mode.test.mjs",
+		"test:unit": "node --test server/data-directory.spec.ts server/codex-session-credential.spec.ts server/soak-metrics.spec.ts e2e/bounded-trace.test.ts scripts/proxy-failure.test.mjs scripts/proxy-transport.test.mjs scripts/web-launch-mode.test.mjs",
 		"test:e2e": "playwright test",
 		"test:e2e:required": "playwright test --grep-invert 'configured live model answers'",
 		"test:e2e:live": "node ../../scripts/require-live-model-env.mjs && playwright test live-model.spec.ts",
