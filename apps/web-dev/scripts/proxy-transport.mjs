@@ -1,5 +1,26 @@
-// The Host intentionally uses Node's bounded HTTP keep-alive lifetime. A WebDev
-// proxy pool can otherwise race that idle expiry and reuse a socket while the
-// Host is closing it. WebDev is loopback-only, so fresh upstream connections
-// are cheap and make the transport deterministic for long acceptance runs.
-export const loopbackProxyTransport = Object.freeze({ agent: false });
+import { Agent } from "node:http";
+
+// The Host intentionally uses Node's bounded HTTP keep-alive lifetime. Retire
+// idle sockets well before the advertised boundary: this keeps connection churn
+// bounded without letting the WebDev proxy race a Host-side socket close.
+class LoopbackAgent extends Agent {
+	keepSocketAlive(socket) {
+		if (!super.keepSocketAlive(socket)) return false;
+		socket.setTimeout(2_000);
+		return true;
+	}
+
+	reuseSocket(socket, request) {
+		socket.setTimeout(0);
+		super.reuseSocket(socket, request);
+	}
+}
+
+const agent = new LoopbackAgent({
+	keepAlive: true,
+	maxSockets: 32,
+	maxFreeSockets: 4,
+	scheduling: "lifo",
+});
+
+export const loopbackProxyTransport = Object.freeze({ agent });
