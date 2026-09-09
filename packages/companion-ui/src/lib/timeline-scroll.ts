@@ -121,6 +121,9 @@ export function installTimelineScrollProtection(
 		attributes: true,
 		attributeFilter: ["data-conversation-id"],
 	});
+	const resizeObserver =
+		typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(synchronize);
+	resizeObserver?.observe(timeline);
 	for (const eventName of userScrollEvents)
 		window.addEventListener(eventName, captureAfterUserScroll, { passive: true });
 	window.addEventListener(USER_SENT_EVENT, onUserSent);
@@ -131,6 +134,7 @@ export function installTimelineScrollProtection(
 		preserveReadingPosition,
 		dispose: () => {
 			observer.disconnect();
+			resizeObserver?.disconnect();
 			for (const eventName of userScrollEvents)
 				window.removeEventListener(eventName, captureAfterUserScroll);
 			window.removeEventListener(USER_SENT_EVENT, onUserSent);
