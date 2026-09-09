@@ -144,20 +144,44 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 
 	const composerForm = page.getByRole("form", { name: zhCN.composer.messageInputLabel });
 	const presence = page.getByTestId("presence-asset");
+	const application = page.getByRole("application");
+	const measureConversationSurfaces = async () => {
+		const [threadElement, formElement] = await Promise.all([
+			thread.elementHandle(),
+			composerForm.elementHandle(),
+		]);
+		if (!threadElement || !formElement) return null;
+		return page.evaluate(
+			([threadNode, formNode]) => {
+				const threadBounds = threadNode.getBoundingClientRect();
+				const formBounds = formNode.getBoundingClientRect();
+				return {
+					form: { x: formBounds.x, width: formBounds.width },
+					thread: { x: threadBounds.x, width: threadBounds.width },
+				};
+			},
+			[threadElement, formElement],
+		);
+	};
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	let previous: { x: number; width: number } | undefined;
-	for (const width of [1280, 1920, 2560]) {
+	for (const { width, mode } of [
+		{ width: 1280, mode: "window" },
+		{ width: 1920, mode: "fullscreen" },
+		{ width: 2560, mode: "fullscreen" },
+	] as const) {
 		await page.setViewportSize({ width, height: 800 });
+		await expect(application).toHaveAttribute("data-layout", mode);
 		await expect
 			.poll(async () => {
-				const [box, form] = await Promise.all([thread.boundingBox(), composerForm.boundingBox()]);
-				if (!box || !form) return null;
+				const surfaces = await measureConversationSurfaces();
+				if (!surfaces) return null;
 				return {
-					formWidth: Math.round(form.width),
-					formX: Math.round(form.x),
-					rightInset: Math.round(width - box.x - box.width),
-					threadWidth: Math.round(box.width),
-					threadX: Math.round(box.x),
+					formWidth: Math.round(surfaces.form.width),
+					formX: Math.round(surfaces.form.x),
+					rightInset: Math.round(width - surfaces.thread.x - surfaces.thread.width),
+					threadWidth: Math.round(surfaces.thread.width),
+					threadX: Math.round(surfaces.thread.x),
 				};
 			})
 			.toMatchObject({
@@ -169,22 +193,24 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 			});
 		await expect
 			.poll(async () => {
-				const [box, form] = await Promise.all([thread.boundingBox(), composerForm.boundingBox()]);
-				return box && form
-					? Math.max(Math.abs(form.x - box.x), Math.abs(form.width - box.width))
+				const surfaces = await measureConversationSurfaces();
+				return surfaces
+					? Math.max(
+							Math.abs(surfaces.form.x - surfaces.thread.x),
+							Math.abs(surfaces.form.width - surfaces.thread.width),
+						)
 					: Number.POSITIVE_INFINITY;
 			})
 			.toBeLessThan(0.05);
-		const box = await thread.boundingBox();
-		const form = await composerForm.boundingBox();
-		if (!box || !form) throw new Error("conversation surfaces must remain visible");
-		expect(form.x).toBeCloseTo(box.x, 1);
-		expect(form.width).toBeCloseTo(box.width, 1);
+		const surfaces = await measureConversationSurfaces();
+		if (!surfaces) throw new Error("conversation surfaces must remain visible");
+		expect(surfaces.form.x).toBeCloseTo(surfaces.thread.x, 1);
+		expect(surfaces.form.width).toBeCloseTo(surfaces.thread.width, 1);
 		if (previous) {
-			expect(box.x).toBeGreaterThan(previous.x);
-			expect(box.width).toBeGreaterThan(previous.width);
+			expect(surfaces.thread.x).toBeGreaterThan(previous.x);
+			expect(surfaces.thread.width).toBeGreaterThan(previous.width);
 		}
-		previous = box;
+		previous = surfaces.thread;
 		const fixedBounds = await Promise.all([composerForm.boundingBox(), presence.boundingBox()]);
 		for (const fraction of [0, 0.5, 1]) {
 			await page.evaluate((fraction) => {
