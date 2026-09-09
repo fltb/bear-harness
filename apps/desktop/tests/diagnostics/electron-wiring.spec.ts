@@ -213,8 +213,16 @@ describe("registerElectronDiagnostics — renderer fault channel", () => {
 describe("registerElectronDiagnostics — process gone hooks", () => {
 	it("maps render-process-gone details to a fixed enum", () => {
 		const { emitted, appListeners } = makeFakes();
-		appListeners.get("render-process-gone")?.("event", "webContents", { reason: "crashed" });
-		expect(emitted).toEqual([{ name: "renderer.process_gone", attributes: { reason: "crashed" } }]);
+		appListeners.get("render-process-gone")?.("event", "webContents", {
+			reason: "crashed",
+			exitCode: 3221225477,
+		});
+		expect(emitted).toEqual([
+			{
+				name: "renderer.process_gone",
+				attributes: { reason: "crashed", exitCode: 3221225477 },
+			},
+		]);
 	});
 
 	it("normalizes unknown reasons and types to unknown", () => {

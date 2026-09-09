@@ -245,9 +245,18 @@ export function registerElectronDiagnostics(options: ElectronDiagnosticsOptions)
 
 	const onRenderProcessGone = (...args: unknown[]): void => {
 		const details = isPlainObject(args[2]) ? args[2] : {};
-		options.diagnostics.emit("renderer.process_gone", {
+		const attributes: Record<string, number | string> = {
 			reason: normalizeGoneReason(details.reason),
-		});
+		};
+		if (
+			typeof details.exitCode === "number" &&
+			Number.isInteger(details.exitCode) &&
+			details.exitCode >= -2147483648 &&
+			details.exitCode <= 4294967295
+		) {
+			attributes.exitCode = details.exitCode;
+		}
+		options.diagnostics.emit("renderer.process_gone", attributes);
 	};
 	const onChildProcessGone = (...args: unknown[]): void => {
 		const details = isPlainObject(args[1]) ? args[1] : {};

@@ -427,7 +427,10 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 		kind: "event",
 		level: "error",
 		origin: "electron",
-		attributes: { reason: strEnum(PROCESS_GONE_REASONS) },
+		attributes: {
+			reason: strEnum(PROCESS_GONE_REASONS),
+			exitCode: int(-2147483648, 4294967295, true),
+		},
 	},
 	"electron.child_process_gone": {
 		kind: "event",

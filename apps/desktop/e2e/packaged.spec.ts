@@ -7,6 +7,7 @@ import { productConfig } from "@bear-harness/product-config";
 import { chromium } from "playwright";
 import { expect, test } from "playwright/test";
 import { assertProductPage, provisionReplyModel } from "./helpers";
+import { collectPackagedFailureEvidence } from "./packaged-failure-evidence.js";
 import { waitForPackagedRendererPage } from "./packaged-renderer-page.js";
 
 function waitForDevTools(child: ReturnType<typeof spawn>): Promise<string> {
@@ -91,6 +92,8 @@ test("packaged app shows the configured product", async () => {
 			`--user-data-dir=${join(tempRoot, productConfig.dataDirectoryName)}`,
 			"--use-mock-keychain",
 			"--disable-gpu",
+			"--enable-logging=stderr",
+			"--v=1",
 		],
 		{
 			env: {
@@ -124,8 +127,10 @@ test("packaged app shows the configured product", async () => {
 		// Packaged app must load from the asar's file: HTML, never a server.
 		expect(setupWindow.url().startsWith("file://")).toBe(true);
 	} catch (error) {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const failureEvidence = collectPackagedFailureEvidence(tempRoot);
 		throw new Error(
-			`${error instanceof Error ? error.message : String(error)}\npackaged process: exitCode=${child.exitCode ?? "running"}, signal=${child.signalCode ?? "none"}\n${childOutput() || "no packaged process output"}`,
+			`${error instanceof Error ? error.message : String(error)}\npackaged process: exitCode=${child.exitCode ?? "running"}, signal=${child.signalCode ?? "none"}\n${childOutput() || "no packaged process output"}\n${failureEvidence}`,
 			{ cause: error },
 		);
 	} finally {

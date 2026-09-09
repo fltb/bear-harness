@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: bear-harness-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-24.04
@@ -399,6 +403,15 @@ jobs:
             process.stdout.write(`::error title=Packaged smoke failure::${encoded}\n`);
           }
           NODE
+      - name: Preserve packaged smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: packaged-smoke-diagnostics-${{ matrix.os-name }}-${{ matrix.arch }}
+          path: |
+            packaged-smoke.log
+            test-results/
+          if-no-files-found: warn
       - name: Attest packaged target
         shell: bash
         env:

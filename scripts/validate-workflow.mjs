@@ -62,6 +62,14 @@ if (data.on.push.tags !== undefined) {
 	process.stderr.write("Invalid workflow: RC tags must not trigger duplicate CI runs\n");
 	process.exit(1);
 }
+const concurrencyGroup = ["bear-harness-ci-$", "{{ github.ref }}"].join("");
+if (
+	data.concurrency?.group !== concurrencyGroup ||
+	data.concurrency?.["cancel-in-progress"] !== true
+) {
+	process.stderr.write("Invalid workflow: same-ref runs must share a cancel-in-progress group\n");
+	process.exit(1);
+}
 if (!data.jobs || typeof data.jobs !== "object" || Object.keys(data.jobs).length === 0) {
 	process.stderr.write("Invalid workflow: top-level `jobs` must be a non-empty mapping\n");
 	process.exit(1);

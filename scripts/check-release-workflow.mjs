@@ -15,6 +15,13 @@ if (!Array.isArray(releaseBranches) || !releaseBranches.includes("main")) {
 if (triggers.push?.tags !== undefined) {
 	throw new Error("release workflow must not duplicate a validated main run for RC tags");
 }
+const concurrencyGroup = ["bear-harness-ci-$", "{{ github.ref }}"].join("");
+if (workflow?.concurrency?.group !== concurrencyGroup) {
+	throw new Error("release workflow must deduplicate concurrent runs for the same ref");
+}
+if (workflow?.concurrency?.["cancel-in-progress"] !== true) {
+	throw new Error("release workflow must cancel an older run for the same ref");
+}
 const requiredJobs = [
 	"quality",
 	"upstream-brand",
