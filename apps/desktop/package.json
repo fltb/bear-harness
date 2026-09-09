@@ -39,7 +39,7 @@
 		"@rsbuild/plugin-solid": "1.2.2",
 		"@rsbuild/plugin-tailwindcss": "2.0.3",
 		"@types/node": "24.13.3",
-		"@vitest/coverage-v8": "4.1.10",
+		"@vitest/coverage-v8": "4.1.11",
 		"electron": "43.4.0",
 		"electron-builder": "26.15.3",
 		"esbuild": "0.28.2",
@@ -47,6 +47,6 @@
 		"solid-js": "1.9.14",
 		"typescript": "7.0.2",
 		"vite": "8.2.1",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	}
 }

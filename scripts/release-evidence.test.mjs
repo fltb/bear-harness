@@ -295,7 +295,13 @@ function writePassingSoakReport(root) {
 				maxNonGcLongTaskMs: 0,
 				maxNoProgressMs: 1,
 			},
-			samples: { resource: 121, interaction: 5_000 },
+			samples: {
+				resource: 121,
+				interaction: 5_000,
+				resourceCoverageMs: 7_200_000,
+				postWarmupCoverageMs: 6_540_000,
+				maxResourceGapMs: 60_000,
+			},
 			resourceTrace: {
 				path: "soak-resource-samples.json",
 				size: Buffer.byteLength(resourceTrace),

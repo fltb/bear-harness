@@ -50,12 +50,12 @@
 		"@testing-library/dom": "10.4.1",
 		"@testing-library/jest-dom": "7.0.1",
 		"@testing-library/user-event": "14.6.4",
-		"@vitest/coverage-v8": "4.1.10",
+		"@vitest/coverage-v8": "4.1.11",
 		"jsdom": "30.0.1",
 		"tailwindcss": "^4.3.3",
 		"typescript": "7.0.2",
 		"vite": "8.2.1",
 		"vite-plugin-solid": "2.11.14",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	}
 }

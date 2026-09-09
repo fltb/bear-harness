@@ -25,9 +25,9 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@ai-sdk/openai": "3.0.53",
+		"@ai-sdk/openai": "3.0.110",
 		"@node-rs/jieba": "2.0.1",
-		"ai": "6.0.164",
+		"ai": "6.0.278",
 		"node-llama-cpp": "3.16.2",
 		"sqlite-vec": "0.1.7-alpha.2",
 		"undici": "^8.10.0"
@@ -36,6 +36,6 @@
 		"@tencentdb-agent-memory/tcvdb-text": "0.1.1",
 		"@types/node": "24.13.3",
 		"typescript": "7.0.2",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	}
 }
