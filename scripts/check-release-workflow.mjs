@@ -5,6 +5,24 @@ const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
 const jobs = workflow?.jobs ?? {};
 const triggers = workflow?.on ?? {};
+const approvedActionRefs = new Map([
+	["actions/checkout", "v7.0.1"],
+	["actions/setup-node", "v7.0.0"],
+	["actions/upload-artifact", "v7.0.1"],
+	["actions/download-artifact", "v7.0.0"],
+]);
+for (const job of Object.values(jobs)) {
+	for (const step of job?.steps ?? []) {
+		if (typeof step?.uses !== "string") continue;
+		const separator = step.uses.lastIndexOf("@");
+		const action = step.uses.slice(0, separator);
+		const ref = step.uses.slice(separator + 1);
+		const approvedRef = approvedActionRefs.get(action);
+		if (approvedRef && ref !== approvedRef) {
+			throw new Error(`${action} must use the verified ${approvedRef} ref, received ${ref}`);
+		}
+	}
+}
 if (!Object.hasOwn(triggers, "workflow_dispatch")) {
 	throw new Error("release workflow must remain manually dispatchable");
 }
