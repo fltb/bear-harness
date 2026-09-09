@@ -60,6 +60,10 @@ for (const target of requiredTargets) {
 if (actualTargets.size !== requiredTargets.length) {
 	throw new Error(`package matrix contains unreviewed targets: ${[...actualTargets].join(", ")}`);
 }
+const macIntel = matrix.find((entry) => entry["os-name"] === "mac" && entry.arch === "x64");
+if (macIntel?.os !== "macos-15-intel") {
+	throw new Error("macOS x64 packaging must use the supported macos-15-intel runner");
+}
 
 function commands(job) {
 	return (job?.steps ?? [])

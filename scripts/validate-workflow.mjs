@@ -74,5 +74,13 @@ if (!data.jobs || typeof data.jobs !== "object" || Object.keys(data.jobs).length
 	process.stderr.write("Invalid workflow: top-level `jobs` must be a non-empty mapping\n");
 	process.exit(1);
 }
+const packageMatrix = data.jobs.package?.strategy?.matrix?.include;
+const macIntel = Array.isArray(packageMatrix)
+	? packageMatrix.find((entry) => entry?.["os-name"] === "mac" && entry?.arch === "x64")
+	: undefined;
+if (macIntel?.os !== "macos-15-intel") {
+	process.stderr.write("Invalid workflow: macOS x64 package must use macos-15-intel\n");
+	process.exit(1);
+}
 
 process.stdout.write(`Workflow valid: ${workflowPath}\n`);
