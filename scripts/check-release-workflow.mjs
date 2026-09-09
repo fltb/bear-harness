@@ -107,6 +107,7 @@ const requiredCommands = new Map([
 			"::error title=Package failure::",
 			".slice(-3_000)",
 			"node scripts/verify-package.mjs",
+			"node apps/desktop/scripts/verify-linux-artifacts.mjs",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",
 		],

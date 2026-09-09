@@ -358,16 +358,7 @@ jobs:
           & apps/desktop/release/win-unpacked/resources/git/cmd/git.exe --version
       - name: Verify Linux x64 artifacts
         if: matrix.os-name == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEB=$(ls apps/desktop/release/*.deb | head -1)
-          dpkg-deb --info "$DEB" | grep -q "Architecture: amd64"
-          APPIMAGE=$(ls apps/desktop/release/*.AppImage | head -1)
-          chmod +x "$APPIMAGE"
-          APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE" --appimage-extract >/dev/null
-          BIN=$(node --input-type=module -e "const { productConfig } = await import('@bear-harness/product-config'); process.stdout.write(productConfig.executableName)")
-          file "squashfs-root/usr/bin/$BIN" | grep -q "x86-64"
+        run: node apps/desktop/scripts/verify-linux-artifacts.mjs
       - name: Packaged app smoke
         shell: bash
         env:

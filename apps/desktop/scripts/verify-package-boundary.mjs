@@ -10,6 +10,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listPackage } from "@electron/asar";
+import { normalizeArchivePath } from "./archive-paths.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const release = resolve(here, "..", "release");
@@ -36,7 +37,7 @@ function hasPathSegment(path, segment) {
 const archive = join(resourcesRoot(), "app.asar");
 if (!existsSync(archive)) throw new Error(`Application archive is missing: ${archive}`);
 
-const entries = listPackage(archive);
+const entries = listPackage(archive).map(normalizeArchivePath);
 const forbidden = entries.filter((entry) => {
 	if (entry.endsWith(".map") || entry.endsWith(".d.ts") || entry.endsWith(".tsbuildinfo")) {
 		return true;
