@@ -23,8 +23,8 @@ jobs:
           cache: npm
       - name: Install Linux confinement runtime
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes apparmor bubblewrap
+          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
           sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
           sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
           bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
@@ -32,12 +32,13 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - name: Host coverage
+        id: host_coverage
         shell: bash
         run: |
           set -o pipefail
           npm run test:coverage --workspace @bear-harness/host-runtime 2>&1 | tee host-coverage.log
       - name: Publish Host coverage failure
-        if: failure()
+        if: failure() && steps.host_coverage.outcome == 'failure'
         shell: bash
         run: |
           {
@@ -59,7 +60,7 @@ jobs:
           process.stdout.write(`::error title=Host coverage failure::${encoded}\n`);
           NODE
       - name: Preserve Host coverage log
-        if: always()
+        if: always() && steps.host_coverage.outcome != 'skipped'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: host-coverage-log
@@ -138,8 +139,8 @@ jobs:
       - run: npm run build
       - name: Install Electron runtime libraries
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
+          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
       - run: xvfb-run -a npm run test:e2e:electron
       - run: node scripts/release-attestation.mjs electron-e2e
       - uses: actions/upload-artifact@v7.0.1
@@ -161,8 +162,8 @@ jobs:
           cache: npm
       - name: Install Linux confinement runtime
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes apparmor bubblewrap
+          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
           sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
           sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
           bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
@@ -276,8 +277,8 @@ jobs:
       - name: Install Linux Electron runtime
         if: matrix.os-name == 'linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
+          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
       - name: Crashpad smoke (production config, temp root)
         shell: bash
         run: |

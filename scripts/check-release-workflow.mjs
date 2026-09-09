@@ -71,7 +71,8 @@ function commands(job) {
 		.join("\n");
 }
 const linuxConfinementCommands = [
-	"sudo apt-get install --yes apparmor bubblewrap",
+	"sudo apt-get --option Acquire::Retries=3 update",
+	"sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap",
 	"sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap",
 	"sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap",
 	"bwrap --die-with-parent --new-session --unshare-all --share-net",
@@ -111,7 +112,8 @@ const requiredCommands = new Map([
 		"package",
 		[
 			"npm run build:packages",
-			"sudo apt-get install --yes",
+			"sudo apt-get --option Acquire::Retries=3 update",
+			"sudo apt-get --option Acquire::Retries=3 install --yes",
 			"xvfb",
 			"xvfb-run -a npm run test:diagnostics:crash",
 			"tee crashpad-smoke.log",
@@ -138,6 +140,23 @@ for (const [job, expected] of requiredCommands) {
 		if (!source.includes(command))
 			throw new Error(`${job} is missing required command: ${command}`);
 	}
+}
+
+const hostCoverageStep = jobs.quality.steps.find((step) => step?.name === "Host coverage");
+if (hostCoverageStep?.id !== "host_coverage") {
+	throw new Error("Host coverage must expose a step outcome for focused failure reporting");
+}
+const hostCoverageFailure = jobs.quality.steps.find(
+	(step) => step?.name === "Publish Host coverage failure",
+);
+if (hostCoverageFailure?.if !== "failure() && steps.host_coverage.outcome == 'failure'") {
+	throw new Error("Host coverage failure reporting must not react to unrelated setup failures");
+}
+const hostCoverageLog = jobs.quality.steps.find(
+	(step) => step?.name === "Preserve Host coverage log",
+);
+if (hostCoverageLog?.if !== "always() && steps.host_coverage.outcome != 'skipped'") {
+	throw new Error("Host coverage log upload must only run after the coverage step ran");
 }
 
 const linuxElectronRuntimeStep = jobs.package.steps.find(
