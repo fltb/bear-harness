@@ -181,7 +181,32 @@ jobs:
       - run: npm ci
       - run: npm run build:packages
       - run: npx --no-install playwright install --with-deps chromium
-      - run: npm run test:e2e:web:soak
+      - name: Run release soak
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:e2e:web:soak 2>&1 | tee soak-run.log
+      - name: Publish soak failure
+        if: failure()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const log = readFileSync("soak-run.log", "utf8");
+          const focused = log.slice(-5_000);
+          const encoded = focused
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Soak failure::${encoded}\n`);
+          NODE
+      - name: Preserve soak run log
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: soak-run-log
+          path: soak-run.log
+          if-no-files-found: error
       - run: node scripts/release-attestation.mjs soak
       - uses: actions/upload-artifact@v7.0.1
         with:

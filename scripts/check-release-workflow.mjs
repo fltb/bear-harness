@@ -84,6 +84,8 @@ const requiredCommands = new Map([
 		[
 			"npm run build:packages",
 			"npm run test:e2e:web:soak",
+			"tee soak-run.log",
+			"::error title=Soak failure::",
 			"node scripts/release-attestation.mjs soak",
 		],
 	],
