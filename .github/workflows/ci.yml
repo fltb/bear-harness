@@ -111,6 +111,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npm run test:release:recovery
       - run: node scripts/release-attestation.mjs recovery
       - uses: actions/upload-artifact@v7.0.1
@@ -129,6 +130,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npm run build
       - name: Install Electron runtime libraries
         run: |
@@ -152,6 +154,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:e2e:web:required
       - run: node scripts/release-attestation.mjs web-e2e
@@ -178,6 +181,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:e2e:web:live
       - run: node scripts/release-attestation.mjs live-model
@@ -202,6 +206,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:e2e:web:soak
       - run: node scripts/release-attestation.mjs soak
@@ -268,6 +273,7 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - run: npm ci
+      - run: npm run build:packages
       - run: npm run build
       - name: Crashpad smoke (production config, temp root)
         run: npm run test:diagnostics:crash

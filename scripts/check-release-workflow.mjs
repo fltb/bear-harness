@@ -76,14 +76,22 @@ const requiredCommands = new Map([
 		],
 	],
 	["security", ["npm audit --audit-level=high", "npm audit signatures"]],
-	["recovery", ["npm run test:release:recovery"]],
-	["e2e", ["npm run test:e2e:electron"]],
-	["web-e2e", ["npm run test:e2e:web:required"]],
-	["live-model", ["npm run test:e2e:web:live"]],
-	["soak", ["npm run test:e2e:web:soak", "node scripts/release-attestation.mjs soak"]],
+	["recovery", ["npm run build:packages", "npm run test:release:recovery"]],
+	["e2e", ["npm run build:packages", "npm run test:e2e:electron"]],
+	["web-e2e", ["npm run build:packages", "npm run test:e2e:web:required"]],
+	["live-model", ["npm run build:packages", "npm run test:e2e:web:live"]],
+	[
+		"soak",
+		[
+			"npm run build:packages",
+			"npm run test:e2e:web:soak",
+			"node scripts/release-attestation.mjs soak",
+		],
+	],
 	[
 		"package",
 		[
+			"npm run build:packages",
 			"npm run test:diagnostics:crash",
 			"node scripts/verify-package.mjs",
 			"npm run test:e2e:packaged",
