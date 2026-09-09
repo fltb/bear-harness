@@ -30,12 +30,36 @@ function resourcesRoot() {
 	throw new Error(`Unsupported package target: ${target}/${arch}`);
 }
 
+function applicationRoot() {
+	if (target === "mac") {
+		const directory = `mac-${arch}`;
+		const bundleRoot = join(release, directory);
+		if (!existsSync(bundleRoot)) throw new Error(`Packaged directory is missing: ${bundleRoot}`);
+		const app = readdirSync(bundleRoot).find((entry) => entry.endsWith(".app"));
+		if (!app) throw new Error(`Application bundle is missing: ${bundleRoot}`);
+		return join(bundleRoot, app, "Contents");
+	}
+	if (target === "win") return join(release, "win-unpacked");
+	if (target === "linux") return join(release, "linux-unpacked");
+	throw new Error(`Unsupported package target: ${target}/${arch}`);
+}
+
 function hasPathSegment(path, segment) {
 	return path.split("/").includes(segment);
 }
 
 const archive = join(resourcesRoot(), "app.asar");
 if (!existsSync(archive)) throw new Error(`Application archive is missing: ${archive}`);
+
+const localeRoot =
+	target === "mac" ? join(applicationRoot(), "Resources") : join(applicationRoot(), "locales");
+for (const locale of target === "mac"
+	? ["en.lproj", "zh_CN.lproj", "zh_TW.lproj"]
+	: ["en-US.pak", "zh-CN.pak", "zh-TW.pak"]) {
+	if (!existsSync(join(localeRoot, locale))) {
+		throw new Error(`Required Electron locale is missing: ${locale}`);
+	}
+}
 
 const entries = listPackage(archive).map(normalizeArchivePath);
 const forbidden = entries.filter((entry) => {

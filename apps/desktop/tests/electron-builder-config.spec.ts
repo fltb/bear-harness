@@ -53,7 +53,10 @@ describe("electron-builder Windows runtime resources", () => {
 
 describe("electron-builder production boundary", () => {
 	it("ships only the product locales and excludes disabled or build-only payloads", () => {
-		expect(builderConfig.electronLanguages).toEqual(["en", "zh_CN", "zh_TW"]);
+		expect(builderConfig.electronLanguages).toBeUndefined();
+		expect(builderConfig.mac?.electronLanguages).toEqual(["en", "zh_CN", "zh_TW"]);
+		expect(builderConfig.win?.electronLanguages).toEqual(["en-US", "zh-CN", "zh-TW"]);
+		expect(builderConfig.linux?.electronLanguages).toEqual(["en-US", "zh-CN", "zh-TW"]);
 		const files = [
 			...((builderConfig.files ?? []) as string[]),
 			...(((builderConfig.mac as { files?: string[] } | undefined)?.files ?? []) as string[]),

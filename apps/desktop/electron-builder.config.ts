@@ -124,7 +124,6 @@ const config: Configuration = {
 		app: ".",
 		output: "release",
 	},
-	electronLanguages: ["en", "zh_CN", "zh_TW"],
 	asar: true,
 	// Native modules and dependent shared libraries cannot be loaded from ASAR.
 	// node-llama-cpp chooses the target binding from the production dependency tree.
@@ -145,6 +144,7 @@ const config: Configuration = {
 	mac: {
 		identity: null,
 		icon,
+		electronLanguages: ["en", "zh_CN", "zh_TW"],
 		files: applicationFilesFor("mac"),
 	},
 	linux: {
@@ -157,10 +157,12 @@ const config: Configuration = {
 			},
 		},
 		icon,
+		electronLanguages: ["en-US", "zh-CN", "zh-TW"],
 		files: applicationFilesFor("linux"),
 	},
 	win: {
 		icon,
+		electronLanguages: ["en-US", "zh-CN", "zh-TW"],
 		files: applicationFilesFor("win"),
 	},
 };
