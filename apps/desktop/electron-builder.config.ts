@@ -31,6 +31,18 @@ if (!existsSync(attributionPath)) {
 // Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
+function resolvePlatformIcon(extension: ".icns" | ".ico") {
+	if (!productConfig.icon?.endsWith(".png")) return undefined;
+	const path = resolve(repoRoot, `${productConfig.icon.slice(0, -4)}${extension}`);
+	if (!existsSync(path)) {
+		throw new Error(`Missing committed ${extension} brand icon: ${path}`);
+	}
+	return path;
+}
+
+const macIcon = resolvePlatformIcon(".icns");
+const windowsIcon = resolvePlatformIcon(".ico");
+
 const productionExcludes = [
 	"!dist/main/node_modules/**/*",
 	"!dist/**/*.map",
@@ -152,7 +164,7 @@ const config: Configuration = {
 	extraResources: extraResourcesFor(),
 	mac: {
 		identity: null,
-		icon,
+		icon: macIcon,
 		electronLanguages: ["en", "zh_CN", "zh_TW"],
 		files: applicationFilesFor(
 			"mac",
@@ -175,7 +187,7 @@ const config: Configuration = {
 		files: applicationFilesFor("linux"),
 	},
 	win: {
-		icon,
+		icon: windowsIcon,
 		electronLanguages: ["en-US", "zh-CN", "zh-TW"],
 		files: applicationFilesFor("win"),
 	},

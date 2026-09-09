@@ -1,0 +1,9 @@
+{
+	"schema": 1,
+	"source": "icon.png",
+	"sourceSha256": "3cd5c6ecbcecf78cbcef211284f07ec160d6a605430867d486a202b8f41f8e0f",
+	"mac": "icon.icns",
+	"macSha256": "6c2a3fc5c8b852b52f09d19973b8bc724795e5eae1341b05eab4e30d1871d661",
+	"windows": "icon.ico",
+	"windowsSha256": "808804a5239fdc5b03ce46ca312817b33867717c9478eb95a8d5b07f8c9987fb"
+}

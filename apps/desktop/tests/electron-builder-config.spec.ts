@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,10 @@ function manifest(path: string): {
 	devDependencies?: Record<string, string>;
 } {
 	return JSON.parse(readFileSync(resolve(repositoryRoot, path), "utf8"));
+}
+
+function fileSha256(path: string): string {
+	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 describe("electron-builder product identity", () => {
@@ -36,6 +41,28 @@ describe("electron-builder product identity", () => {
 				},
 			},
 		});
+	});
+
+	it("uses committed platform icons without a packaging-time converter download", () => {
+		const macIcon = builderConfig.mac?.icon;
+		const windowsIcon = builderConfig.win?.icon;
+		expect(typeof macIcon).toBe("string");
+		expect(typeof windowsIcon).toBe("string");
+		expect(String(macIcon).endsWith(".icns")).toBe(true);
+		expect(String(windowsIcon).endsWith(".ico")).toBe(true);
+		expect(existsSync(String(macIcon))).toBe(true);
+		expect(existsSync(String(windowsIcon))).toBe(true);
+		const iconManifest = JSON.parse(
+			readFileSync(
+				resolve(repositoryRoot, "packages/product-config/assets/icon-manifest.json"),
+				"utf8",
+			),
+		) as { sourceSha256: string; macSha256: string; windowsSha256: string };
+		expect(fileSha256(resolve(repositoryRoot, "packages/product-config/assets/icon.png"))).toBe(
+			iconManifest.sourceSha256,
+		);
+		expect(fileSha256(String(macIcon))).toBe(iconManifest.macSha256);
+		expect(fileSha256(String(windowsIcon))).toBe(iconManifest.windowsSha256);
 	});
 });
 
