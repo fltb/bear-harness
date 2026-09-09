@@ -1,0 +1,9 @@
+abi <abi/4.0>,
+#include <tunables/global>
+
+# Ubuntu 24.04 restricts unprivileged user namespaces. Grant that single
+# capability to the distribution-owned bubblewrap launcher while leaving the
+# host-wide restriction enabled; bubblewrap then applies Bear's mount sandbox.
+profile bear_harness_bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

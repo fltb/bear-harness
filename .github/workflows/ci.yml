@@ -20,7 +20,10 @@ jobs:
       - name: Install Linux confinement runtime
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap
+          sudo apt-get install --yes apparmor bubblewrap
+          sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
+          sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
+          bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck

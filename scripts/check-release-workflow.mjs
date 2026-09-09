@@ -58,7 +58,10 @@ const requiredCommands = new Map([
 	[
 		"quality",
 		[
-			"sudo apt-get install --yes bubblewrap",
+			"sudo apt-get install --yes apparmor bubblewrap",
+			"sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap",
+			"sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap",
+			"bwrap --die-with-parent --new-session --unshare-all --share-net",
 			"npm ci",
 			"npm run lint",
 			"npm run typecheck",
