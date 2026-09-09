@@ -54,14 +54,17 @@ function commands(job) {
 		.map((step) => (typeof step.run === "string" ? step.run : ""))
 		.join("\n");
 }
+const linuxConfinementCommands = [
+	"sudo apt-get install --yes apparmor bubblewrap",
+	"sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap",
+	"sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap",
+	"bwrap --die-with-parent --new-session --unshare-all --share-net",
+];
 const requiredCommands = new Map([
 	[
 		"quality",
 		[
-			"sudo apt-get install --yes apparmor bubblewrap",
-			"sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap",
-			"sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap",
-			"bwrap --die-with-parent --new-session --unshare-all --share-net",
+			...linuxConfinementCommands,
 			"npm ci",
 			"npm run lint",
 			"npm run typecheck",
@@ -78,10 +81,14 @@ const requiredCommands = new Map([
 	["security", ["npm audit --audit-level=high", "npm audit signatures"]],
 	["recovery", ["npm run build:packages", "npm run test:release:recovery"]],
 	["e2e", ["npm run build:packages", "npm run test:e2e:electron"]],
-	["web-e2e", ["npm run build:packages", "npm run test:e2e:web:required"]],
+	[
+		"web-e2e",
+		[...linuxConfinementCommands, "npm run build:packages", "npm run test:e2e:web:required"],
+	],
 	[
 		"soak",
 		[
+			...linuxConfinementCommands,
 			"npm run build:packages",
 			"npm run test:e2e:web:soak",
 			"tee soak-run.log",
