@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { replaceDurableFile } from "@bear-harness/host-runtime";
+import { replaceDurableFile, syncFileForDurability } from "@bear-harness/host-runtime";
 import type {
 	RecoveryIncident,
 	RecoveryStateStore,
@@ -176,12 +176,7 @@ function assertExportPaths(
 }
 
 function syncFile(path: string): void {
-	const descriptor = openSync(path, constants.O_RDONLY);
-	try {
-		fsyncSync(descriptor);
-	} finally {
-		closeSync(descriptor);
-	}
+	syncFileForDurability(path);
 }
 
 function syncDirectory(path: string): void {

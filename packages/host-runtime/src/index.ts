@@ -179,6 +179,7 @@ export {
 export type { CompanionStorageHandle } from "./storage/companion-storage.js";
 export { CompanionStorageRegistry } from "./storage/companion-storage.js";
 export { CompanionDatabase, SystemDatabase } from "./storage/database.js";
+export { syncFileForDurability } from "./storage/durable-file-sync.js";
 // Storage
 export type {
 	DurableCopyStatus,

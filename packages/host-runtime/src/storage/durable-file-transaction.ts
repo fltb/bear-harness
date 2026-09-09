@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "@bear-harness/schema";
+import { syncFileForDurability } from "./durable-file-sync.js";
 
 export type DurableFileTransactionState = "staged" | "old-target-moved" | "activated";
 export interface DurableFileTransactionMarker {
@@ -591,12 +592,7 @@ function syncTree(path: string, bounds: Bounds, depth = 0): void {
 	syncDirectory(path);
 }
 function syncFile(path: string): void {
-	const fd = openSync(path, "r");
-	try {
-		fsyncSync(fd);
-	} finally {
-		closeSync(fd);
-	}
+	syncFileForDurability(path);
 }
 function syncDirectory(path: string): void {
 	let fd: number | undefined;

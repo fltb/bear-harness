@@ -29,6 +29,7 @@ import {
 	writeSync,
 } from "node:fs";
 import { join } from "node:path";
+import { syncFileForDurability } from "../storage/durable-file-sync.js";
 import type { DiagnosticsPolicy } from "./contracts.js";
 
 export interface RetentionOptions {
@@ -376,12 +377,7 @@ export function writeMarkerAtomic(file: string, marker: Record<string, unknown>)
 		closeSync(fd);
 	}
 	// fsync the temp file before rename.
-	const syncFd = openSync(temp, "r");
-	try {
-		fsyncSync(syncFd);
-	} finally {
-		closeSync(syncFd);
-	}
+	syncFileForDurability(temp);
 	renameSync(temp, file);
 	// Best-effort directory fsync.
 	try {

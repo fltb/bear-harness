@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { SettingsData, SystemModelDefaultsGetResponse } from "@bear-harness/protocol/schema";
 import { CharacterLoader } from "../companion/character-loader.js";
 import { CompanionDatabase, DATABASE_SCHEMA_VERSION, SystemDatabase } from "./database.js";
+import { syncFileForDurability } from "./durable-file-sync.js";
 import { RuntimeLayout, requireCompanionId } from "./layout.js";
 import { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL } from "./schema-sql.js";
 
@@ -138,12 +139,7 @@ function syncDirectory(path: string): void {
 }
 
 function syncFile(path: string): void {
-	const descriptor = openSync(path, "r");
-	try {
-		fsyncSync(descriptor);
-	} finally {
-		closeSync(descriptor);
-	}
+	syncFileForDurability(path);
 }
 
 function databaseIntegrity(path: string, requiredTables: readonly string[]): boolean {
