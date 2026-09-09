@@ -114,6 +114,11 @@ interface Bounds {
 	entries: number;
 }
 
+function verificationFailureMessage(target: string, cause: unknown): string {
+	const detail = cause instanceof Error && cause.message.length > 0 ? `: ${cause.message}` : "";
+	return `staged replacement failed verification for ${target}${detail}`;
+}
+
 /** Return the deterministic marker location used by replacement and recovery. */
 export function durableFileTransactionMarkerPath(root: string, target: string): string {
 	return validatePaths(root, target).marker;
@@ -153,7 +158,7 @@ export function replaceDurableFileSync(options: DurableFileTransactionSyncOption
 		if (!stagedValid) {
 			throw new DurableFileTransactionError(
 				"verification-failed",
-				`staged replacement failed verification for ${paths.target}`,
+				verificationFailureMessage(paths.target, stagedCause),
 				stagedCause,
 			);
 		}
@@ -243,7 +248,7 @@ export async function replaceDurableFile(options: DurableFileTransactionOptions)
 		if (!stagedValid) {
 			throw new DurableFileTransactionError(
 				"verification-failed",
-				`staged replacement failed verification for ${paths.target}`,
+				verificationFailureMessage(paths.target, stagedCause),
 				stagedCause,
 			);
 		}

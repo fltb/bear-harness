@@ -436,6 +436,28 @@ Use the station log.
 });
 
 describe("character package durable replacement", () => {
+	it("preserves the staged package validation cause", () => {
+		const seedRoot = mkdtempSync(join(tmpdir(), "bear-character-invalid-seed-"));
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-invalid-library-"));
+		temporaryDirectories.push(seedRoot, libraryRoot);
+		copyCharacterPackage(join(seedRoot, "jizhou"), "jizhou", "invalid-seed");
+		rmSync(join(seedRoot, "jizhou", "canon", "manifest.yaml"));
+		const loader = new CharacterLoader(seedRoot, libraryRoot);
+
+		try {
+			loader.bootstrapLibrary("jizhou");
+			throw new Error("expected invalid staged package to be rejected");
+		} catch (error) {
+			expect(error).toMatchObject({
+				code: "verification-failed",
+				message: expect.stringContaining("package content missing: canon/manifest.yaml"),
+				cause: expect.objectContaining({
+					message: expect.stringContaining("package content missing: canon/manifest.yaml"),
+				}),
+			});
+		}
+	});
+
 	it("preserves an installed package", () => {
 		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-preserve-"));
 		temporaryDirectories.push(libraryRoot);

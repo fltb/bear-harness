@@ -487,15 +487,14 @@ export class CharacterLoader {
 	}
 
 	private verifyPackageDirectory(characterId: string, directory: string): boolean {
-		try {
-			const verifier = new CharacterLoader(dirname(directory), dirname(directory), {
-				id: characterId,
-				directory,
-			});
-			return verifier.load(characterId) !== null;
-		} catch {
-			return false;
+		const verifier = new CharacterLoader(dirname(directory), dirname(directory), {
+			id: characterId,
+			directory,
+		});
+		if (!verifier.load(characterId)) {
+			throw new Error(`character package ${characterId}: staged manifest is missing`);
 		}
+		return true;
 	}
 
 	private packageDirectory(characterId: string): string {
