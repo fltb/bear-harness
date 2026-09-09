@@ -433,10 +433,26 @@ jobs:
             test-results/
           if-no-files-found: warn
       - name: Attest packaged target
+        id: package_attestation
         shell: bash
         env:
           RELEASE_TARGET: ${{ matrix.os-name }}-${{ matrix.arch }}
-        run: node scripts/release-attestation.mjs package
+        run: |
+          set -o pipefail
+          node scripts/release-attestation.mjs package 2>&1 | tee package-attestation.log
+      - name: Publish package attestation failure
+        if: failure() && steps.package_attestation.outcome == 'failure'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const encoded = readFileSync("package-attestation.log", "utf8")
+            .slice(-5_000)
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Package attestation failure::${encoded}\n`);
+          NODE
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-attestation-package-${{ matrix.os-name }}-${{ matrix.arch }}

@@ -10,35 +10,28 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listPackage } from "@electron/asar";
-import { normalizeArchivePath } from "./archive-paths.mjs";
+import { normalizeArchivePath, resolveMacOutputDirectory } from "./archive-paths.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const release = resolve(here, "..", "release");
 const [target, arch] = process.argv.slice(2);
 
+function macBundleRoot() {
+	const output = resolveMacOutputDirectory(release, arch, existsSync);
+	const app = readdirSync(output).find((entry) => entry.endsWith(".app"));
+	if (!app) throw new Error(`Application bundle is missing: ${output}`);
+	return join(output, app);
+}
+
 function resourcesRoot() {
-	if (target === "mac") {
-		const directory = `mac-${arch}`;
-		const bundleRoot = join(release, directory);
-		if (!existsSync(bundleRoot)) throw new Error(`Packaged directory is missing: ${bundleRoot}`);
-		const app = readdirSync(bundleRoot).find((entry) => entry.endsWith(".app"));
-		if (!app) throw new Error(`Application bundle is missing: ${bundleRoot}`);
-		return join(bundleRoot, app, "Contents/Resources");
-	}
+	if (target === "mac") return join(macBundleRoot(), "Contents/Resources");
 	if (target === "win") return join(release, "win-unpacked", "resources");
 	if (target === "linux") return join(release, "linux-unpacked", "resources");
 	throw new Error(`Unsupported package target: ${target}/${arch}`);
 }
 
 function applicationRoot() {
-	if (target === "mac") {
-		const directory = `mac-${arch}`;
-		const bundleRoot = join(release, directory);
-		if (!existsSync(bundleRoot)) throw new Error(`Packaged directory is missing: ${bundleRoot}`);
-		const app = readdirSync(bundleRoot).find((entry) => entry.endsWith(".app"));
-		if (!app) throw new Error(`Application bundle is missing: ${bundleRoot}`);
-		return join(bundleRoot, app, "Contents");
-	}
+	if (target === "mac") return join(macBundleRoot(), "Contents");
 	if (target === "win") return join(release, "win-unpacked");
 	if (target === "linux") return join(release, "linux-unpacked");
 	throw new Error(`Unsupported package target: ${target}/${arch}`);

@@ -133,6 +133,8 @@ const requiredCommands = new Map([
 			"::error title=Packaged smoke failure::",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",
+			"tee package-attestation.log",
+			"::error title=Package attestation failure::",
 		],
 	],
 	["release-gate", ["node scripts/release-attestation.mjs final"]],
@@ -206,6 +208,21 @@ const crashpadStep = jobs.package.steps.find(
 );
 if (!crashpadStep || crashpadStep.shell !== "bash") {
 	throw new Error("package Crashpad smoke must use a cross-platform bash launcher");
+}
+
+const packageAttestationStep = jobs.package.steps.find(
+	(step) => step?.name === "Attest packaged target",
+);
+if (packageAttestationStep?.id !== "package_attestation") {
+	throw new Error("Package attestation must expose a step outcome for focused diagnostics");
+}
+const packageAttestationFailure = jobs.package.steps.find(
+	(step) => step?.name === "Publish package attestation failure",
+);
+if (
+	packageAttestationFailure?.if !== "failure() && steps.package_attestation.outcome == 'failure'"
+) {
+	throw new Error("Package attestation diagnostics must report only their own failure");
 }
 
 const packageEvidenceUpload = jobs.package.steps.find(
