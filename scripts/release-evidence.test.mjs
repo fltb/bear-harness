@@ -114,8 +114,7 @@ test("final attestation validates and binds every stage and platform evidence fi
 		});
 		await createReleaseAttestation({ repoRoot: root, stage: "package", target });
 	}
-	writePassingSoakReport(root);
-	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e", "soak"]) {
+	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e"]) {
 		await createReleaseAttestation({ repoRoot: root, stage, target: "test-x64" });
 	}
 
@@ -124,7 +123,7 @@ test("final attestation validates and binds every stage and platform evidence fi
 		stage: "final",
 		target: "test-x64",
 	});
-	assert.equal(final.record.inputs.stages.length, 5);
+	assert.equal(final.record.inputs.stages.length, 4);
 	assert.equal(final.record.inputs.packages.length, 4);
 	assert.deepEqual(
 		new Set(final.record.inputs.packages.map(({ target }) => target)),

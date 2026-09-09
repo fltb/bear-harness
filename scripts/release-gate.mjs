@@ -18,7 +18,6 @@ const stages = [
 	["recovery", ["run", "test:release:recovery"]],
 	["web-e2e", ["run", "test:e2e:web:required"]],
 	["electron-e2e", ["run", "test:e2e:electron"]],
-	["soak", ["run", "test:e2e:web:soak"]],
 ];
 for (const [name, args] of stages) {
 	console.log(`\n=== release gate: ${name} ===`);

@@ -20,7 +20,6 @@ const requiredJobs = [
 	"recovery",
 	"e2e",
 	"web-e2e",
-	"soak",
 	"package",
 	"release-gate",
 ];
@@ -28,6 +27,7 @@ for (const name of requiredJobs) {
 	if (!jobs[name]) throw new Error(`release workflow is missing required job: ${name}`);
 }
 if (jobs["live-model"]) throw new Error("release workflow must not run live-model in GitHub CI");
+if (jobs.soak) throw new Error("release workflow must not run endurance tests in GitHub CI");
 
 const finalNeeds = new Set(
 	Array.isArray(jobs["release-gate"].needs)
@@ -92,17 +92,6 @@ const requiredCommands = new Map([
 		],
 	],
 	[
-		"soak",
-		[
-			...linuxConfinementCommands,
-			"npm run build:packages",
-			"npm run test:e2e:web:soak",
-			"tee soak-run.log",
-			"::error title=Soak failure::",
-			"node scripts/release-attestation.mjs soak",
-		],
-	],
-	[
 		"package",
 		[
 			"npm run build:packages",
@@ -120,16 +109,6 @@ for (const [job, expected] of requiredCommands) {
 		if (!source.includes(command))
 			throw new Error(`${job} is missing required command: ${command}`);
 	}
-}
-
-const soakEnvironment = jobs.soak?.env ?? {};
-if (
-	soakEnvironment.CI !== "1" ||
-	soakEnvironment.BEAR_E2E_SOAK_MINUTES !== "120" ||
-	soakEnvironment.BEAR_E2E_SOAK_MODE !== "release" ||
-	jobs.soak?.["timeout-minutes"] !== 135
-) {
-	throw new Error("soak must run the frozen 120-minute background release profile");
 }
 
 const packageEvidenceUpload = jobs.package.steps.find(

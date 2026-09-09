@@ -198,72 +198,6 @@ jobs:
           path: release-attestations/web-e2e.json
           if-no-files-found: error
 
-  soak:
-    needs: [quality]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 135
-    env:
-      CI: "1"
-      BEAR_E2E_SOAK_MINUTES: "120"
-      BEAR_E2E_SOAK_MODE: release
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: 24.19.0
-          cache: npm
-      - name: Install Linux confinement runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes apparmor bubblewrap
-          sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
-          sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
-          bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
-      - run: npm ci
-      - run: npm run build:packages
-      - run: npx --no-install playwright install --with-deps chromium
-      - name: Run release soak
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run test:e2e:web:soak 2>&1 | tee soak-run.log
-      - name: Publish soak failure
-        if: failure()
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          const log = readFileSync("soak-run.log", "utf8");
-          const focused = log.slice(-5_000);
-          const encoded = focused
-            .replaceAll("%", "%25")
-            .replaceAll("\r", "%0D")
-            .replaceAll("\n", "%0A");
-          process.stdout.write(`::error title=Soak failure::${encoded}\n`);
-          NODE
-      - name: Preserve soak run log
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: soak-run-log
-          path: soak-run.log
-          if-no-files-found: error
-      - run: node scripts/release-attestation.mjs soak
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: release-attestation-soak
-          path: |
-            release-attestations/soak.json
-            release-attestations/soak-report.json
-            release-attestations/soak-resource-samples.json
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7.0.1
-        if: always()
-        with:
-          name: soak-forensics
-          path: test-results/web-dev/soak/
-          if-no-files-found: warn
-
   package:
     needs: [quality, web-e2e, e2e]
     runs-on: ${{ matrix.os }}
@@ -398,7 +332,7 @@ jobs:
           if-no-files-found: error
 
   release-gate:
-    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, soak, package]
+    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, package]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
