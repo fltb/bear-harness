@@ -26,5 +26,5 @@ for (const [name, args] of stages) {
 	if (result.status !== 0) process.exit(result.status ?? 1);
 }
 console.log(
-	"Source/platform-independent release gate stages passed; CI still requires live-model and all package targets",
+	"Source/platform-independent release gate stages passed; CI still requires all package targets",
 );

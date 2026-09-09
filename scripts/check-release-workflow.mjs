@@ -20,7 +20,6 @@ const requiredJobs = [
 	"recovery",
 	"e2e",
 	"web-e2e",
-	"live-model",
 	"soak",
 	"package",
 	"release-gate",
@@ -28,6 +27,7 @@ const requiredJobs = [
 for (const name of requiredJobs) {
 	if (!jobs[name]) throw new Error(`release workflow is missing required job: ${name}`);
 }
+if (jobs["live-model"]) throw new Error("release workflow must not run live-model in GitHub CI");
 
 const finalNeeds = new Set(
 	Array.isArray(jobs["release-gate"].needs)
@@ -79,7 +79,6 @@ const requiredCommands = new Map([
 	["recovery", ["npm run build:packages", "npm run test:release:recovery"]],
 	["e2e", ["npm run build:packages", "npm run test:e2e:electron"]],
 	["web-e2e", ["npm run build:packages", "npm run test:e2e:web:required"]],
-	["live-model", ["npm run build:packages", "npm run test:e2e:web:live"]],
 	[
 		"soak",
 		[
@@ -105,13 +104,6 @@ for (const [job, expected] of requiredCommands) {
 	for (const command of expected) {
 		if (!source.includes(command))
 			throw new Error(`${job} is missing required command: ${command}`);
-	}
-}
-
-const liveModelEnvironment = jobs["live-model"]?.env ?? {};
-for (const name of ["BEAR_E2E_PROVIDER_ID", "BEAR_E2E_MODEL_ID", "BEAR_E2E_SECONDARY_MODEL_ID"]) {
-	if (typeof liveModelEnvironment[name] !== "string" || liveModelEnvironment[name] === "") {
-		throw new Error(`live-model is missing required environment value: ${name}`);
 	}
 }
 

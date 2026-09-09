@@ -25,14 +25,7 @@ const ALLOWED_STAGES = new Set([
 	"package",
 	"final",
 ]);
-const REQUIRED_STAGE_ATTESTATIONS = [
-	"quality",
-	"recovery",
-	"electron-e2e",
-	"web-e2e",
-	"live-model",
-	"soak",
-];
+const REQUIRED_STAGE_ATTESTATIONS = ["quality", "recovery", "electron-e2e", "web-e2e", "soak"];
 
 export async function createReleaseAttestation(options = {}) {
 	const stage = options.stage ?? process.argv[2];

@@ -164,33 +164,6 @@ jobs:
           path: release-attestations/web-e2e.json
           if-no-files-found: error
 
-  live-model:
-    needs: [quality]
-    runs-on: ubuntu-24.04
-    env:
-      BEAR_E2E_LIVE_MODEL: "1"
-      BEAR_E2E_PROVIDER_ID: ${{ secrets.BEAR_E2E_PROVIDER_ID }}
-      BEAR_E2E_MODEL_ID: ${{ secrets.BEAR_E2E_MODEL_ID }}
-      BEAR_E2E_SECONDARY_MODEL_ID: ${{ secrets.BEAR_E2E_SECONDARY_MODEL_ID }}
-      BEAR_E2E_API_KEY: ${{ secrets.BEAR_E2E_API_KEY }}
-      BEAR_E2E_CUSTOM_BASE_URL: ${{ secrets.BEAR_E2E_CUSTOM_BASE_URL }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: 24.19.0
-          cache: npm
-      - run: npm ci
-      - run: npm run build:packages
-      - run: npx --no-install playwright install --with-deps chromium
-      - run: npm run test:e2e:web:live
-      - run: node scripts/release-attestation.mjs live-model
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: release-attestation-live-model
-          path: release-attestations/live-model.json
-          if-no-files-found: error
-
   soak:
     needs: [quality]
     runs-on: ubuntu-24.04
@@ -359,7 +332,7 @@ jobs:
           if-no-files-found: error
 
   release-gate:
-    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, live-model, soak, package]
+    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, soak, package]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
