@@ -2,7 +2,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
 import { MAX_RPC_REQUEST_BYTES } from "../server/http-contract";
-import { ensureReadyForConversation, getBootstrap } from "./helpers";
+import { activeConversationId, ensureReadyForConversation, getBootstrap } from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
 	page,
@@ -94,12 +94,27 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const conversations = page.getByRole("navigation", {
 		name: zhCN.sidebar.conversations,
 	});
+	const bootstrap = await getBootstrap(page);
+	const activeId = await activeConversationId(page);
+	const renamed = await page.request.post("/rpc/conversation.rename", {
+		headers: { "x-bear-web-dev-token": bootstrap.token },
+		data: { conversationId: activeId, title: zhCN.sidebar.newConversation },
+	});
+	await expect(renamed).toBeOK();
 	const conversationItems = conversations.getByRole("button");
+	await expect
+		.poll(() =>
+			conversationItems.evaluateAll(
+				(items, id) =>
+					items.find((item) => item.getAttribute("data-conversation-id") === id)?.textContent,
+				activeId,
+			),
+		)
+		.toContain(zhCN.sidebar.newConversation);
 	const before = await conversationItems.count();
-	await page
-		.getByRole("complementary")
-		.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true })
-		.click();
+	const newConversationControl = page.getByTitle(zhCN.sidebar.newConversation, { exact: true });
+	await expect(newConversationControl).toHaveCount(1);
+	await newConversationControl.click();
 	await expect.poll(() => conversationItems.count()).toBeGreaterThanOrEqual(before);
 	await expect
 		.poll(() =>
