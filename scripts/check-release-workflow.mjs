@@ -57,7 +57,14 @@ function commands(job) {
 const requiredCommands = new Map([
 	[
 		"quality",
-		["npm ci", "npm run lint", "npm run typecheck", "npm run test:coverage", "npm run build"],
+		[
+			"sudo apt-get install --yes bubblewrap",
+			"npm ci",
+			"npm run lint",
+			"npm run typecheck",
+			"npm run test:coverage",
+			"npm run build",
+		],
 	],
 	["security", ["npm audit --audit-level=high", "npm audit signatures"]],
 	["recovery", ["npm run test:release:recovery"]],

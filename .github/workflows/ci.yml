@@ -17,6 +17,10 @@ jobs:
         with:
           node-version: 24.19.0
           cache: npm
+      - name: Install Linux confinement runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
