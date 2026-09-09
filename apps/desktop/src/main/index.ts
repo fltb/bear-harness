@@ -28,6 +28,7 @@ import {
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
 import { createDesktopArtifactPresenter } from "./artifact-presenter.js";
+import { configureChromiumTestMode } from "./chromium-test-mode.js";
 import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
@@ -78,11 +79,7 @@ let updateTimer: NodeJS.Timeout | null = null;
 // keychain is Chromium's official CI/test flag for exactly this, and the GPU
 // process is another first-boot blocker that serializes fast repeated
 // launches (it hangs the app-ready handshake Playwright waits on).
-if (!app.isPackaged) {
-	app.commandLine.appendSwitch("use-mock-keychain");
-	app.commandLine.appendSwitch("disable-gpu");
-	app.disableHardwareAcceleration();
-}
+configureChromiumTestMode(app, !app.isPackaged || isPackagedE2E);
 
 const electronApp: {
 	on(eventName: string, listener: (...args: unknown[]) => void): unknown;
@@ -504,7 +501,6 @@ function createMainWindow(): void {
 		const presentation = windowPresentation({
 			sourceE2E: isSourceE2E,
 			packagedE2E: isPackagedE2E,
-			ci: process.env.CI === "1",
 		});
 		if (presentation === "inactive") window.showInactive();
 		if (presentation === "active") window.show();
