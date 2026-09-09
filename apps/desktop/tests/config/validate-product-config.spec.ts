@@ -116,33 +116,25 @@ describe("validate-product-config", () => {
 	});
 
 	it("stages deterministic attribution and preserves --no-write validation", async () => {
-		const previous = existsSync(attributionPath) ? readFileSync(attributionPath) : null;
-		try {
-			rmSync(attributionPath, { force: true });
-			const noWrite = runValidator("--no-write");
-			expect(noWrite.status).toBe(0);
-			expect(existsSync(attributionPath)).toBe(false);
+		const firstWrite = runValidator();
+		expect(firstWrite.status).toBe(0);
+		expect(existsSync(attributionPath)).toBe(true);
+		const first = readFileSync(attributionPath, "utf8");
 
-			const firstWrite = runValidator();
-			expect(firstWrite.status).toBe(0);
-			expect(existsSync(attributionPath)).toBe(true);
-			const first = readFileSync(attributionPath, "utf8");
-			// Dynamic import: the builder config runs a filesystem existence check at
-			// module load, so it must be loaded after staging, not at spec import time.
-			const builder = (await import("../../electron-builder.config.ts")).default as {
-				extraResources?: Array<{ from: string; to: string }>;
-			};
-			expect(builder.extraResources).toContainEqual({
-				from: attributionPath,
-				to: "BRAND-ATTRIBUTION.txt",
-			});
+		const noWrite = runValidator("--no-write");
+		expect(noWrite.status).toBe(0);
+		expect(readFileSync(attributionPath, "utf8")).toBe(first);
 
-			const secondWrite = runValidator();
-			expect(secondWrite.status).toBe(0);
-			expect(readFileSync(attributionPath, "utf8")).toBe(first);
-		} finally {
-			if (previous) writeFileSync(attributionPath, previous);
-			else rmSync(attributionPath, { force: true });
-		}
+		const builder = (await import("../../electron-builder.config.ts")).default as {
+			extraResources?: Array<{ from: string; to: string }>;
+		};
+		expect(builder.extraResources).toContainEqual({
+			from: attributionPath,
+			to: "BRAND-ATTRIBUTION.txt",
+		});
+
+		const secondWrite = runValidator();
+		expect(secondWrite.status).toBe(0);
+		expect(readFileSync(attributionPath, "utf8")).toBe(first);
 	});
 });

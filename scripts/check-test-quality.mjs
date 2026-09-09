@@ -120,6 +120,15 @@ for (const file of files) {
 				report(file, node.callee.property, `${method} is forbidden in required tests`);
 			}
 		}
+		if (
+			node?.type === "CallExpression" &&
+			node.callee?.type === "Identifier" &&
+			node.callee.name === "rmSync" &&
+			node.arguments[0]?.type === "Identifier" &&
+			node.arguments[0].name === "attributionPath"
+		) {
+			report(file, node.callee, "tests must not delete the shared generated brand attribution");
+		}
 		for (const value of Object.values(node ?? {})) {
 			if (Array.isArray(value)) {
 				for (const child of value)

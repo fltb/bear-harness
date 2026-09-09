@@ -19,7 +19,7 @@
  *   dist/brand/BRAND-ATTRIBUTION.txt for the release artifacts.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -118,8 +118,11 @@ function writeAttribution(config) {
 		"",
 	];
 	const distBrand = resolve(here, "../dist/brand");
+	const attribution = resolve(distBrand, "BRAND-ATTRIBUTION.txt");
+	const stagedAttribution = resolve(distBrand, `BRAND-ATTRIBUTION.txt.${process.pid}.tmp`);
 	mkdirSync(distBrand, { recursive: true });
-	writeFileSync(resolve(distBrand, "BRAND-ATTRIBUTION.txt"), lines.join("\n"), "utf8");
+	writeFileSync(stagedAttribution, lines.join("\n"), "utf8");
+	renameSync(stagedAttribution, attribution);
 }
 
 async function main() {
