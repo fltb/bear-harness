@@ -24,7 +24,12 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test:coverage
+      - name: Host coverage
+        run: npm run test:coverage --workspace @bear-harness/host-runtime
+      - name: Companion UI coverage
+        run: npm run test:coverage --workspace @bear-harness/companion-ui
+      - name: Desktop coverage
+        run: npm run test:coverage --workspace @bear-harness/desktop
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: coverage
