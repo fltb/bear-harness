@@ -147,6 +147,8 @@ jobs:
   web-e2e:
     needs: [quality]
     runs-on: ubuntu-24.04
+    env:
+      BEAR_E2E_PROFILE: hosted
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0

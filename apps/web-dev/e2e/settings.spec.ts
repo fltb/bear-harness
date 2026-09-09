@@ -96,7 +96,10 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	});
 	const conversationItems = conversations.getByRole("button");
 	const before = await conversationItems.count();
-	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
+	await page
+		.getByRole("complementary")
+		.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true })
+		.click();
 	await expect.poll(() => conversationItems.count()).toBeGreaterThanOrEqual(before);
 	await expect
 		.poll(() =>

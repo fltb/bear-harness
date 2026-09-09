@@ -28,6 +28,9 @@ for (const name of requiredJobs) {
 }
 if (jobs["live-model"]) throw new Error("release workflow must not run live-model in GitHub CI");
 if (jobs.soak) throw new Error("release workflow must not run endurance tests in GitHub CI");
+if (jobs["web-e2e"]?.env?.BEAR_E2E_PROFILE !== "hosted") {
+	throw new Error("web-e2e must select the deterministic hosted-runner profile");
+}
 
 const finalNeeds = new Set(
 	Array.isArray(jobs["release-gate"].needs)

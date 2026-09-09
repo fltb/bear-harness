@@ -22,6 +22,7 @@ const piWorkerPath = realpathSync.native(
 	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
 );
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
+const hostedRunnerProfile = process.env.BEAR_E2E_PROFILE === "hosted";
 const codexAuthFile =
 	process.env.BEAR_E2E_USE_CODEX_SESSION === "1"
 		? (process.env.BEAR_E2E_CODEX_AUTH_FILE ?? resolve(homedir(), ".codex", "auth.json"))
@@ -35,6 +36,7 @@ process.env.BEAR_WEB_DEV_LAST_RUN_FILE = lastRunFile;
 export default defineConfig({
 	globalTeardown: "./e2e/helpers.ts",
 	testDir: "./e2e",
+	testIgnore: hostedRunnerProfile ? ["ux-metrics.spec.ts"] : [],
 	timeout: 30_000,
 	workers: 1,
 	reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
