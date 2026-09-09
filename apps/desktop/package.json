@@ -18,8 +18,8 @@
 		"test:e2e": "npm run build && playwright test",
 		"test:e2e:packaged": "node scripts/resolve-packaged-binary.mjs",
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",
-		"package:mac:arm64": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --mac dmg zip --arm64 && node scripts/verify-package-boundary.mjs mac arm64 && node scripts/verify-native-bindings.mjs mac arm64",
-		"package:mac:x64": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --mac dmg zip --x64 && node scripts/verify-package-boundary.mjs mac x64 && node scripts/verify-native-bindings.mjs mac x64",
+		"package:mac:arm64": "node scripts/validate-product-config.mjs && npm run build && BEAR_PACKAGE_ARCH=arm64 electron-builder --config electron-builder.config.ts --mac dmg zip --arm64 && node scripts/verify-package-boundary.mjs mac arm64 && node scripts/verify-native-bindings.mjs mac arm64",
+		"package:mac:x64": "node scripts/validate-product-config.mjs && npm run build && BEAR_PACKAGE_ARCH=x64 electron-builder --config electron-builder.config.ts --mac dmg zip --x64 && node scripts/verify-package-boundary.mjs mac x64 && node scripts/verify-native-bindings.mjs mac x64",
 		"package:win": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-windows-runtime.mjs && electron-builder --config electron-builder.config.ts --win nsis zip --x64 && node scripts/verify-package-boundary.mjs win x64 && node scripts/verify-native-bindings.mjs win x64",
 		"package:linux": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64 && node scripts/verify-package-boundary.mjs linux x64 && node scripts/verify-native-bindings.mjs linux x64"
 	},

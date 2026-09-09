@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import builderConfig, { extraResourcesFor } from "../electron-builder.config.js";
+import builderConfig, {
+	applicationFilesFor,
+	extraResourcesFor,
+} from "../electron-builder.config.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -117,6 +120,15 @@ describe("electron-builder production boundary", () => {
 		expect(files).toContain("!dist/main/node_modules/**/*");
 	});
 
+	it("packages only the requested macOS llama binding architecture", () => {
+		expect(applicationFilesFor("mac", "arm64")).toContain(
+			"!node_modules/@node-llama-cpp/mac-x64/**/*",
+		);
+		expect(applicationFilesFor("mac", "x64")).toContain(
+			"!node_modules/@node-llama-cpp/mac-arm64-*/**/*",
+		);
+	});
+
 	it("verifies production boundaries and native bindings after every package build", () => {
 		const desktop = manifest("apps/desktop/package.json") as {
 			scripts?: Record<string, string>;
@@ -130,6 +142,9 @@ describe("electron-builder production boundary", () => {
 			const command = desktop.scripts?.[name];
 			expect(command).toContain(`verify-package-boundary.mjs ${target}`);
 			expect(command).toContain(`verify-native-bindings.mjs ${target}`);
+			if (target.startsWith("mac ")) {
+				expect(command).toContain(`BEAR_PACKAGE_ARCH=${target.slice(4)} electron-builder`);
+			}
 		}
 	});
 });

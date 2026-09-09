@@ -83,13 +83,22 @@ const nativePackageExcludes = {
 	],
 };
 
-export function applicationFilesFor(platform?: "mac" | "win" | "linux"): string[] {
+const macNativeArchExcludes = {
+	arm64: ["!node_modules/@node-llama-cpp/mac-x64/**/*"],
+	x64: ["!node_modules/@node-llama-cpp/mac-arm64-*/**/*"],
+};
+
+export function applicationFilesFor(
+	platform?: "mac" | "win" | "linux",
+	arch?: "arm64" | "x64",
+): string[] {
 	return [
 		"dist/**",
 		"!dist/.runtime-build/**",
 		"!dist/.windows-runtime/**",
 		...productionExcludes,
 		...(platform ? nativePackageExcludes[platform] : []),
+		...(platform === "mac" && arch ? macNativeArchExcludes[arch] : []),
 	];
 }
 
@@ -145,7 +154,12 @@ const config: Configuration = {
 		identity: null,
 		icon,
 		electronLanguages: ["en", "zh_CN", "zh_TW"],
-		files: applicationFilesFor("mac"),
+		files: applicationFilesFor(
+			"mac",
+			process.env.BEAR_PACKAGE_ARCH === "arm64" || process.env.BEAR_PACKAGE_ARCH === "x64"
+				? process.env.BEAR_PACKAGE_ARCH
+				: undefined,
+		),
 	},
 	linux: {
 		category: "Utility",

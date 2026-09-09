@@ -9,6 +9,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMacOutputDirectory } from "./archive-paths.mjs";
 import { assertNonEmptyNativeBinary, nativeBindingBinaryPath } from "./native-binding-files.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -26,11 +27,10 @@ if (!expected) throw new Error(`Unsupported native llama target: ${target}/${arc
 
 function unpackedRoot() {
 	if (target === "mac") {
-		const macDir = readdirSync(release).find((entry) => entry.startsWith("mac"));
-		if (!macDir) throw new Error("macOS unpacked app directory is missing");
-		const app = readdirSync(join(release, macDir)).find((entry) => entry.endsWith(".app"));
+		const macDir = resolveMacOutputDirectory(release, arch, existsSync);
+		const app = readdirSync(macDir).find((entry) => entry.endsWith(".app"));
 		if (!app) throw new Error("macOS app bundle is missing");
-		return join(release, macDir, app, "Contents/Resources/app.asar.unpacked");
+		return join(macDir, app, "Contents/Resources/app.asar.unpacked");
 	}
 	const unpacked = target === "win" ? "win-unpacked" : "linux-unpacked";
 	return join(release, unpacked, "resources/app.asar.unpacked");

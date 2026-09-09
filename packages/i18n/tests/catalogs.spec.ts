@@ -47,6 +47,12 @@ describe("product locale catalogs", () => {
 		expect(generated).not.toContain("{{language}}");
 	});
 
+	it("keeps the generated catalog LF-normalized on every checkout platform", () => {
+		const attributesPath = fileURLToPath(new URL("../../../.gitattributes", import.meta.url));
+		const attributes = readFileSync(attributesPath, "utf8").split("\n");
+		expect(attributes).toContain("packages/i18n/src/locales/zh-TW.generated.ts text eol=lf");
+	});
+
 	it("renders source-language placeholders with configured delimiters", () => {
 		expect(i18n.getFixedT("zh-CN")("canonStudio.sourceLanguage", { language: "中文" })).toBe(
 			"资料语言：中文",
