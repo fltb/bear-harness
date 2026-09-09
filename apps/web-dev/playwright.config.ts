@@ -37,7 +37,7 @@ export default defineConfig({
 	testDir: "./e2e",
 	timeout: 30_000,
 	workers: 1,
-	reporter: [["list"]],
+	reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
 	outputDir: resolve(here, "../../test-results/web-dev"),
 	snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
 	forbidOnly: true,

@@ -83,7 +83,13 @@ const requiredCommands = new Map([
 	["e2e", ["npm run build:packages", "npm run test:e2e:electron"]],
 	[
 		"web-e2e",
-		[...linuxConfinementCommands, "npm run build:packages", "npm run test:e2e:web:required"],
+		[
+			...linuxConfinementCommands,
+			"npm run build:packages",
+			"npm run test:e2e:web:required",
+			"tee web-e2e.log",
+			"::error title=Web E2E failure::",
+		],
 	],
 	[
 		"soak",

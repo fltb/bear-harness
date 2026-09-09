@@ -163,7 +163,34 @@ jobs:
       - run: npm ci
       - run: npm run build:packages
       - run: npx --no-install playwright install --with-deps chromium
-      - run: npm run test:e2e:web:required
+      - name: Run required Web E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:e2e:web:required 2>&1 | tee web-e2e.log
+      - name: Publish Web E2E failure
+        if: failure()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const log = readFileSync("web-e2e.log", "utf8");
+          const focused = log.slice(-5_000);
+          const encoded = focused
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Web E2E failure::${encoded}\n`);
+          NODE
+      - name: Preserve Web E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: web-e2e-diagnostics
+          path: |
+            web-e2e.log
+            test-results/web-dev/
+          if-no-files-found: error
       - run: node scripts/release-attestation.mjs web-e2e
       - uses: actions/upload-artifact@v7.0.1
         with:
