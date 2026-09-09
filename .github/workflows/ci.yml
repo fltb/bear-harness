@@ -311,7 +311,7 @@ jobs:
           import { existsSync, readFileSync } from "node:fs";
           if (existsSync("package.log")) {
             const encoded = readFileSync("package.log", "utf8")
-              .slice(-5_000)
+              .slice(-3_000)
               .replaceAll("%", "%25")
               .replaceAll("\r", "%0D")
               .replaceAll("\n", "%0A");

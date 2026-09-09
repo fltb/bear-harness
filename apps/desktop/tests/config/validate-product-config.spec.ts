@@ -126,6 +126,14 @@ describe("validate-product-config", () => {
 		expect(brandSource).toContain("import(pathToFileURL(configPath).href)");
 	});
 
+	it("accepts the pinned PortableGit root GPLv2 license path", () => {
+		const stagingSource = readFileSync(
+			join(desktopRoot, "scripts/stage-windows-runtime.mjs"),
+			"utf8",
+		);
+		expect(stagingSource).toContain('"COPYING",\n\t"LICENSE.txt",\n].find');
+	});
+
 	it("declares all native capability modules for unpacking", () => {
 		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
 		for (const pattern of [
@@ -138,9 +146,18 @@ describe("validate-product-config", () => {
 		}
 	});
 
-	it("filters foreign llama bindings and the optional CUDA extension from release targets", () => {
+	it("filters every non-target llama binding from release targets", () => {
 		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
-		for (const pattern of ["linux-x64-cuda-ext", "win-x64-cuda-ext", "linux-arm64", "win-arm64"]) {
+		for (const pattern of [
+			"!node_modules/@node-llama-cpp/linux-x64-cuda/**/*",
+			"!node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
+			"!node_modules/@node-llama-cpp/linux-x64-vulkan/**/*",
+			"!node_modules/@node-llama-cpp/win-x64-cuda/**/*",
+			"!node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
+			"!node_modules/@node-llama-cpp/win-x64-vulkan/**/*",
+			"!node_modules/@node-llama-cpp/linux-arm64/**/*",
+			"!node_modules/@node-llama-cpp/win-arm64/**/*",
+		]) {
 			expect(builderSource).toContain(pattern);
 		}
 	});

@@ -105,6 +105,7 @@ const requiredCommands = new Map([
 			"::error title=Crashpad smoke failure::",
 			"tee package.log",
 			"::error title=Package failure::",
+			".slice(-3_000)",
 			"node scripts/verify-package.mjs",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",

@@ -82,6 +82,7 @@ const gplSource = [
 	"usr/share/licenses/git/COPYING",
 	"mingw64/share/licenses/git/COPYING",
 	"COPYING",
+	"LICENSE.txt",
 ].find((candidate) => runtimeFiles.some((file) => file.path === candidate));
 if (!gplSource) throw new Error("PortableGit extraction is missing Git's GPLv2 text");
 
