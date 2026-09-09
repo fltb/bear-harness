@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { imageDimensionsFromData } from "image-dimensions";
 import { parse } from "yaml";
+import { parseYamlFrontmatter } from "./frontmatter.mjs";
 
 function pngInfo(path) {
 	const bytes = readFileSync(path);
@@ -146,12 +147,11 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			const skillPath = new URL(`${skill.name}/SKILL.md`, skillsRoot);
 			if (!existsSync(skillPath)) continue;
 			const source = readFileSync(skillPath, "utf8");
-			const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
-			if (!frontmatter) {
+			const metadata = parseYamlFrontmatter(source);
+			if (!metadata) {
 				failures.push(`${prefix}: Skill ${skill.name} requires YAML frontmatter`);
 				continue;
 			}
-			const metadata = parse(frontmatter);
 			void metadata;
 		}
 }

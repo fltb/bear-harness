@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
+import { parseYamlFrontmatter } from "./frontmatter.mjs";
 
 const allowedHostTools = new Set([
 	"host_state",
@@ -81,8 +82,7 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 	if (!existsSync(skills)) continue;
 	for (const file of sourceFiles(skills).filter((path) => path.endsWith("SKILL.md"))) {
 		const source = readFileSync(file, "utf8");
-		const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
-		const metadata = frontmatter ? parse(frontmatter) : {};
+		const metadata = parseYamlFrontmatter(source) ?? {};
 		const declaredTools = Array.isArray(metadata["allowed-tools"])
 			? metadata["allowed-tools"]
 			: String(metadata["allowed-tools"] ?? "")

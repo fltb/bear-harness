@@ -202,8 +202,12 @@ function files(root: string, predicate: (path: string) => boolean): string[] {
 }
 
 function frontMatter(content: string): unknown {
-	const match = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(content);
-	const parsed = match?.[1] ? parse(match[1]) : undefined;
+	const lines = content.split("\r\n").join("\n").split("\r").join("\n").split("\n");
+	if (lines[0]?.trim() !== "---") return {};
+	const closingIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+	if (closingIndex < 0) return {};
+	const source = lines.slice(1, closingIndex).join("\n");
+	const parsed = source.length > 0 ? parse(source) : undefined;
 	return parsed ?? {};
 }
 

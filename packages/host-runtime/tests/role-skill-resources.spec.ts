@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,6 +26,23 @@ if (!story) throw new Error("missing undelivered-report Skill");
 const state = (active: boolean, chapter: number) => ({ story: { active, chapter } });
 
 describe("state-gated role Skill resources", () => {
+	it("loads numeric metadata from Windows CRLF frontmatter", () => {
+		const directory = mkdtempSync(join(tmpdir(), "bear-role-skill-crlf-"));
+		temporaryDirectories.push(directory);
+		const source = readFileSync(
+			resolve(
+				import.meta.dirname,
+				"../../../config/characters/jizhou/skills/continuity-reveal/SKILL.md",
+			),
+			"utf8",
+		);
+		writeFileSync(join(directory, "SKILL.md"), source.split("\n").join("\r\n"));
+
+		expect(loadRoleSkills([directory])).toMatchObject([
+			{ name: "continuity-reveal", priority: 50 },
+		]);
+	});
+
 	it("rejects a resource tree deeper than the bounded traversal contract", () => {
 		const directory = mkdtempSync(join(tmpdir(), "bear-role-skill-depth-"));
 		temporaryDirectories.push(directory);
