@@ -396,7 +396,7 @@ jobs:
           import { existsSync, readFileSync } from "node:fs";
           if (existsSync("packaged-smoke.log")) {
             const encoded = readFileSync("packaged-smoke.log", "utf8")
-              .slice(-3_000)
+              .slice(-12_000)
               .replaceAll("%", "%25")
               .replaceAll("\r", "%0D")
               .replaceAll("\n", "%0A");

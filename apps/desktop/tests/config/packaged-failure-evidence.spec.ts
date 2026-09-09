@@ -2,7 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectPackagedFailureEvidence } from "../../e2e/packaged-failure-evidence.js";
+import {
+	collectPackagedFailureEvidence,
+	collectWindowsApplicationErrors,
+} from "../../e2e/packaged-failure-evidence.js";
 
 const roots: string[] = [];
 
@@ -33,5 +36,33 @@ describe("collectPackagedFailureEvidence", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-packaged-evidence-"));
 		roots.push(root);
 		expect(collectPackagedFailureEvidence(root)).toBe("no local crash evidence");
+	});
+
+	it("collects a bounded Windows Application Error tail without a shell", () => {
+		const calls: unknown[][] = [];
+		const evidence = collectWindowsApplicationErrors("win32", (command, args) => {
+			calls.push([command, args]);
+			return { stdout: `${"x".repeat(5000)}\nFaulting module name: renderer.dll` };
+		});
+
+		expect(calls).toEqual([
+			[
+				"wevtutil",
+				["qe", "Application", "/q:*[System[(EventID=1000)]]", "/c:8", "/rd:true", "/f:text"],
+			],
+		]);
+		expect(evidence.length).toBeLessThanOrEqual(4_000);
+		expect(evidence).toContain("Faulting module name: renderer.dll");
+	});
+
+	it("does not query application errors on other platforms", () => {
+		let called = false;
+		expect(
+			collectWindowsApplicationErrors("darwin", () => {
+				called = true;
+				return {};
+			}),
+		).toBe("windows application errors unavailable");
+		expect(called).toBe(false);
 	});
 });

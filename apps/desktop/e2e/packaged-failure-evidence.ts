@@ -1,5 +1,21 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+
+interface CommandResult {
+	stdout?: unknown;
+	stderr?: unknown;
+}
+
+type RunCommand = (command: string, args: string[]) => CommandResult;
+
+const runCommand: RunCommand = (command, args) =>
+	spawnSync(command, args, {
+		encoding: "utf8",
+		shell: false,
+		timeout: 5_000,
+		windowsHide: true,
+	});
 
 function filesBelow(root: string): string[] {
 	if (!existsSync(root)) return [];
@@ -17,7 +33,7 @@ function filesBelow(root: string): string[] {
 	return files.sort();
 }
 
-export function collectPackagedFailureEvidence(root: string, maxChars = 12_000): string {
+export function collectPackagedFailureEvidence(root: string, maxChars = 3_500): string {
 	const parts: string[] = [];
 	const diagnosticBudget = Math.max(1, Math.floor(maxChars / 2));
 	const logsRoot = join(root, "logs");
@@ -33,4 +49,24 @@ export function collectPackagedFailureEvidence(root: string, maxChars = 12_000):
 
 	if (parts.length === 0) return "no local crash evidence";
 	return parts.join("\n").slice(-maxChars);
+}
+
+export function collectWindowsApplicationErrors(
+	platform: NodeJS.Platform,
+	run: RunCommand = runCommand,
+): string {
+	if (platform !== "win32") return "windows application errors unavailable";
+	const result = run("wevtutil", [
+		"qe",
+		"Application",
+		"/q:*[System[(EventID=1000)]]",
+		"/c:8",
+		"/rd:true",
+		"/f:text",
+	]);
+	const output = [result.stdout, result.stderr]
+		.filter((value): value is string => typeof value === "string" && value.length > 0)
+		.join("\n")
+		.trim();
+	return output.length > 0 ? output.slice(-4_000) : "no Windows Application Error events";
 }
