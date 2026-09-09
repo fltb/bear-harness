@@ -15,6 +15,7 @@ for (const workspace of [
 	const result = spawnSync(npmCommand, ["run", "build", "--workspace", workspace], {
 		cwd: repoRoot,
 		stdio: "inherit",
+		shell: process.platform === "win32",
 	});
 	if (result.error) throw result.error;
 	if (result.status !== 0) process.exit(result.status ?? 1);
@@ -22,6 +23,7 @@ for (const workspace of [
 
 const result = spawnSync(npxCommand, ["--no-install", "rsbuild", "build"], {
 	stdio: "inherit",
+	shell: process.platform === "win32",
 });
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);

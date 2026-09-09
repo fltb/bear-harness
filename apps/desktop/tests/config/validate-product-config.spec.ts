@@ -105,6 +105,15 @@ describe("validate-product-config", () => {
 			'const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx"',
 		);
 		expect(buildSource).toContain("if (result.error) throw result.error");
+		expect(buildSource).toContain('shell: process.platform === "win32"');
+	});
+
+	it("launches the Crashpad smoke with the resolved Electron binary", () => {
+		const crashSource = readFileSync(join(desktopRoot, "scripts/crash-smoke.mjs"), "utf8");
+		expect(crashSource).toContain('const electronExecutable = require("electron")');
+		expect(crashSource).toContain('child.once("error"');
+		expect(crashSource).toContain('process.platform === "linux"');
+		expect(crashSource).toContain('"--no-sandbox"');
 	});
 
 	it("declares all native capability modules for unpacking", () => {

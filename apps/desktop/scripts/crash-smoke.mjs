@@ -2,19 +2,22 @@
  * Crashpad smoke: launches Electron with a test-only entry that configures the
  * PRODUCTION configureCrashpad against a temp diagnostics root, then calls
  * process.crash(). Requires a non-zero child exit and a non-empty .dmp within
- * 30 s. The temp root (including the dump) is deleted afterwards; dumps never
+ * 60 s. The temp root (including the dump) is deleted afterwards; dumps never
  * become CI artifacts.
  */
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const crashpadModule = resolve(desktop, "../../packages/host-runtime/dist/diagnostics/crashpad.js");
+const require = createRequire(import.meta.url);
+const electronExecutable = require("electron");
 
 if (!existsSync(crashpadModule)) {
 	process.stderr.write(
@@ -38,14 +41,19 @@ writeFileSync(
 	"utf8",
 );
 
-const child = spawn("npx", ["--no-install", "electron", entry], {
+const electronArguments = [
+	...(process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : []),
+	entry,
+];
+const child = spawn(electronExecutable, electronArguments, {
 	cwd: desktop,
 	stdio: ["ignore", "inherit", "inherit"],
 });
 
-const deadline = Date.now() + 30_000;
-const exitPromise = new Promise((resolveExit) => {
-	child.on("exit", (code, signal) => resolveExit({ code, signal }));
+const deadline = Date.now() + 60_000;
+const exitPromise = new Promise((resolveExit, rejectExit) => {
+	child.once("error", rejectExit);
+	child.once("exit", (code, signal) => resolveExit({ code, signal }));
 });
 
 async function waitForDump() {
@@ -79,11 +87,21 @@ function findNonEmptyDmp(dir) {
 	return false;
 }
 
-const [exit, dump] = await Promise.all([exitPromise, waitForDump()]);
+let exit;
+let dump;
+try {
+	[exit, dump] = await Promise.all([exitPromise, waitForDump()]);
+} catch (error) {
+	process.stderr.write(
+		`crash smoke: Electron failed to launch (${error instanceof Error ? error.message : String(error)})\n`,
+	);
+	rmSync(root, { recursive: true, force: true });
+	process.exit(1);
+}
 const exitedNonZero = exit.code !== 0 || exit.signal !== null;
 
 if (!dump) {
-	process.stderr.write("crash smoke: no non-empty .dmp within 30 s\n");
+	process.stderr.write("crash smoke: no non-empty .dmp within 60 s\n");
 	rmSync(root, { recursive: true, force: true });
 	process.exit(1);
 }

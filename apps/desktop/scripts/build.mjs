@@ -22,7 +22,11 @@ const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
 
 function run(cmd, args, cwd = desktop) {
-	const result = spawnSync(cmd, args, { cwd, stdio: "inherit" });
+	const result = spawnSync(cmd, args, {
+		cwd,
+		stdio: "inherit",
+		shell: process.platform === "win32",
+	});
 	if (result.error) throw result.error;
 	if (result.status !== 0) {
 		process.exit(result.status ?? 1);

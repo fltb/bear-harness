@@ -15,4 +15,5 @@ test("production build uses Windows command shims and reports spawn failures", (
 	assert.ok(source.includes('const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"'));
 	assert.ok(source.includes('const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx"'));
 	assert.ok(source.includes("if (result.error) throw result.error"));
+	assert.ok(source.includes('shell: process.platform === "win32"'));
 });

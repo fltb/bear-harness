@@ -101,6 +101,8 @@ const requiredCommands = new Map([
 			"sudo apt-get install --yes",
 			"xvfb",
 			"xvfb-run -a npm run test:diagnostics:crash",
+			"tee crashpad-smoke.log",
+			"::error title=Crashpad smoke failure::",
 			"node scripts/verify-package.mjs",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",
