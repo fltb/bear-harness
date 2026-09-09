@@ -25,7 +25,28 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - name: Host coverage
-        run: npm run test:coverage --workspace @bear-harness/host-runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:coverage --workspace @bear-harness/host-runtime 2>&1 | tee host-coverage.log
+      - name: Publish Host coverage failure
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "## Host coverage failure"
+            echo
+            echo '```text'
+            tail -n 200 host-coverage.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve Host coverage log
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: host-coverage-log
+          path: host-coverage.log
+          if-no-files-found: error
       - name: Companion UI coverage
         run: npm run test:coverage --workspace @bear-harness/companion-ui
       - name: Desktop coverage

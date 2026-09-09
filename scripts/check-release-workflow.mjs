@@ -63,6 +63,8 @@ const requiredCommands = new Map([
 			"npm run lint",
 			"npm run typecheck",
 			"npm run test:coverage --workspace @bear-harness/host-runtime",
+			"tee host-coverage.log",
+			"tail -n 200 host-coverage.log",
 			"npm run test:coverage --workspace @bear-harness/companion-ui",
 			"npm run test:coverage --workspace @bear-harness/desktop",
 			"npm run build",
