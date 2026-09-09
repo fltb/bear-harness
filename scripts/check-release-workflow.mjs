@@ -105,6 +105,7 @@ const requiredCommands = new Map([
 		[
 			...linuxConfinementCommands,
 			"npm run build:packages",
+			"npx --no-install playwright install chromium",
 			"npm run test:e2e:web:required",
 			"tee web-e2e.log",
 			"::error title=Web E2E failure::",
@@ -172,6 +173,23 @@ const hostCoverageLog = jobs.quality.steps.find(
 );
 if (hostCoverageLog?.if !== "always() && steps.host_coverage.outcome != 'skipped'") {
 	throw new Error("Host coverage log upload must only run after the coverage step ran");
+}
+
+const webE2eStep = jobs["web-e2e"].steps.find((step) => step?.name === "Run required Web E2E");
+if (webE2eStep?.id !== "web_e2e") {
+	throw new Error("Web E2E must expose a step outcome for focused failure reporting");
+}
+const webE2eFailure = jobs["web-e2e"].steps.find(
+	(step) => step?.name === "Publish Web E2E failure",
+);
+if (webE2eFailure?.if !== "failure() && steps.web_e2e.outcome == 'failure'") {
+	throw new Error("Web E2E failure reporting must not react to unrelated setup failures");
+}
+const webE2eDiagnostics = jobs["web-e2e"].steps.find(
+	(step) => step?.name === "Preserve Web E2E diagnostics",
+);
+if (webE2eDiagnostics?.if !== "always() && steps.web_e2e.outcome != 'skipped'") {
+	throw new Error("Web E2E diagnostics must only upload after the test step ran");
 }
 
 const linuxElectronRuntimeStep = jobs.package.steps.find(

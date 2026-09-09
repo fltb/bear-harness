@@ -187,14 +187,15 @@ jobs:
           bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
       - run: npm ci
       - run: npm run build:packages
-      - run: npx --no-install playwright install --with-deps chromium
+      - run: npx --no-install playwright install chromium
       - name: Run required Web E2E
+        id: web_e2e
         shell: bash
         run: |
           set -o pipefail
           npm run test:e2e:web:required 2>&1 | tee web-e2e.log
       - name: Publish Web E2E failure
-        if: failure()
+        if: failure() && steps.web_e2e.outcome == 'failure'
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -208,7 +209,7 @@ jobs:
           process.stdout.write(`::error title=Web E2E failure::${encoded}\n`);
           NODE
       - name: Preserve Web E2E diagnostics
-        if: always()
+        if: always() && steps.web_e2e.outcome != 'skipped'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: web-e2e-diagnostics
