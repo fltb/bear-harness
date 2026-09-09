@@ -82,6 +82,8 @@ const requiredCommands = new Map([
 		"quality",
 		[
 			...linuxConfinementCommands,
+			"tee linux-confinement.log",
+			"::error title=Linux confinement setup failure::",
 			"npm ci",
 			"npm run lint",
 			"npm run typecheck",
@@ -145,6 +147,19 @@ for (const [job, expected] of requiredCommands) {
 const hostCoverageStep = jobs.quality.steps.find((step) => step?.name === "Host coverage");
 if (hostCoverageStep?.id !== "host_coverage") {
 	throw new Error("Host coverage must expose a step outcome for focused failure reporting");
+}
+
+const confinementStep = jobs.quality.steps.find(
+	(step) => step?.name === "Install Linux confinement runtime",
+);
+if (confinementStep?.id !== "linux_confinement") {
+	throw new Error("Linux confinement setup must expose a step outcome for focused diagnostics");
+}
+const confinementFailure = jobs.quality.steps.find(
+	(step) => step?.name === "Publish Linux confinement setup failure",
+);
+if (confinementFailure?.if !== "failure() && steps.linux_confinement.outcome == 'failure'") {
+	throw new Error("Linux confinement diagnostics must report only its own setup failure");
 }
 const hostCoverageFailure = jobs.quality.steps.find(
 	(step) => step?.name === "Publish Host coverage failure",

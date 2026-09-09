@@ -22,12 +22,30 @@ jobs:
           node-version: 24.19.0
           cache: npm
       - name: Install Linux confinement runtime
+        id: linux_confinement
+        shell: bash
         run: |
-          sudo apt-get --option Acquire::Retries=3 update
-          sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
-          sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
-          sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
-          bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
+          set -o pipefail
+          {
+            sudo apt-get --option Acquire::Retries=3 update
+            sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
+            sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
+            sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
+            bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
+          } 2>&1 | tee linux-confinement.log
+      - name: Publish Linux confinement setup failure
+        if: failure() && steps.linux_confinement.outcome == 'failure'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const focused = readFileSync("linux-confinement.log", "utf8").slice(-3_000);
+          const encoded = focused
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Linux confinement setup failure::${encoded}\n`);
+          NODE
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
