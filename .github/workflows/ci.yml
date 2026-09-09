@@ -481,7 +481,25 @@ jobs:
           pattern: release-attestation-*
           path: release-attestations
           merge-multiple: true
-      - run: node scripts/release-attestation.mjs final
+      - name: Attest complete release
+        id: final_attestation
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/release-attestation.mjs final 2>&1 | tee final-attestation.log
+      - name: Publish final attestation failure
+        if: failure() && steps.final_attestation.outcome == 'failure'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const encoded = readFileSync("final-attestation.log", "utf8")
+            .slice(-5_000)
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Final attestation failure::${encoded}\n`);
+          NODE
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-attestation-final

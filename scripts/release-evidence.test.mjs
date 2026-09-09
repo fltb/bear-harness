@@ -27,6 +27,11 @@ test("npm SBOM uses the Windows command wrapper through a shell", () => {
 	assert.deepEqual(npmSbomInvocation("darwin"), { command: "npm", shell: false });
 });
 
+test("release hash inputs use platform-independent LF checkouts", () => {
+	const attributes = readFileSync(".gitattributes", "utf8").split("\n");
+	assert.ok(attributes.includes("package-lock.json text eol=lf"));
+});
+
 test("quality and final refuse tracked or untracked dirty state but ignore generated evidence", async () => {
 	const root = gitFixture();
 	const first = await createReleaseAttestation({

@@ -243,6 +243,22 @@ if (
 	throw new Error("Package attestation diagnostics must report only their own failure");
 }
 
+const finalAttestationStep = jobs["release-gate"].steps.find(
+	(step) => step?.name === "Attest complete release",
+);
+if (finalAttestationStep?.id !== "final_attestation") {
+	throw new Error("Final attestation must expose a step outcome for focused diagnostics");
+}
+if (!String(finalAttestationStep.run ?? "").includes("tee final-attestation.log")) {
+	throw new Error("Final attestation must preserve its complete failure output");
+}
+const finalAttestationFailure = jobs["release-gate"].steps.find(
+	(step) => step?.name === "Publish final attestation failure",
+);
+if (finalAttestationFailure?.if !== "failure() && steps.final_attestation.outcome == 'failure'") {
+	throw new Error("Final attestation diagnostics must report only their own failure");
+}
+
 const packageEvidenceUpload = jobs.package.steps.find(
 	(step) =>
 		typeof step?.uses === "string" &&
