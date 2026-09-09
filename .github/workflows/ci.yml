@@ -1,5 +1,8 @@
 name: bear-harness-ci
 on:
+  push:
+    tags:
+      - "v*.*.*-rc.*"
   workflow_dispatch:
 
 permissions:

@@ -44,10 +44,19 @@ if (!data.on || typeof data.on !== "object") {
 	process.exit(1);
 }
 const triggers = Object.keys(data.on);
-if (triggers.length !== 1 || triggers[0] !== "workflow_dispatch") {
+const expectedTriggers = ["push", "workflow_dispatch"];
+if (
+	triggers.length !== expectedTriggers.length ||
+	expectedTriggers.some((trigger) => !triggers.includes(trigger))
+) {
 	process.stderr.write(
-		`Invalid workflow: top-level \`on\` must contain exactly \`workflow_dispatch\`; found ${triggers.join(", ") || "(none)"}\n`,
+		`Invalid workflow: top-level \`on\` must contain exactly ${expectedTriggers.join(", ")}; found ${triggers.join(", ") || "(none)"}\n`,
 	);
+	process.exit(1);
+}
+const rcTagPattern = "v*.*.*-rc.*";
+if (!Array.isArray(data.on.push?.tags) || !data.on.push.tags.includes(rcTagPattern)) {
+	process.stderr.write(`Invalid workflow: push must include RC tag pattern ${rcTagPattern}\n`);
 	process.exit(1);
 }
 if (!data.jobs || typeof data.jobs !== "object" || Object.keys(data.jobs).length === 0) {
