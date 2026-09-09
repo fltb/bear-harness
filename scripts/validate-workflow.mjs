@@ -54,9 +54,12 @@ if (
 	);
 	process.exit(1);
 }
-const rcTagPattern = "v*.*.*-rc.*";
-if (!Array.isArray(data.on.push?.tags) || !data.on.push.tags.includes(rcTagPattern)) {
-	process.stderr.write(`Invalid workflow: push must include RC tag pattern ${rcTagPattern}\n`);
+if (!Array.isArray(data.on.push?.branches) || !data.on.push.branches.includes("main")) {
+	process.stderr.write("Invalid workflow: push must include the main branch\n");
+	process.exit(1);
+}
+if (data.on.push.tags !== undefined) {
+	process.stderr.write("Invalid workflow: RC tags must not trigger duplicate CI runs\n");
 	process.exit(1);
 }
 if (!data.jobs || typeof data.jobs !== "object" || Object.keys(data.jobs).length === 0) {

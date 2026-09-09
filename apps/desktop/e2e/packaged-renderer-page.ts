@@ -17,6 +17,7 @@ export function waitForPackagedRendererPage<Page extends PackagedPage>(
 	const current = context.pages().find(isPackagedRenderer);
 	if (current) return Promise.resolve(current);
 	return new Promise((resolve, reject) => {
+		const observedUrls = new Set(context.pages().map((page) => page.url()));
 		let timeout: ReturnType<typeof setTimeout> | undefined;
 		let poll: ReturnType<typeof setInterval> | undefined;
 		let settled = false;
@@ -32,10 +33,12 @@ export function waitForPackagedRendererPage<Page extends PackagedPage>(
 			resolve(page);
 		};
 		const onPage = (page: Page) => {
+			observedUrls.add(page.url());
 			if (isPackagedRenderer(page)) accept(page);
 		};
 		context.on("page", onPage);
 		poll = setInterval(() => {
+			for (const page of context.pages()) observedUrls.add(page.url());
 			const renderer = context.pages().find(isPackagedRenderer);
 			if (renderer) accept(renderer);
 		}, 10);
@@ -43,7 +46,8 @@ export function waitForPackagedRendererPage<Page extends PackagedPage>(
 			if (settled) return;
 			settled = true;
 			cleanup();
-			reject(new Error("packaged app did not create a file renderer"));
+			const pages = [...observedUrls].join(", ") || "(none)";
+			reject(new Error(`packaged app did not create a file renderer; observed pages: ${pages}`));
 		}, timeoutMs);
 		const afterSubscription = context.pages().find(isPackagedRenderer);
 		if (afterSubscription) accept(afterSubscription);

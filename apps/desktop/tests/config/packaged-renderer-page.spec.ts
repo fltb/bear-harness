@@ -55,9 +55,12 @@ describe("packaged renderer selection", () => {
 	});
 
 	it("fails clearly when no packaged renderer appears", async () => {
-		const context = new FakeContext([new FakePage("about:blank")]);
+		const context = new FakeContext([
+			new FakePage("about:blank"),
+			new FakePage("chrome://version/"),
+		]);
 		await expect(waitForPackagedRendererPage(context, 10)).rejects.toThrow(
-			"packaged app did not create a file renderer",
+			"packaged app did not create a file renderer; observed pages: about:blank, chrome://version/",
 		);
 	});
 });

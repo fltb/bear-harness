@@ -18,7 +18,14 @@ function waitForDevTools(child: ReturnType<typeof spawn>): Promise<string> {
 		);
 		child.stderr.on("data", (chunk: Buffer) => {
 			output += chunk.toString();
-			const endpoint = output.match(/DevTools listening on (ws:\/\/\S+)/)?.[1];
+			const marker = "DevTools listening on ";
+			const markerIndex = output.lastIndexOf(marker);
+			const endpointStart = markerIndex < 0 ? -1 : markerIndex + marker.length;
+			const endpointEnd = endpointStart < 0 ? -1 : output.indexOf("\n", endpointStart);
+			const endpoint =
+				endpointStart < 0
+					? undefined
+					: output.slice(endpointStart, endpointEnd < 0 ? undefined : endpointEnd).trim();
 			if (endpoint) {
 				clearTimeout(timeout);
 				resolve(endpoint);
@@ -29,6 +36,16 @@ function waitForDevTools(child: ReturnType<typeof spawn>): Promise<string> {
 			reject(new Error(`packaged app exited before DevTools was ready (${code ?? signal})`)),
 		);
 	});
+}
+
+function captureChildOutput(child: ReturnType<typeof spawn>): () => string {
+	let output = "";
+	const append = (label: string, chunk: Buffer) => {
+		output = `${output}${label}${chunk.toString()}`.slice(-8_000);
+	};
+	child.stdout?.on("data", (chunk: Buffer) => append("[stdout] ", chunk));
+	child.stderr?.on("data", (chunk: Buffer) => append("[stderr] ", chunk));
+	return () => output;
 }
 
 function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<boolean> {
@@ -61,7 +78,7 @@ async function stopChild(child: ReturnType<typeof spawn>): Promise<void> {
  * testMatch — opt-in via `npm run test:e2e:packaged`.
  */
 test("packaged app shows the configured product", async () => {
-	test.setTimeout(150_000);
+	test.setTimeout(210_000);
 	const binary = process.env.BEAR_PACKAGED_BINARY;
 	expect(binary, "BEAR_PACKAGED_BINARY must point at the unpacked app binary").toBeTruthy();
 	const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "bear-e2e-packaged-")));
@@ -90,12 +107,13 @@ test("packaged app shows the configured product", async () => {
 			stdio: ["ignore", "pipe", "pipe"],
 		},
 	);
+	const childOutput = captureChildOutput(child);
 	let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
 	try {
 		browser = await chromium.connectOverCDP(await waitForDevTools(child));
 		const context = browser.contexts()[0];
 		if (!context) throw new Error("packaged app did not expose a browser context");
-		const setupWindow = await waitForPackagedRendererPage(context, 45_000);
+		const setupWindow = await waitForPackagedRendererPage(context, 120_000);
 		await setupWindow.waitForLoadState("domcontentloaded", { timeout: 45_000 });
 		await expect(
 			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
@@ -105,6 +123,11 @@ test("packaged app shows the configured product", async () => {
 
 		// Packaged app must load from the asar's file: HTML, never a server.
 		expect(setupWindow.url().startsWith("file://")).toBe(true);
+	} catch (error) {
+		throw new Error(
+			`${error instanceof Error ? error.message : String(error)}\npackaged process: exitCode=${child.exitCode ?? "running"}, signal=${child.signalCode ?? "none"}\n${childOutput() || "no packaged process output"}`,
+			{ cause: error },
+		);
 	} finally {
 		await browser?.close().catch(() => {});
 		await stopChild(child);

@@ -5,13 +5,15 @@ const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
 const jobs = workflow?.jobs ?? {};
 const triggers = workflow?.on ?? {};
-const rcTagPattern = "v*.*.*-rc.*";
 if (!Object.hasOwn(triggers, "workflow_dispatch")) {
 	throw new Error("release workflow must remain manually dispatchable");
 }
-const rcTags = triggers.push?.tags;
-if (!Array.isArray(rcTags) || !rcTags.includes(rcTagPattern)) {
-	throw new Error(`release workflow must run for RC tags matching ${rcTagPattern}`);
+const releaseBranches = triggers.push?.branches;
+if (!Array.isArray(releaseBranches) || !releaseBranches.includes("main")) {
+	throw new Error("release workflow must validate main before an RC tag is created");
+}
+if (triggers.push?.tags !== undefined) {
+	throw new Error("release workflow must not duplicate a validated main run for RC tags");
 }
 const requiredJobs = [
 	"quality",
