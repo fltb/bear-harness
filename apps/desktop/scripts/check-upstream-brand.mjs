@@ -48,7 +48,7 @@ export function checkUpstreamBrand(config) {
 async function main() {
 	let config;
 	try {
-		config = (await import(configPath)).productConfig;
+		config = (await import(pathToFileURL(configPath).href)).productConfig;
 	} catch (error) {
 		process.stderr.write(`Upstream brand mismatch: <module>: ${String(error?.message ?? error)}\n`);
 		process.exit(1);

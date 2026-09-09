@@ -116,6 +116,16 @@ describe("validate-product-config", () => {
 		expect(crashSource).toContain('"--no-sandbox"');
 	});
 
+	it("imports product configuration through cross-platform file URLs", () => {
+		const validatorSource = readFileSync(
+			join(desktopRoot, "scripts/validate-product-config.mjs"),
+			"utf8",
+		);
+		const brandSource = readFileSync(join(desktopRoot, "scripts/check-upstream-brand.mjs"), "utf8");
+		expect(validatorSource).toContain("import(pathToFileURL(configPath).href)");
+		expect(brandSource).toContain("import(pathToFileURL(configPath).href)");
+	});
+
 	it("declares all native capability modules for unpacking", () => {
 		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
 		for (const pattern of [

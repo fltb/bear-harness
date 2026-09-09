@@ -299,7 +299,25 @@ jobs:
           }
           NODE
       - name: Package
-        run: npm run ${{ matrix.package-cmd }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run ${{ matrix.package-cmd }} 2>&1 | tee package.log
+      - name: Publish package failure
+        if: failure()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync } from "node:fs";
+          if (existsSync("package.log")) {
+            const encoded = readFileSync("package.log", "utf8")
+              .slice(-5_000)
+              .replaceAll("%", "%25")
+              .replaceAll("\r", "%0D")
+              .replaceAll("\n", "%0A");
+            process.stdout.write(`::error title=Package failure::${encoded}\n`);
+          }
+          NODE
       - name: Generate package hashes and CycloneDX SBOM
         run: node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }}
       - name: Verify macOS target architecture

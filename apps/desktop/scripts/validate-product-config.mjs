@@ -128,7 +128,7 @@ function writeAttribution(config) {
 async function main() {
 	let config;
 	try {
-		config = (await import(configPath)).productConfig;
+		config = (await import(pathToFileURL(configPath).href)).productConfig;
 	} catch (error) {
 		process.stderr.write(
 			`Invalid product config: <module>: ${String(error?.message ?? error)} (${configPath})\n`,

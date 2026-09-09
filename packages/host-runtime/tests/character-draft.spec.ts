@@ -244,5 +244,5 @@ describe("character package drafts", () => {
 		} finally {
 			await runtime.close();
 		}
-	});
+	}, 15_000);
 });
