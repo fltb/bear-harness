@@ -293,3 +293,61 @@ for (const contract of [
 console.log(
 	"Release workflow contract passed: required jobs, commands, dependencies, targets and version gates present",
 );
+
+const publishWorkflow = parse(readFileSync(".github/workflows/release.yml", "utf8"));
+const publishTriggers = publishWorkflow?.on ?? {};
+const publishTags = publishTriggers.push?.tags;
+if (!Array.isArray(publishTags) || !publishTags.includes("v1.0.0-rc.*")) {
+	throw new Error("publish workflow must create RC releases from v1.0.0-rc.* tags");
+}
+if (publishTriggers.push?.branches !== undefined) {
+	throw new Error("publish workflow must not run for branch pushes");
+}
+if (publishWorkflow?.permissions?.actions !== "read") {
+	throw new Error("publish workflow needs read-only Actions access to validated artifacts");
+}
+if (publishWorkflow?.permissions?.contents !== "write") {
+	throw new Error("publish workflow needs contents write access to create the GitHub prerelease");
+}
+const publishJob = publishWorkflow?.jobs?.publish;
+if (!publishJob) throw new Error("publish workflow is missing the publish job");
+const publishSource = commands(publishJob);
+for (const command of [
+	"git rev-parse HEAD",
+	"actions/workflows/ci.yml/runs",
+	'conclusion == "success"',
+	'head_branch == "main"',
+	"gh run download",
+	"release-attestation-final",
+	"node scripts/verify-release-download.mjs",
+	"gh release create",
+	"--verify-tag",
+	"--prerelease",
+	"--draft",
+]) {
+	if (!publishSource.includes(command)) {
+		throw new Error(`publish workflow is missing required command: ${command}`);
+	}
+}
+for (const forbidden of [
+	"npm ci",
+	"npm run test",
+	"playwright",
+	"live-model",
+	"soak",
+	"electron-builder",
+]) {
+	if (publishSource.includes(forbidden)) {
+		throw new Error(`publish workflow must not rebuild or rerun validation: ${forbidden}`);
+	}
+}
+const publishUses = (publishJob.steps ?? [])
+	.map((step) => (typeof step?.uses === "string" ? step.uses : ""))
+	.filter(Boolean);
+if (publishUses.length !== 1 || publishUses[0] !== "actions/checkout@v7.0.1") {
+	throw new Error("publish workflow may only use the pinned checkout action");
+}
+
+console.log(
+	"Publish workflow contract passed: green-run artifact reuse and prerelease-only publication present",
+);

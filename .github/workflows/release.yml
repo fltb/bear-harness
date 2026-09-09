@@ -1,0 +1,99 @@
+name: bear-harness-release
+
+on:
+  push:
+    tags:
+      - "v1.0.0-rc.*"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: bear-harness-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Resolve validated source run
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          version=$(jq --raw-output '.version' package.json)
+          prefix="v${version}-rc."
+          case "$GITHUB_REF_NAME" in
+            "$prefix"*) ;;
+            *) echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2; exit 1 ;;
+          esac
+          suffix=${GITHUB_REF_NAME#"$prefix"}
+          case "$suffix" in
+            ""|0|0*|*[!0-9]*) echo "RC suffix must be a positive decimal without leading zeros" >&2; exit 1 ;;
+          esac
+          run_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source_sha}&event=push&status=completed&per_page=100" --jq '[.workflow_runs[] | select(.conclusion == "success" and .head_branch == "main")][0].id // empty')
+          if [ -z "$run_id" ]; then
+            echo "No successful main CI run exists for $source_sha" >&2
+            exit 1
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - name: Download exact CI packages and attestations
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=${{ steps.source.outputs.run_id }}
+          for artifact in \
+            bear-harness-mac-x64 \
+            bear-harness-mac-arm64 \
+            bear-harness-win-x64 \
+            bear-harness-linux-x64 \
+            release-attestation-quality \
+            release-attestation-recovery \
+            release-attestation-electron-e2e \
+            release-attestation-web-e2e \
+            release-attestation-package-mac-x64 \
+            release-attestation-package-mac-arm64 \
+            release-attestation-package-win-x64 \
+            release-attestation-package-linux-x64 \
+            release-attestation-final
+          do
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "release-downloads/$artifact"
+          done
+      - name: Verify downloaded bytes against the green run
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-release-download.mjs release-downloads "$GITHUB_REF_NAME" "${{ steps.source.outputs.source_sha }}" > release-downloads/verified.json
+          evidence_bundle="release-downloads/Bear-Harness-${GITHUB_REF_NAME}-evidence.zip"
+          (cd release-downloads && zip -q -r "$(basename "$evidence_bundle")" release-attestation-*)
+          echo "evidence_bundle=$evidence_bundle" >> "$GITHUB_ENV"
+      - name: Create unsigned draft prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(jq --raw-output '.assets[]' release-downloads/verified.json)
+          cat > release-notes.md <<'NOTES'
+          Unsigned release candidate for installation and acceptance testing only.
+
+          This draft reuses packages from the successful same-commit CI run. The attached SHA256SUMS and evidence bundle bind every package to that run's final release attestation.
+
+          This is not approved for public production distribution. Platform signing and macOS notarization remain required before the draft can be published.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            "${assets[@]}" \
+            release-downloads/SHA256SUMS.txt \
+            "$evidence_bundle" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --prerelease \
+            --draft \
+            --title "Bear Harness $GITHUB_REF_NAME" \
+            --notes-file release-notes.md
