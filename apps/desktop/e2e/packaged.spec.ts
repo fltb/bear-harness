@@ -7,6 +7,7 @@ import { productConfig } from "@bear-harness/product-config";
 import { chromium } from "playwright";
 import { expect, test } from "playwright/test";
 import { assertProductPage, provisionReplyModel } from "./helpers";
+import { waitForPackagedRendererPage } from "./packaged-renderer-page.js";
 
 function waitForDevTools(child: ReturnType<typeof spawn>): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -94,10 +95,8 @@ test("packaged app shows the configured product", async () => {
 		browser = await chromium.connectOverCDP(await waitForDevTools(child));
 		const context = browser.contexts()[0];
 		if (!context) throw new Error("packaged app did not expose a browser context");
-		const setupWindow = await context
-			.waitForEvent("page", { timeout: 45_000 })
-			.catch(() => context.pages()[0]);
-		if (!setupWindow) throw new Error("packaged app did not create a renderer window");
+		const setupWindow = await waitForPackagedRendererPage(context, 45_000);
+		await setupWindow.waitForLoadState("domcontentloaded", { timeout: 45_000 });
 		await expect(
 			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).toBeVisible();
