@@ -17,12 +17,17 @@ export function waitForPackagedRendererPage<Page extends PackagedPage>(
 	const current = context.pages().find(isPackagedRenderer);
 	if (current) return Promise.resolve(current);
 	return new Promise((resolve, reject) => {
-		let timer: ReturnType<typeof setTimeout>;
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		let poll: ReturnType<typeof setInterval> | undefined;
+		let settled = false;
 		const cleanup = () => {
-			clearTimeout(timer);
+			if (timeout) clearTimeout(timeout);
+			if (poll) clearInterval(poll);
 			context.off("page", onPage);
 		};
 		const accept = (page: Page) => {
+			if (settled) return;
+			settled = true;
 			cleanup();
 			resolve(page);
 		};
@@ -30,7 +35,13 @@ export function waitForPackagedRendererPage<Page extends PackagedPage>(
 			if (isPackagedRenderer(page)) accept(page);
 		};
 		context.on("page", onPage);
-		timer = setTimeout(() => {
+		poll = setInterval(() => {
+			const renderer = context.pages().find(isPackagedRenderer);
+			if (renderer) accept(renderer);
+		}, 10);
+		timeout = setTimeout(() => {
+			if (settled) return;
+			settled = true;
 			cleanup();
 			reject(new Error("packaged app did not create a file renderer"));
 		}, timeoutMs);

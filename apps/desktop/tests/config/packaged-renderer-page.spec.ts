@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 import { waitForPackagedRendererPage } from "../../e2e/packaged-renderer-page.js";
 
 class FakePage {
-	constructor(private readonly address: string) {}
+	constructor(private address: string) {}
 	url() {
 		return this.address;
+	}
+	navigate(address: string) {
+		this.address = address;
 	}
 }
 
@@ -38,6 +41,17 @@ describe("packaged renderer selection", () => {
 		const renderer = new FakePage("file:///resources/app.asar/dist/renderer/index.html");
 		context.add(renderer);
 		await expect(selected).resolves.toBe(renderer);
+	});
+
+	it("detects an existing page that later navigates to the packaged renderer", async () => {
+		const page = new FakePage("about:blank");
+		const context = new FakeContext([page]);
+		const selected = waitForPackagedRendererPage(context, 100);
+		setTimeout(
+			() => page.navigate("file:///D:/a/bear-harness/resources/app.asar/dist/renderer/index.html"),
+			10,
+		);
+		await expect(selected).resolves.toBe(page);
 	});
 
 	it("fails clearly when no packaged renderer appears", async () => {
