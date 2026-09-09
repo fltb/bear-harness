@@ -42,9 +42,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           node --input-type=module <<'NODE'
           import { readFileSync } from "node:fs";
-          const lines = readFileSync("host-coverage.log", "utf8").split("\n").slice(-200);
-          const tail = lines.join("\n").slice(-8_000);
-          const encoded = tail
+          const log = readFileSync("host-coverage.log", "utf8");
+          const failureStart = log.lastIndexOf("Failed Tests");
+          const focused = (failureStart < 0 ? log.slice(-3_000) : log.slice(failureStart)).slice(0, 3_000);
+          const encoded = focused
             .replaceAll("%", "%25")
             .replaceAll("\r", "%0D")
             .replaceAll("\n", "%0A");

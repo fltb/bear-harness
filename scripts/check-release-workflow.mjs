@@ -66,6 +66,7 @@ const requiredCommands = new Map([
 			"tee host-coverage.log",
 			"tail -n 200 host-coverage.log",
 			"::error title=Host coverage failure::",
+			'lastIndexOf("Failed Tests")',
 			"npm run test:coverage --workspace @bear-harness/companion-ui",
 			"npm run test:coverage --workspace @bear-harness/desktop",
 			"npm run build",
