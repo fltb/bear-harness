@@ -319,7 +319,26 @@ jobs:
           }
           NODE
       - name: Generate package hashes and CycloneDX SBOM
-        run: node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }}
+        id: package_evidence
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }} 2>&1 | tee package-evidence.log
+      - name: Publish package evidence failure
+        if: failure() && steps.package_evidence.outcome == 'failure'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync } from "node:fs";
+          if (existsSync("package-evidence.log")) {
+            const encoded = readFileSync("package-evidence.log", "utf8")
+              .slice(-3_000)
+              .replaceAll("%", "%25")
+              .replaceAll("\r", "%0D")
+              .replaceAll("\n", "%0A");
+            process.stdout.write(`::error title=Package evidence failure::${encoded}\n`);
+          }
+          NODE
       - name: Verify macOS target architecture
         if: matrix.os-name == 'mac'
         shell: bash

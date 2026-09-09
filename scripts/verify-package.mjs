@@ -129,9 +129,9 @@ function templateVariable(name) {
 }
 
 function generateNpmSbom(repoRoot) {
-	const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+	const invocation = npmSbomInvocation(process.platform);
 	return execFileSync(
-		npm,
+		invocation.command,
 		[
 			"sbom",
 			"--package-lock-only",
@@ -139,8 +139,19 @@ function generateNpmSbom(repoRoot) {
 			"--sbom-format=cyclonedx",
 			"--sbom-type=application",
 		],
-		{ cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+		{
+			cwd: repoRoot,
+			encoding: "utf8",
+			maxBuffer: 64 * 1024 * 1024,
+			shell: invocation.shell,
+		},
 	);
+}
+
+export function npmSbomInvocation(platform) {
+	return platform === "win32"
+		? { command: "npm.cmd", shell: true }
+		: { command: "npm", shell: false };
 }
 
 function portablePath(path) {

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createReleaseAttestation } from "./release-attestation.mjs";
 import { PACKAGE_TARGETS, sha256Text, validateCycloneDx } from "./release-evidence.mjs";
-import { verifyPackage } from "./verify-package.mjs";
+import { npmSbomInvocation, verifyPackage } from "./verify-package.mjs";
 
 const roots = [];
 const PRODUCT_CONFIG = {
@@ -19,6 +19,12 @@ const PRODUCT_CONFIG = {
 
 test.afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+test("npm SBOM uses the Windows command wrapper through a shell", () => {
+	assert.deepEqual(npmSbomInvocation("win32"), { command: "npm.cmd", shell: true });
+	assert.deepEqual(npmSbomInvocation("linux"), { command: "npm", shell: false });
+	assert.deepEqual(npmSbomInvocation("darwin"), { command: "npm", shell: false });
 });
 
 test("quality and final refuse tracked or untracked dirty state but ignore generated evidence", async () => {

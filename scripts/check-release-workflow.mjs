@@ -107,6 +107,8 @@ const requiredCommands = new Map([
 			"::error title=Package failure::",
 			".slice(-3_000)",
 			"node scripts/verify-package.mjs",
+			"tee package-evidence.log",
+			"::error title=Package evidence failure::",
 			"node apps/desktop/scripts/verify-linux-artifacts.mjs",
 			"tee packaged-smoke.log",
 			"::error title=Packaged smoke failure::",
