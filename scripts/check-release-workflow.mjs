@@ -108,6 +108,8 @@ const requiredCommands = new Map([
 			".slice(-3_000)",
 			"node scripts/verify-package.mjs",
 			"node apps/desktop/scripts/verify-linux-artifacts.mjs",
+			"tee packaged-smoke.log",
+			"::error title=Packaged smoke failure::",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",
 		],

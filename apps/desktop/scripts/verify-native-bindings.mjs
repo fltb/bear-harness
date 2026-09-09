@@ -6,9 +6,10 @@
  * Usage: node scripts/verify-native-bindings.mjs <mac|win|linux> <arm64|x64>
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertNonEmptyNativeBinary, nativeBindingBinaryPath } from "./native-binding-files.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..");
@@ -40,8 +41,7 @@ const expectedPath = join(modules, ...expected.split("/"));
 if (!existsSync(join(expectedPath, "package.json"))) {
 	throw new Error(`Packaged target binding is missing: ${expectedPath}`);
 }
-if (statSync(expectedPath).size === 0)
-	throw new Error(`Packaged target binding is empty: ${expectedPath}`);
+assertNonEmptyNativeBinary(nativeBindingBinaryPath(expectedPath, expected.split("/")[1]));
 
 const bindingRoot = join(modules, "@node-llama-cpp");
 const bindings = existsSync(bindingRoot) ? readdirSync(bindingRoot).sort() : [];

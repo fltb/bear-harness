@@ -5,12 +5,15 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseDir = join(desktop, "release");
+const require = createRequire(import.meta.url);
+const playwrightCli = join(dirname(require.resolve("playwright/package.json")), "cli.js");
 
 function findDir(prefixes) {
 	if (!existsSync(releaseDir)) return null;
@@ -54,14 +57,8 @@ if (stat.size === 0) {
 
 process.stderr.write(`packaged binary: ${binary}\n`);
 const result = spawnSync(
-	"npx",
-	[
-		"--no-install",
-		"playwright",
-		"test",
-		"packaged.spec.ts",
-		"--config=playwright.packaged.config.ts",
-	],
+	process.execPath,
+	[playwrightCli, "test", "packaged.spec.ts", "--config=playwright.packaged.config.ts"],
 	{
 		cwd: desktop,
 		env: { ...process.env, BEAR_PACKAGED_BINARY: binary },

@@ -134,6 +134,19 @@ describe("validate-product-config", () => {
 		expect(stagingSource).toContain('"COPYING",\n\t"LICENSE.txt",\n].find');
 	});
 
+	it("launches packaged smoke portably on Linux and Windows", () => {
+		const smokeSource = readFileSync(join(desktopRoot, "e2e/packaged.spec.ts"), "utf8");
+		const resolverSource = readFileSync(
+			join(desktopRoot, "scripts/resolve-packaged-binary.mjs"),
+			"utf8",
+		);
+		expect(smokeSource).toContain('...(process.platform === "linux" ? ["--no-sandbox"] : []),');
+		expect(resolverSource).toContain('require.resolve("playwright/package.json")');
+		expect(resolverSource).toContain('"cli.js"');
+		expect(resolverSource).toContain("process.execPath");
+		expect(resolverSource).not.toContain('\n\t"npx",');
+	});
+
 	it("declares all native capability modules for unpacking", () => {
 		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
 		for (const pattern of [

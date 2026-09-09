@@ -68,6 +68,7 @@ test("packaged app shows the configured product", async () => {
 	const child = spawn(
 		binary as string,
 		[
+			...(process.platform === "linux" ? ["--no-sandbox"] : []),
 			"--remote-debugging-port=0",
 			`--user-data-dir=${join(tempRoot, productConfig.dataDirectoryName)}`,
 			"--use-mock-keychain",

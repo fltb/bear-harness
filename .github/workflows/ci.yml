@@ -364,11 +364,27 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
+          set -o pipefail
           if [ "${{ matrix.os-name }}" = "linux" ]; then
             xvfb-run -a npm run test:e2e:packaged
           else
             npm run test:e2e:packaged
-          fi
+          fi 2>&1 | tee packaged-smoke.log
+      - name: Publish packaged smoke failure
+        if: failure()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync } from "node:fs";
+          if (existsSync("packaged-smoke.log")) {
+            const encoded = readFileSync("packaged-smoke.log", "utf8")
+              .slice(-3_000)
+              .replaceAll("%", "%25")
+              .replaceAll("\r", "%0D")
+              .replaceAll("\n", "%0A");
+            process.stdout.write(`::error title=Packaged smoke failure::${encoded}\n`);
+          }
+          NODE
       - name: Attest packaged target
         shell: bash
         env:
