@@ -71,7 +71,7 @@ function commands(job) {
 		.join("\n");
 }
 const linuxConfinementCommands = [
-	"sudo apt-get --option Acquire::Retries=3 update",
+	"sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update",
 	"sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap",
 	"sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap",
 	"sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap",
@@ -114,7 +114,7 @@ const requiredCommands = new Map([
 		"package",
 		[
 			"npm run build:packages",
-			"sudo apt-get --option Acquire::Retries=3 update",
+			"sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update",
 			"sudo apt-get --option Acquire::Retries=3 install --yes",
 			"xvfb",
 			"xvfb-run -a npm run test:diagnostics:crash",

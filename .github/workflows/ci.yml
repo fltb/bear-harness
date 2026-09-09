@@ -27,7 +27,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            sudo apt-get --option Acquire::Retries=3 update
+            sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
             sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
             sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
             sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
@@ -157,7 +157,7 @@ jobs:
       - run: npm run build
       - name: Install Electron runtime libraries
         run: |
-          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
           sudo apt-get --option Acquire::Retries=3 install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
       - run: xvfb-run -a npm run test:e2e:electron
       - run: node scripts/release-attestation.mjs electron-e2e
@@ -180,7 +180,7 @@ jobs:
           cache: npm
       - name: Install Linux confinement runtime
         run: |
-          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
           sudo apt-get --option Acquire::Retries=3 install --yes apparmor bubblewrap
           sudo install --owner=root --group=root --mode=0644 .github/apparmor/bear-harness-bwrap /etc/apparmor.d/bear-harness-bwrap
           sudo apparmor_parser --replace /etc/apparmor.d/bear-harness-bwrap
@@ -295,7 +295,7 @@ jobs:
       - name: Install Linux Electron runtime
         if: matrix.os-name == 'linux'
         run: |
-          sudo apt-get --option Acquire::Retries=3 update
+          sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
           sudo apt-get --option Acquire::Retries=3 install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
       - name: Crashpad smoke (production config, temp root)
         shell: bash
