@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ async function launchSourceAppFromRoot(
 		}
 		return { app, tempRoot };
 	} catch (error) {
-		await app.close().catch(() => {});
+		await terminateSourceApp(app).catch(() => {});
 		throw error;
 	}
 }
@@ -68,6 +68,7 @@ export async function launchSourceApp(extraEnv: Record<string, string> = {}) {
 			return await launchSourceAppFromRoot(tempRoot, extraEnv, {});
 		} catch (error) {
 			lastError = error;
+			if (attempt < 2) rmSync(tempRoot, { recursive: true, force: true });
 		}
 	}
 	throw lastError;

@@ -98,7 +98,9 @@ const requiredCommands = new Map([
 		"package",
 		[
 			"npm run build:packages",
-			"npm run test:diagnostics:crash",
+			"sudo apt-get install --yes",
+			"xvfb",
+			"xvfb-run -a npm run test:diagnostics:crash",
 			"node scripts/verify-package.mjs",
 			"npm run test:e2e:packaged",
 			"node scripts/release-attestation.mjs package",
@@ -112,6 +114,22 @@ for (const [job, expected] of requiredCommands) {
 		if (!source.includes(command))
 			throw new Error(`${job} is missing required command: ${command}`);
 	}
+}
+
+const linuxElectronRuntimeStep = jobs.package.steps.find(
+	(step) => step?.name === "Install Linux Electron runtime",
+);
+if (!linuxElectronRuntimeStep) {
+	throw new Error("package job must install the Linux Electron runtime");
+}
+if (linuxElectronRuntimeStep.if !== "matrix.os-name == 'linux'") {
+	throw new Error("Linux Electron runtime installation must only run for the Linux package");
+}
+const crashpadStep = jobs.package.steps.find(
+	(step) => step?.name === "Crashpad smoke (production config, temp root)",
+);
+if (!crashpadStep || crashpadStep.shell !== "bash") {
+	throw new Error("package Crashpad smoke must use a cross-platform bash launcher");
 }
 
 const packageEvidenceUpload = jobs.package.steps.find(

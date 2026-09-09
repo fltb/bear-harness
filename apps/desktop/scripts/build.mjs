@@ -18,9 +18,12 @@ import { flattenMainEmit } from "./flatten-main.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..");
 const repoRoot = resolve(desktop, "..", "..");
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
 
 function run(cmd, args, cwd = desktop) {
 	const result = spawnSync(cmd, args, { cwd, stdio: "inherit" });
+	if (result.error) throw result.error;
 	if (result.status !== 0) {
 		process.exit(result.status ?? 1);
 	}
@@ -39,10 +42,10 @@ for (const workspace of [
 	"@bear-harness/host-runtime",
 	"@bear-harness/companion-ui",
 ]) {
-	run("npm", ["run", "build", "--workspace", workspace], repoRoot);
+	run(npmCommand, ["run", "build", "--workspace", workspace], repoRoot);
 }
-run("npx", ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
+run(npxCommand, ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
 flattenMainEmit(desktop);
-run("npx", ["--no-install", "tsc", "-p", "tsconfig.preload.json"]);
-run("npx", ["--no-install", "rsbuild", "build"]);
+run(npxCommand, ["--no-install", "tsc", "-p", "tsconfig.preload.json"]);
+run(npxCommand, ["--no-install", "rsbuild", "build"]);
 process.stdout.write("build: ok\n");
