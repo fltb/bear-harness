@@ -94,7 +94,7 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 - 干净且唯一的 release commit；
 - 每个平台从该提交新构建的包；
 - packaged smoke、hash、SBOM/attestation；
-- 公开发行所需的代码签名和 notarization。
+- 公开发行所需的 GPG 签名校验清单、公钥和完整指纹；平台代码签名与 notarization 可选。
 
 任何必需阶段未运行、跳过、运行在不同提交或缺少可核对证据，release decision 都是 **NO-GO**。
 
@@ -108,7 +108,7 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 
 RC 耐久门禁固定使用三个并发 Pi Session，连续混合执行发送、流式切换、停止、编辑、历史分页、媒体查看和 Run/Artifact 工作区操作。发布报告至少证明 120 分钟、5000 轮、1000 次切换、500 次停止、10000 个权威条目、100 次历史加载、各 50 次媒体和 Artifact 交互；会话串扰、漏项/重复、停止后 token、卡流、页面/进程/持久化/归属错误和孤儿资源必须全部为零。Renderer 与 Host 每分钟强制 GC 后采样，前 10 分钟只作预热，不参与增长预算；逐点资源序列单独保存并以 SHA-256 绑定到报告，开始/中点/结束截图只作排障材料。该确定性耐久门禁与同一提交上的真实模型验收互补，不能互相替代。
 
-这些摘要和 SBOM 是可核验的构建证据，不是代码签名。没有平台证书、签名和 notarization 时，公开发行仍然是 **NO-GO**，不得用 attestation 替代或宣称已经签名。
+这些摘要和 SBOM 是可核验的构建证据，不是平台代码签名。公开发行允许平台未签名/未公证的包，必须附 GPG 签名校验清单并如实说明系统安装提示；没有 Apple 或 Windows 证书不再构成 NO-GO。参见 [GPG 发布说明](release-signing.md)。
 
 ## 审计报告证据
 

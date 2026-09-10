@@ -324,6 +324,12 @@ for (const command of [
 	"--verify-tag",
 	"--prerelease",
 	"--draft",
+	"bash scripts/sign-release.sh release-downloads/SHA256SUMS.txt",
+	"release-downloads/SHA256SUMS.txt.asc",
+	"config/release-public.asc",
+	"gh release edit",
+	"--draft=false",
+	"--latest=false",
 ]) {
 	if (!publishSource.includes(command)) {
 		throw new Error(`publish workflow is missing required command: ${command}`);

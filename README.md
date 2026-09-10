@@ -120,7 +120,7 @@ Packaging targets are `package:mac:arm64`, `package:mac:x64`, `package:win`, and
 fnm exec --using=.nvmrc npm run package:linux
 ```
 
-**A local build is not release evidence.** The full `release:gate` runs only in the protected `CI=true` release matrix. Distribution requires verification from the same clean commit, real-provider checks, platform packages and packaged smoke tests, auditable evidence, and the applicable signing/notarization. Packaging commands and these screenshots do not establish release readiness or the availability of signed downloads. See [development and release verification](docs/development-verification.md) for the complete policy.
+**A local build is not release evidence.** The full `release:gate` runs only in the protected `CI=true` release matrix. Distribution requires verification from the same clean commit, real-provider checks, platform packages and packaged smoke tests, auditable evidence, and GPG-signed checksums. Apple signing/notarization and Windows Authenticode are optional. See [GPG release verification](docs/release-signing.md) and [development and release verification](docs/development-verification.md).
 
 </details>
 

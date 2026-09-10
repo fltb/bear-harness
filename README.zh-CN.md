@@ -112,7 +112,7 @@ fnm exec --using=.nvmrc npm run check
 fnm exec --using=.nvmrc npm run check:electron
 ```
 
-上面的检查分别覆盖 WebDev 与桌面开发流程，不替代受保护 CI 中的完整发布矩阵、平台签名和 packaged smoke 验收。
+上面的检查分别覆盖 WebDev 与桌面开发流程，不替代受保护 CI 中的完整发布矩阵和 packaged smoke 验收。发布使用 [GPG 签名校验清单](docs/release-signing.md)；Apple 签名/公证和 Windows Authenticode 均非发布前提。
 
 ## 许可证与署名
 

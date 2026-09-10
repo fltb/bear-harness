@@ -75,21 +75,35 @@ jobs:
           evidence_bundle="release-downloads/Bear-Harness-${GITHUB_REF_NAME}-evidence.zip"
           (cd release-downloads && zip -q -r "$(basename "$evidence_bundle")" release-attestation-*)
           echo "evidence_bundle=$evidence_bundle" >> "$GITHUB_ENV"
-      - name: Create unsigned draft prerelease
+      - name: Sign and verify release checksums
+        shell: bash
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: bash scripts/sign-release.sh release-downloads/SHA256SUMS.txt
+      - name: Publish GPG-signed prerelease
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t assets < <(jq --raw-output '.assets[]' release-downloads/verified.json)
           cat > release-notes.md <<'NOTES'
-          Unsigned release candidate for installation and acceptance testing only.
+          Release candidate for installation and acceptance testing.
 
-          This draft reuses packages from the successful same-commit CI run. The attached SHA256SUMS and evidence bundle bind every package to that run's final release attestation.
+          These packages come from the successful same-commit CI run. SHA256SUMS.txt is signed with the Bear Harness Release OpenPGP key:
+          921C86924526C92ADB8924835151AEB0350CE3ED
 
-          This is not approved for public production distribution. Platform signing and macOS notarization remain required before the draft can be published.
+          Verify the public key fingerprint against the repository's release documentation, then run:
+          gpg --import release-public.asc
+          gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+          sha256sum --ignore-missing -c SHA256SUMS.txt
+
+          Packages are not Apple Developer ID signed/notarized or Windows Authenticode signed. GPG verifies package integrity and provenance; it does not remove Gatekeeper or SmartScreen warnings. macOS may require approval in Privacy & Security; Windows may show an unknown publisher warning. Managed devices may block installation.
           NOTES
           gh release create "$GITHUB_REF_NAME" \
             "${assets[@]}" \
             release-downloads/SHA256SUMS.txt \
+            release-downloads/SHA256SUMS.txt.asc \
+            config/release-public.asc \
             "$evidence_bundle" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
@@ -97,3 +111,5 @@ jobs:
             --draft \
             --title "Bear Harness $GITHUB_REF_NAME" \
             --notes-file release-notes.md
+          # Publish only after every attachment has uploaded successfully.
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
