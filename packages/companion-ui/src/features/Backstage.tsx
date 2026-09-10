@@ -1,5 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { Button, Dialog, FileField } from "../ui/primitives.js";
@@ -85,6 +85,34 @@ function RoleManager() {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
+	const [pendingSwitch, setPendingSwitch] = createSignal<CharacterSummary>();
+	let switchReturnFocus: HTMLElement | undefined;
+	const switchNeedsConfirmation = () => {
+		const live = companion.activePiLiveState;
+		return Boolean(
+			companion.activeSubmission ||
+				live?.isStreaming ||
+				live?.isRetrying ||
+				live?.isCompacting ||
+				live?.pendingToolCallIds.length ||
+				live?.steering.length ||
+				live?.followUp.length,
+		);
+	};
+	const requestSwitch = (character: CharacterSummary, opener: HTMLElement) => {
+		if (!switchNeedsConfirmation()) {
+			workflow.activateRole(character.id);
+			return;
+		}
+		switchReturnFocus = opener;
+		setPendingSwitch(character);
+	};
+	const confirmSwitch = () => {
+		const target = pendingSwitch();
+		if (!target) return;
+		workflow.activateRole(target.id);
+		setPendingSwitch(undefined);
+	};
 	const deletionQuery = companion.characters.observeDeletionStatus?.(
 		workflow.selectedPackageId,
 	) ?? {
@@ -125,7 +153,9 @@ function RoleManager() {
 					</Show>
 				</div>
 				<div class="role-library-list">
-					<For each={workflow.characters()}>{(character) => <RoleRow character={character} />}</For>
+					<For each={workflow.characters()}>
+						{(character) => <RoleRow character={character} onSwitch={requestSwitch} />}
+					</For>
 				</div>
 			</aside>
 			<CurrentRolePackageManager
@@ -156,11 +186,52 @@ function RoleManager() {
 					return result;
 				}}
 			/>
+			<Dialog
+				open={pendingSwitch() !== undefined}
+				onOpenChange={(open) => {
+					if (!open) setPendingSwitch(undefined);
+				}}
+			>
+				<Dialog.Portal>
+					<Dialog.Overlay class="confirmation-overlay" />
+					<Dialog.Content
+						class="confirmation-dialog"
+						onCloseAutoFocus={(event) => {
+							event.preventDefault();
+							const target = switchReturnFocus;
+							switchReturnFocus = undefined;
+							if (target?.isConnected) target.focus();
+						}}
+					>
+						<Dialog.Title>{t("backstage.roleSwitchBusyTitle")}</Dialog.Title>
+						<Dialog.Description>
+							{t("backstage.roleSwitchBusyDescription", {
+								name: pendingSwitch()?.name ?? "",
+							})}
+						</Dialog.Description>
+						<div class="confirmation-actions">
+							<Dialog.CloseButton
+								as={Button}
+								type="button"
+								aria-label={t("backstage.roleSwitchBusyCancel")}
+							>
+								{t("backstage.roleSwitchBusyCancel")}
+							</Dialog.CloseButton>
+							<Button class="danger-action" type="button" onClick={confirmSwitch}>
+								{t("backstage.roleSwitchBusyConfirm")}
+							</Button>
+						</div>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog>
 		</div>
 	);
 }
 
-function RoleRow(props: { character: CharacterSummary }) {
+function RoleRow(props: {
+	character: CharacterSummary;
+	onSwitch: (character: CharacterSummary, opener: HTMLElement) => void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
 	const trust = workflow.pluginTrust(props.character.id);
@@ -208,7 +279,7 @@ function RoleRow(props: { character: CharacterSummary }) {
 						data-control="command"
 						type="button"
 						disabled={disabled()}
-						onClick={() => workflow.activateRole(props.character.id)}
+						onClick={(event) => props.onSwitch(props.character, event.currentTarget)}
 					>
 						{t("backstage.roleSwitch")}
 					</Button>

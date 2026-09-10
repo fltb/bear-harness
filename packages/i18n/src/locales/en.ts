@@ -179,6 +179,11 @@ export const en = {
 		},
 		roleActive: "Active character",
 		roleSwitch: "Switch character",
+		roleSwitchBusyTitle: "The current reply is still in progress",
+		roleSwitchBusyDescription:
+			"Switching to “{name}” will stop the reply being generated. Content already shown will remain.",
+		roleSwitchBusyCancel: "Keep waiting",
+		roleSwitchBusyConfirm: "Stop and switch",
 		roleImport: "Import character package",
 		roleImportInput: "Choose character package folder",
 		roleImportHint:

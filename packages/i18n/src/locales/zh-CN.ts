@@ -170,6 +170,10 @@ export const zhCN = {
 		},
 		roleActive: "正在相处",
 		roleSwitch: "切换角色",
+		roleSwitchBusyTitle: "当前回复还没结束",
+		roleSwitchBusyDescription: "切换到“{name}”会停止当前角色正在生成的回复。已经显示的内容会保留。",
+		roleSwitchBusyCancel: "继续等待",
+		roleSwitchBusyConfirm: "停止并切换",
 		roleImport: "导入角色包",
 		roleImportInput: "选择角色包文件夹",
 		roleImportHint:

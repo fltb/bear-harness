@@ -83,6 +83,102 @@ describe("ordinary-user backstage journey", () => {
 		expect(confirmPluginTrust).toHaveBeenCalledWith("imported-role");
 	});
 
+	it("warns before stopping an active reply to switch characters", async () => {
+		const user = userEvent.setup();
+		const activate = vi.fn(() => Promise.resolve());
+		const store = {
+			embedding: createEmbeddingBinding() as never,
+			activePiLiveState: {
+				isStreaming: true,
+				isRetrying: false,
+				retryAttempt: 0,
+				isCompacting: false,
+				pendingToolCallIds: [],
+				steering: [],
+				followUp: [],
+			},
+			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+				observeTrust: () => ({
+					data: () => ({
+						trust: {
+							origin: "official" as const,
+							pluginHash: "",
+							pluginsPresent: false,
+							trusted: true,
+						},
+					}),
+					loading: () => false,
+					error: () => null,
+				}),
+				pluginTrustData: () => ({
+					origin: "official" as const,
+					pluginHash: "",
+					pluginsPresent: false,
+					trusted: true,
+				}),
+				characters: () => [
+					{
+						id: THEMED_CHARACTER.id,
+						name: THEMED_CHARACTER.name,
+						subtitle: THEMED_CHARACTER.character.subtitle,
+						avatarUrl: THEMED_CHARACTER.visual.avatarUrl,
+						active: true,
+					},
+					{
+						id: "target-character",
+						name: "Target Character",
+						subtitle: "Target subtitle",
+						avatarUrl: THEMED_CHARACTER.visual.avatarUrl,
+						active: false,
+					},
+				],
+				activate,
+			},
+			character: THEMED_CHARACTER,
+		} as unknown as CompanionStore;
+
+		render(() => (
+			<DesktopProvider store={store}>
+				<Backstage open initialTab="roles" onClose={() => undefined} />
+			</DesktopProvider>
+		));
+
+		const backstage = await screen.findByRole("dialog", {
+			name: zhCN.sidebar.characterSettings,
+		});
+		const switchButton = within(backstage).getByRole("button", {
+			name: zhCN.backstage.roleSwitch,
+		});
+		await user.click(switchButton);
+		let warning = await screen.findByRole("dialog", {
+			name: zhCN.backstage.roleSwitchBusyTitle,
+		});
+		expect(
+			within(warning).getByText(
+				zhCN.backstage.roleSwitchBusyDescription.replace("{name}", "Target Character"),
+			),
+		).toBeVisible();
+		expect(activate).not.toHaveBeenCalled();
+
+		await user.click(
+			within(warning).getByRole("button", { name: zhCN.backstage.roleSwitchBusyCancel }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.backstage.roleSwitchBusyTitle }),
+			).not.toBeInTheDocument(),
+		);
+		expect(activate).not.toHaveBeenCalled();
+
+		await user.click(switchButton);
+		warning = await screen.findByRole("dialog", { name: zhCN.backstage.roleSwitchBusyTitle });
+		await user.click(
+			within(warning).getByRole("button", { name: zhCN.backstage.roleSwitchBusyConfirm }),
+		);
+		await waitFor(() => expect(activate).toHaveBeenCalledWith("target-character"));
+	});
+
 	it("opens character and system settings as distinct destinations and imports a package folder", async () => {
 		const user = userEvent.setup();
 		const importPackage = vi.fn(() => Promise.resolve());
