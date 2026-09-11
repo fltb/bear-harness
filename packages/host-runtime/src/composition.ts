@@ -64,6 +64,7 @@ import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings
 import type { AppDatabase } from "./storage/database.js";
 import type { InvalidationHub } from "./storage/invalidation-hub.js";
 import { artifacts, conversations, runs } from "./storage/schema.js";
+import { assertSystemOnboardingLicenses } from "./system-onboarding-license.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
 export type HostUpdateService = {
@@ -818,7 +819,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			s.models.completeOnboarding(companionId, s.providers.modelProjectionFacts()),
 		);
 	});
-	dispatcher.registerHandler(RPC.systemOnboarding.completeModel, async (defaults) => {
+	dispatcher.registerHandler(RPC.systemOnboarding.completeModel, async (request) => {
+		const { licensesAcknowledged, ...defaults } = request;
+		assertSystemOnboardingLicenses(process.platform, licensesAcknowledged);
 		const completed = s.models.completeSystemModelOnboarding(
 			defaults,
 			s.providers.modelProjectionFacts(),

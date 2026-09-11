@@ -26,7 +26,7 @@ test("fatal settings corruption opens isolated recovery and rebuilds on explicit
 
 		({ app: restarted } = await launchSourceAppAt(appDataRoot));
 		const setup = await restarted.firstWindow();
-		await expect(setup.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toBeVisible();
+		await expect(setup.getByRole("dialog", { name: zhCN.licenseNotice.dialogLabel })).toBeVisible();
 	} finally {
 		await first?.close().catch(() => undefined);
 		await restarted?.close().catch(() => undefined);

@@ -27,11 +27,13 @@ function routeOptionId(route: { providerId: string; modelId: string }): string {
 	return `${route.providerId}\u0000${route.modelId}`;
 }
 
-export function createFirstMeetingWorkflow(store: CompanionStore) {
+export function createFirstMeetingWorkflow(store: CompanionStore, platform: string | undefined) {
 	const [textAnswer, setTextAnswer] = createSignal("");
 	const [submitting, setSubmitting] = createSignal(false);
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
+	const [licenseConfirmed, setLicenseConfirmed] = createSignal(false);
+	const [licenseNoticeComplete, setLicenseNoticeComplete] = createSignal(false);
 	const [systemReplyDraft, setSystemReplyDraft] = createSignal<{
 		providerId: string;
 		modelId: string;
@@ -54,7 +56,12 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	const modelDefaults = createMemo(() => modelData()?.defaults);
 	const systemModelDefaults = createMemo(() => modelData()?.systemDefaults);
 	const firstRunStage = createMemo(() => store.settings?.data?.()?.firstRunStage);
-	const modelRequired = createMemo(() => store.systemSetupReady && firstRunStage() === "model");
+	const licenseRequired = createMemo(
+		() => store.systemSetupReady && firstRunStage() === "model" && !licenseNoticeComplete(),
+	);
+	const modelRequired = createMemo(
+		() => store.systemSetupReady && firstRunStage() === "model" && licenseNoticeComplete(),
+	);
 	const roleModelRequired = createMemo(
 		() =>
 			store.characterSetupReady &&
@@ -156,7 +163,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	};
 	const completeModelSetup = (): void => {
 		const selectedReply = selectedReplyModel();
-		if (!selectedReply || setupBusy()) return;
+		if (!selectedReply || setupBusy() || (modelRequired() && !licenseNoticeComplete())) return;
 		void saveModelDefault(async () => {
 			if (modelRequired()) {
 				const reply = {
@@ -174,7 +181,10 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 									modelId: selectedVision.modelId,
 								},
 							} as const);
-				await store.model.completeSystemOnboarding(reply, vision);
+				await store.model.completeSystemOnboarding(reply, vision, {
+					bear: "GPL-3.0-only",
+					...(platform === "win32" ? { gitForWindows: "GPL-2.0-only" as const } : {}),
+				});
 				return;
 			}
 			await store.model.completeDefaultsOnboarding();
@@ -205,6 +215,12 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		submitting,
 		setupBusy,
 		setupError,
+		licenseConfirmed,
+		setLicenseConfirmed,
+		licenseRequired,
+		completeLicenseNotice: () => {
+			if (licenseConfirmed()) setLicenseNoticeComplete(true);
+		},
 		configuredModels,
 		modelError,
 		selectedReplyModel,

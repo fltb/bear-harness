@@ -157,6 +157,10 @@ export interface ModelApi {
 	completeSystemOnboarding(
 		reply: { providerId: string; modelId: string },
 		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+		licensesAcknowledged: {
+			bear: "GPL-3.0-only";
+			gitForWindows?: "GPL-2.0-only";
+		},
 	): Promise<void>;
 }
 

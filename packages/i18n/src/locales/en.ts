@@ -589,6 +589,26 @@ export const en = {
 		oauthFailed: "Sign-in was not completed",
 		oauthCancel: "Cancel sign-in",
 	},
+	licenseNotice: {
+		dialogLabel: "Open-source license acknowledgement",
+		step: "First launch · Open-source licenses",
+		title: "Review the open-source licenses before continuing",
+		description:
+			"These licenses protect your freedom to run, study, modify, and share the software. Acknowledging them only confirms that you have read and understood the terms; it adds no restriction on use.",
+		bearTitle: "Bear Harness · GNU GPL v3.0",
+		bearDescription:
+			"Bear Harness is released under GNU General Public License version 3. Follow the applicable GPLv3 terms when modifying or distributing the software.",
+		readGpl3: "Read the GPLv3",
+		gitTitle: "Bundled Windows component · Git for Windows",
+		gitDescription:
+			"The Windows package includes an unmodified PortableGit distribution. Git is licensed under GNU GPL v2.0, while other bundled components retain their own licenses. Complete texts and third-party notices are included with the package.",
+		readGpl2: "Read the GPLv2",
+		gitSource: "View the Git for Windows source",
+		confirmBear: "I have read and understand the GNU GPLv3 license for Bear Harness.",
+		confirmWindows:
+			"I have read and understand the GPLv3, GPLv2, and third-party license notices above.",
+		continue: "Acknowledge and continue",
+	},
 	modelSetup: {
 		dialogLabel: "Connect a reply model",
 		title: "Connect a reply model first",

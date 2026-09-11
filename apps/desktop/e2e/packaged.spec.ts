@@ -6,7 +6,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { productConfig } from "@bear-harness/product-config";
 import { chromium } from "playwright";
 import { expect, test } from "playwright/test";
-import { assertProductPage, provisionReplyModel } from "./helpers";
+import { acknowledgeOpenSourceLicenses, assertProductPage, provisionReplyModel } from "./helpers";
 import {
 	collectPackagedFailureEvidence,
 	collectWindowsApplicationErrors,
@@ -121,6 +121,7 @@ test("packaged app shows the configured product", async () => {
 		if (!context) throw new Error("packaged app did not expose a browser context");
 		const setupWindow = await waitForPackagedRendererPage(context, 120_000);
 		await setupWindow.waitForLoadState("domcontentloaded", { timeout: 45_000 });
+		await acknowledgeOpenSourceLicenses(setupWindow);
 		await expect(
 			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).toBeVisible();

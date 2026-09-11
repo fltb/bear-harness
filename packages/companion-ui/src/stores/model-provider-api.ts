@@ -221,9 +221,9 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.model.defaultsCompleteOnboarding());
 			await refreshDefaults();
 		},
-		completeSystemOnboarding: async (reply, vision) => {
+		completeSystemOnboarding: async (reply, vision, licensesAcknowledged) => {
 			const result = await invoke(client, () =>
-				client.systemOnboarding.completeModel({ reply, vision }),
+				client.systemOnboarding.completeModel({ reply, vision, licensesAcknowledged }),
 			);
 			hydrateRpcQuery(queryClient, queryKeys.settings, { settings: result.settings });
 			hydrateRpcQuery(queryClient, queryKeys.systemModelDefaults, result.defaults);

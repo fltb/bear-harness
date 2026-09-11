@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { productConfig } from "@bear-harness/product-config";
 import { expect, test } from "playwright/test";
-import { assertProductWindow, launchSourceApp, provisionReplyModel } from "./helpers";
+import {
+	acknowledgeOpenSourceLicenses,
+	assertProductWindow,
+	launchSourceApp,
+	provisionReplyModel,
+} from "./helpers";
 
 const _desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -26,6 +31,7 @@ test("source build loads from file:// with official identity and isolated diagno
 				BrowserWindow.getAllWindows().some((candidate) => candidate.isFocused()),
 			),
 		).toBe(false);
+		await acknowledgeOpenSourceLicenses(setupWindow);
 		await expect(
 			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).toBeVisible();

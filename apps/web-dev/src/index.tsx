@@ -29,7 +29,7 @@ installRendererFaultReporting((fault) => {
 render(
 	() => (
 		<>
-			<CompanionApp product={bootstrap.product} client={client}>
+			<CompanionApp product={bootstrap.product} client={client} platform={bootstrap.platform}>
 				<Show when={bootstrap.debugEnabled}>
 					<WebDevDebugPanel transport={transport} token={bootstrap.token} />
 				</Show>

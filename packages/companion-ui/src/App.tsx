@@ -44,6 +44,7 @@ export {
 export function CompanionApp(props: {
 	product: Readonly<ProductConfig>;
 	client: CompanionClient;
+	platform?: string;
 	children?: JSX.Element;
 }) {
 	const queryClient = new QueryClient({
@@ -55,13 +56,19 @@ export function CompanionApp(props: {
 	return (
 		<I18nextProvider i18n={i18n}>
 			<QueryClientProvider client={queryClient}>
-				<CompanionRuntime client={props.client}>{props.children}</CompanionRuntime>
+				<CompanionRuntime client={props.client} platform={props.platform}>
+					{props.children}
+				</CompanionRuntime>
 			</QueryClientProvider>
 		</I18nextProvider>
 	);
 }
 
-function CompanionRuntime(props: { client: CompanionClient; children?: JSX.Element }) {
+function CompanionRuntime(props: {
+	client: CompanionClient;
+	platform?: string;
+	children?: JSX.Element;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const store = createCompanionStore(props.client);
@@ -72,14 +79,14 @@ function CompanionRuntime(props: { client: CompanionClient; children?: JSX.Eleme
 	return (
 		<DesktopProvider store={store}>
 			<ShellWorkflowProvider workflow={workflow}>
-				<DesktopFrame />
+				<DesktopFrame platform={props.platform} />
 				{props.children}
 			</ShellWorkflowProvider>
 		</DesktopProvider>
 	);
 }
 
-function DesktopFrame() {
+function DesktopFrame(props: { platform?: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useShellWorkflowStore();
@@ -286,7 +293,7 @@ function DesktopFrame() {
 						}}
 					</Show>
 					<PermissionLayer />
-					<FirstMeeting />
+					<FirstMeeting platform={props.platform} />
 				</main>
 				<ArtifactPreview />
 			</div>

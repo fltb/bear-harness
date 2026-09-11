@@ -287,7 +287,12 @@ const server = createServer(async (request, response) => {
 	};
 
 	if (request.method === "GET" && url.pathname === "/bootstrap") {
-		send(response, 200, { product: productConfig, token, debugEnabled });
+		send(response, 200, {
+			product: productConfig,
+			token,
+			debugEnabled,
+			platform: process.platform,
+		});
 		return;
 	}
 	const suppliedToken = request.headers["x-bear-web-dev-token"];

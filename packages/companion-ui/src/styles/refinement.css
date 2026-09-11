@@ -257,6 +257,10 @@ button[data-variant="primary"]:hover:not(:disabled),
 	@apply max-h-full overflow-hidden;
 }
 
+.license-notice .intro-card {
+	@apply max-h-full overflow-y-auto;
+}
+
 .first-meeting-provider-setup {
 	@apply min-h-0 overflow-y-auto pr-1;
 }

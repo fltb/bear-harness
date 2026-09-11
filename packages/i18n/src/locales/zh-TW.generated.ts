@@ -551,6 +551,22 @@ export const zhTW = {
 		"oauthFailed": "登入沒有完成",
 		"oauthCancel": "取消登入"
 	},
+	"licenseNotice": {
+		"dialogLabel": "開源許可確認",
+		"step": "首次啟動 · 開源許可",
+		"title": "在繼續前，請確認開源許可",
+		"description": "這些開源許可保障你執行、研究、修改和分享軟體的自由。確認僅表示你已閱讀並理解對應條款，不會增加額外的使用限制。",
+		"bearTitle": "Bear Harness · GNU GPL v3.0",
+		"bearDescription": "Bear Harness 以 GNU General Public License version 3 釋出。分發或修改軟體時，請遵守 GPLv3 的相應條款。",
+		"readGpl3": "檢視 GPLv3 全文",
+		"gitTitle": "Windows 內建元件 · Git for Windows",
+		"gitDescription": "Windows 安裝包內建未經修改的 PortableGit。Git 採用 GNU GPL v2.0，包內其他元件繼續適用各自的許可；完整文本與第三方宣告隨安裝包提供。",
+		"readGpl2": "檢視 GPLv2 全文",
+		"gitSource": "檢視 Git for Windows 原始碼",
+		"confirmBear": "我已閱讀並理解 Bear Harness 的 GNU GPLv3 開源許可。",
+		"confirmWindows": "我已閱讀並理解上述 GPLv3、GPLv2 與第三方許可說明。",
+		"continue": "確認並繼續"
+	},
 	"modelSetup": {
 		"dialogLabel": "連接回復模型",
 		"title": "先連線一個回覆模型",

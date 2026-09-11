@@ -631,6 +631,51 @@
 	@apply max-h-full overflow-y-auto;
 }
 
+.license-notice .intro-card {
+	@apply max-h-full overflow-y-auto;
+}
+
+.license-notice-item {
+	@apply grid gap-2 rounded-xl border p-4;
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+}
+
+.license-notice-item h3 {
+	@apply m-0 text-sm font-semibold;
+	color: var(--text-strong);
+}
+
+.license-notice-item a,
+.license-notice-links {
+	@apply text-xs;
+}
+
+.license-notice-item a {
+	color: var(--text-action);
+}
+
+.license-notice-links {
+	@apply flex flex-wrap gap-x-4 gap-y-2;
+}
+
+.license-notice-checkbox {
+	@apply flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm;
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+}
+
+.license-notice-checkbox[data-checked] {
+	border-color: var(--sys-accent);
+}
+
+.license-notice-checkbox-control {
+	@apply mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border text-xs font-bold;
+	border-color: var(--sys-border);
+	color: var(--text-action);
+	background: var(--sys-surface);
+}
+
 .model-setup-pickers {
 	@apply my-4 grid grid-cols-2 gap-3;
 }

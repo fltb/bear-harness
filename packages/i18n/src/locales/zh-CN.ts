@@ -551,6 +551,25 @@ export const zhCN = {
 		oauthFailed: "登录没有完成",
 		oauthCancel: "取消登录",
 	},
+	licenseNotice: {
+		dialogLabel: "开源许可确认",
+		step: "首次启动 · 开源许可",
+		title: "在继续前，请确认开源许可",
+		description:
+			"这些开源许可保障你运行、研究、修改和分享软件的自由。确认仅表示你已阅读并理解对应条款，不会增加额外的使用限制。",
+		bearTitle: "Bear Harness · GNU GPL v3.0",
+		bearDescription:
+			"Bear Harness 以 GNU General Public License version 3 发布。分发或修改软件时，请遵守 GPLv3 的相应条款。",
+		readGpl3: "查看 GPLv3 全文",
+		gitTitle: "Windows 内置组件 · Git for Windows",
+		gitDescription:
+			"Windows 安装包内置未经修改的 PortableGit。Git 采用 GNU GPL v2.0，包内其他组件继续适用各自的许可；完整文本与第三方声明随安装包提供。",
+		readGpl2: "查看 GPLv2 全文",
+		gitSource: "查看 Git for Windows 源码",
+		confirmBear: "我已阅读并理解 Bear Harness 的 GNU GPLv3 开源许可。",
+		confirmWindows: "我已阅读并理解上述 GPLv3、GPLv2 与第三方许可说明。",
+		continue: "确认并继续",
+	},
 	modelSetup: {
 		dialogLabel: "连接回复模型",
 		title: "先连接一个回复模型",

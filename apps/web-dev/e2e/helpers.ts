@@ -141,6 +141,10 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			data: {
 				reply: { providerId: "e2e-rule", modelId: "rule-model" },
 				vision: { mode: "auto" },
+				licensesAcknowledged: {
+					bear: "GPL-3.0-only",
+					...(process.platform === "win32" ? { gitForWindows: "GPL-2.0-only" } : {}),
+				},
 			},
 		})
 	).json();

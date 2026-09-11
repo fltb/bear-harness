@@ -16,6 +16,30 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		modelId: "rule-model",
 	};
 	await page.goto("/");
+	const licenseNotice = page.getByRole("dialog", {
+		name: zhCN.licenseNotice.dialogLabel,
+	});
+	await expect(licenseNotice).toBeVisible();
+	await expect(
+		licenseNotice.getByRole("heading", { name: zhCN.licenseNotice.bearTitle }),
+	).toBeVisible();
+	const gitHeading = licenseNotice.getByRole("heading", { name: zhCN.licenseNotice.gitTitle });
+	if (process.platform === "win32") await expect(gitHeading).toBeVisible();
+	else await expect(gitHeading).toHaveCount(0);
+	const licenseContinue = licenseNotice.getByRole("button", {
+		name: zhCN.licenseNotice.continue,
+	});
+	await expect(licenseContinue).toBeDisabled();
+	const confirmationLabel =
+		process.platform === "win32"
+			? zhCN.licenseNotice.confirmWindows
+			: zhCN.licenseNotice.confirmBear;
+	const confirmation = licenseNotice.getByRole("checkbox", { name: confirmationLabel });
+	await licenseNotice.getByText(confirmationLabel, { exact: true }).click();
+	await expect(confirmation).toBeChecked();
+	await expect(licenseContinue).toBeEnabled();
+	await licenseContinue.click();
+	await expect(licenseNotice).toBeHidden();
 	const modelSetup = page.getByRole("dialog", {
 		name: zhCN.modelSetup.dialogLabel,
 	});
@@ -58,6 +82,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	// A new renderer resumes the Host-owned embedding stage after that commit.
 	await test.step("reload resumes embedding after the system model commit", async () => {
 		await page.reload();
+		await expect(licenseNotice).toBeHidden();
 		await expect(modelSetup).toBeHidden();
 		await expect(embeddingSetup).toBeVisible();
 	});

@@ -151,6 +151,10 @@ export async function provisionReplyModel(window: Page) {
 	await invokeRpc(window, RPC.systemOnboarding.completeModel, {
 		reply: { providerId: provider.id, modelId: model.id },
 		vision: { mode: "auto" },
+		licensesAcknowledged: {
+			bear: "GPL-3.0-only",
+			...(process.platform === "win32" ? { gitForWindows: "GPL-2.0-only" } : {}),
+		},
 	});
 	await invokeRpc(window, RPC.systemOnboarding.completeEmbedding, { choice: "none" });
 	await invokeRpc(window, RPC.model.defaultsCompleteOnboarding, {});
@@ -178,6 +182,27 @@ export async function provisionReplyModel(window: Page) {
 		selected: { providerId: provider.id, modelId: model.id },
 	});
 	await window.reload();
+}
+
+export async function acknowledgeOpenSourceLicenses(window: Page) {
+	const dialog = window.getByRole("dialog", { name: zhCN.licenseNotice.dialogLabel });
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: zhCN.licenseNotice.bearTitle })).toBeVisible();
+	const gitHeading = dialog.getByRole("heading", { name: zhCN.licenseNotice.gitTitle });
+	if (process.platform === "win32") await expect(gitHeading).toBeVisible();
+	else await expect(gitHeading).toHaveCount(0);
+	const continueButton = dialog.getByRole("button", { name: zhCN.licenseNotice.continue });
+	await expect(continueButton).toBeDisabled();
+	const confirmationLabel =
+		process.platform === "win32"
+			? zhCN.licenseNotice.confirmWindows
+			: zhCN.licenseNotice.confirmBear;
+	const confirmation = dialog.getByRole("checkbox", { name: confirmationLabel });
+	await dialog.getByText(confirmationLabel, { exact: true }).click();
+	await expect(confirmation).toBeChecked();
+	await expect(continueButton).toBeEnabled();
+	await continueButton.click();
+	await expect(dialog).toBeHidden();
 }
 
 /**

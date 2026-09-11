@@ -8,6 +8,7 @@ export interface WebDevBootstrap {
 	product: Readonly<ProductConfig>;
 	token: string;
 	debugEnabled: boolean;
+	platform: string;
 }
 
 export type WebDevHttpErrorOperation = "transport" | "bootstrap" | "debug channels";
@@ -52,7 +53,9 @@ export function parseWebDevBootstrap(value: unknown): WebDevBootstrap {
 		!isProductConfig(value.product) ||
 		typeof value.token !== "string" ||
 		value.token.length === 0 ||
-		typeof value.debugEnabled !== "boolean"
+		typeof value.debugEnabled !== "boolean" ||
+		typeof value.platform !== "string" ||
+		value.platform.length === 0
 	) {
 		throw new Error("web-dev bootstrap response is invalid");
 	}
@@ -60,6 +63,7 @@ export function parseWebDevBootstrap(value: unknown): WebDevBootstrap {
 		product: value.product,
 		token: value.token,
 		debugEnabled: value.debugEnabled,
+		platform: value.platform,
 	};
 }
 

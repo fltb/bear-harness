@@ -62,6 +62,7 @@ function firstRunHost(
 		defaults?: SystemModelDefaultsGetResponse;
 		stage?: SettingsData["firstRunStage"];
 		roleDefaults?: ModelDefaultsGetResponse;
+		platform?: string;
 	} = {},
 ) {
 	const { client } = createTestClient();
@@ -168,7 +169,7 @@ function firstRunHost(
 					store = createCompanionStore(client);
 					return (
 						<DesktopProvider store={store}>
-							<FirstMeeting />
+							<FirstMeeting platform={options.platform} />
 						</DesktopProvider>
 					);
 				})()}
@@ -214,6 +215,21 @@ async function selectReply(user: UserEvent, dialog: HTMLElement) {
 	);
 }
 
+async function continuePastLicense(user: UserEvent, windows = false) {
+	const dialog = await screen.findByRole("dialog", { name: zhCN.licenseNotice.dialogLabel });
+	const confirmation = within(dialog).getByRole("checkbox", {
+		name: windows ? zhCN.licenseNotice.confirmWindows : zhCN.licenseNotice.confirmBear,
+	});
+	const continueButton = within(dialog).getByRole("button", {
+		name: zhCN.licenseNotice.continue,
+	});
+	expect(continueButton).toBeDisabled();
+	await user.click(confirmation);
+	expect(continueButton).toBeEnabled();
+	await user.click(continueButton);
+	return screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+}
+
 async function confirmRole(user: UserEvent) {
 	const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 	await waitFor(() =>
@@ -226,6 +242,49 @@ async function confirmRole(user: UserEvent) {
 }
 
 describe("Host-backed first-run setup", () => {
+	it("requires Bear GPLv3 acknowledgement first and omits Windows licenses on macOS/Linux", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunHost({ platform: "darwin" });
+		setup.mount();
+		const dialog = await screen.findByRole("dialog", { name: zhCN.licenseNotice.dialogLabel });
+		expect(
+			within(dialog).getByRole("heading", { name: zhCN.licenseNotice.bearTitle }),
+		).toBeVisible();
+		expect(within(dialog).queryByText(zhCN.licenseNotice.gitTitle)).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
+		).not.toBeInTheDocument();
+		await continuePastLicense(user);
+		expect(setup.client.systemOnboarding.completeModel).not.toHaveBeenCalled();
+	});
+
+	it("shows Git for Windows licensing and carries both acknowledgements into setup", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunHost({
+			platform: "win32",
+			providers: [addedProvider],
+			models: [replyModel],
+		});
+		setup.mount();
+		const license = await screen.findByRole("dialog", { name: zhCN.licenseNotice.dialogLabel });
+		expect(
+			within(license).getByRole("heading", { name: zhCN.licenseNotice.gitTitle }),
+		).toBeVisible();
+		const model = await continuePastLicense(user, true);
+		await selectReply(user, model);
+		await user.click(within(model).getByRole("button", { name: zhCN.modelSetup.continue }));
+		await waitFor(() =>
+			expect(setup.client.systemOnboarding.completeModel).toHaveBeenCalledWith({
+				reply: replyRoute,
+				vision: { mode: "auto" },
+				licensesAcknowledged: {
+					bear: "GPL-3.0-only",
+					gitForWindows: "GPL-2.0-only",
+				},
+			}),
+		);
+	});
+
 	it("never mounts onboarding while completed role projections arrive separately", async () => {
 		const setup = firstRunHost({
 			stage: "role",
@@ -300,7 +359,7 @@ describe("Host-backed first-run setup", () => {
 		await waitFor(() => expect(store.onboarding.status).toBe("active"));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		release();
-		await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await screen.findByRole("dialog", { name: zhCN.licenseNotice.dialogLabel });
 		expect(screen.queryByRole("dialog", { name: "Introduction" })).not.toBeInTheDocument();
 	});
 
@@ -424,7 +483,7 @@ describe("Host-backed first-run setup", () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost();
 		const { store } = setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await selectProvider(user, dialog);
 		const editor = within(dialog).getByRole("region", { name: candidate.name });
 		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
@@ -456,7 +515,7 @@ describe("Host-backed first-run setup", () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost({ providers: [addedProvider], models: [replyModel, imageModel] });
 		setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await selectReply(user, dialog);
 		expect(
 			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
@@ -467,6 +526,7 @@ describe("Host-backed first-run setup", () => {
 		expect(setup.client.systemOnboarding.completeModel).toHaveBeenCalledWith({
 			reply: replyRoute,
 			vision: { mode: "auto" },
+			licensesAcknowledged: { bear: "GPL-3.0-only" },
 		});
 	});
 
@@ -483,13 +543,14 @@ describe("Host-backed first-run setup", () => {
 			return complete(params);
 		});
 		const { store } = setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await selectReply(user, dialog);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		await waitFor(() =>
 			expect(setup.client.systemOnboarding.completeModel).toHaveBeenCalledWith({
 				reply: replyRoute,
 				vision: { mode: "auto" },
+				licensesAcknowledged: { bear: "GPL-3.0-only" },
 			}),
 		);
 		expect(store.settings.data()?.firstRunStage).toBe("model");
@@ -509,7 +570,7 @@ describe("Host-backed first-run setup", () => {
 			defaults: { reply: replyRoute, vision: { mode: "auto" } },
 		});
 		const firstRender = setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await waitFor(() =>
 			expect(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled(),
 		);
@@ -539,7 +600,7 @@ describe("Host-backed first-run setup", () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost({ providers: [addedProvider], models: [replyModel, imageModel] });
 		const { store } = setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await selectReply(user, dialog);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		const handoff = await screen.findByRole("dialog", { name: zhCN.settings.memoryVectorSection });
@@ -566,7 +627,7 @@ describe("Host-backed first-run setup", () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost();
 		const { store } = setup.mount();
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const dialog = await continuePastLicense(user);
 		await addProvider(user, dialog);
 		await selectReply(user, dialog);
 		expect(
@@ -582,6 +643,7 @@ describe("Host-backed first-run setup", () => {
 		expect(setup.client.systemOnboarding.completeModel).toHaveBeenCalledWith({
 			reply: replyRoute,
 			vision: { mode: "manual", route: { providerId: "openai", modelId: "image" } },
+			licensesAcknowledged: { bear: "GPL-3.0-only" },
 		});
 		expect(store.model.data()?.systemDefaults).toEqual({
 			reply: replyRoute,

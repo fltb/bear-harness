@@ -6,14 +6,14 @@ import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
-import { Button, Dialog, TextField } from "./ui/primitives.js";
+import { Button, Checkbox, Dialog, Link, TextField } from "./ui/primitives.js";
 
 /** First-run gates: system model setup → system-settings handoff → role onboarding. */
-export function FirstMeeting() {
+export function FirstMeeting(props: { platform?: string } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const shell = useShellWorkflowStore();
-	const workflow = createFirstMeetingWorkflow(store);
+	const workflow = createFirstMeetingWorkflow(store, props.platform);
 	const hasConfiguredModels = createMemo(() => workflow.configuredModels().length > 0);
 	const openMemorySettings = () => {
 		shell.openBackstage("settings", "memory");
@@ -83,6 +83,75 @@ export function FirstMeeting() {
 	};
 	return (
 		<>
+			<Show when={workflow.licenseRequired()}>
+				<Dialog open={workflow.licenseRequired()}>
+					<Dialog.Content class="intro license-notice" aria-label={t("licenseNotice.dialogLabel")}>
+						<article class="intro-card">
+							<div class="intro-step">{t("licenseNotice.step")}</div>
+							<h2>{t("licenseNotice.title")}</h2>
+							<p>{t("licenseNotice.description")}</p>
+							<section class="license-notice-item" aria-labelledby="bear-license-title">
+								<h3 id="bear-license-title">{t("licenseNotice.bearTitle")}</h3>
+								<p>{t("licenseNotice.bearDescription")}</p>
+								<Link
+									href="https://www.gnu.org/licenses/gpl-3.0.html"
+									target="_blank"
+									rel="noreferrer"
+								>
+									{t("licenseNotice.readGpl3")}
+								</Link>
+							</section>
+							<Show when={props.platform === "win32"}>
+								<section class="license-notice-item" aria-labelledby="git-license-title">
+									<h3 id="git-license-title">{t("licenseNotice.gitTitle")}</h3>
+									<p>{t("licenseNotice.gitDescription")}</p>
+									<div class="license-notice-links">
+										<Link
+											href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
+											target="_blank"
+											rel="noreferrer"
+										>
+											{t("licenseNotice.readGpl2")}
+										</Link>
+										<Link
+											href="https://github.com/git-for-windows/git"
+											target="_blank"
+											rel="noreferrer"
+										>
+											{t("licenseNotice.gitSource")}
+										</Link>
+									</div>
+								</section>
+							</Show>
+							<Checkbox
+								class="license-notice-checkbox"
+								checked={workflow.licenseConfirmed()}
+								onChange={workflow.setLicenseConfirmed}
+							>
+								<Checkbox.Input />
+								<Checkbox.Control class="license-notice-checkbox-control">
+									<Checkbox.Indicator>✓</Checkbox.Indicator>
+								</Checkbox.Control>
+								<Checkbox.Label>
+									{props.platform === "win32"
+										? t("licenseNotice.confirmWindows")
+										: t("licenseNotice.confirmBear")}
+								</Checkbox.Label>
+							</Checkbox>
+							<div class="intro-actions">
+								<Button
+									type="button"
+									data-variant="primary"
+									disabled={!workflow.licenseConfirmed()}
+									onClick={workflow.completeLicenseNotice}
+								>
+									{t("licenseNotice.continue")}
+								</Button>
+							</div>
+						</article>
+					</Dialog.Content>
+				</Dialog>
+			</Show>
 			<Show
 				when={
 					store.setupLoadError &&

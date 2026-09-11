@@ -71,7 +71,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());
 		await waitFor(() => expect(providerList).toHaveBeenCalled());
 		expect(
-			await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
+			await screen.findByRole("dialog", { name: zhCN.licenseNotice.dialogLabel }),
 		).toBeInTheDocument();
 	});
 

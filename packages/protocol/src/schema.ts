@@ -1706,6 +1706,10 @@ export const SettingsSetRequest = z.strictObject({
 export const SystemOnboardingCompleteModelRequest = z.strictObject({
 	reply: ModelRoute,
 	vision: VisionModelDefault,
+	licensesAcknowledged: z.strictObject({
+		bear: z.literal("GPL-3.0-only"),
+		gitForWindows: z.literal("GPL-2.0-only").optional(),
+	}),
 });
 export const SystemOnboardingCompleteModelResponse = z.strictObject({
 	settings: SettingsData,

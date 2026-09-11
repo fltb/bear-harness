@@ -105,6 +105,7 @@ async function configureConversationModel(runtime: HostRuntime, providerId = "co
 	await data(runtime, "systemOnboarding.completeModel", {
 		reply: { providerId, modelId: "test-model" },
 		vision: { mode: "auto" },
+		licensesAcknowledged: { bear: "GPL-3.0-only" },
 	});
 }
 

@@ -72,4 +72,9 @@ const client: CompanionClient = createCompanionClient({
 		window.bearDesktop.transport.invoke(endpoint.channel, request),
 });
 
-render(() => <CompanionApp product={productConfig} client={client} />, root);
+render(
+	() => (
+		<CompanionApp product={productConfig} client={client} platform={window.bearDesktop.platform} />
+	),
+	root,
+);

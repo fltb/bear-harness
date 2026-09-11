@@ -12,6 +12,37 @@ import {
 } from "../src/schema.js";
 
 describe("protocol authority boundaries", () => {
+	it("requires exact first-run open-source license acknowledgements", () => {
+		const request = {
+			reply: { providerId: "provider", modelId: "reply" },
+			vision: { mode: "auto" as const },
+		};
+		expect(RPC.systemOnboarding.completeModel.request.safeParse(request)).toMatchObject({
+			success: false,
+		});
+		expect(
+			RPC.systemOnboarding.completeModel.request.safeParse({
+				...request,
+				licensesAcknowledged: { bear: "GPL-3.0-only" },
+			}),
+		).toMatchObject({ success: true });
+		expect(
+			RPC.systemOnboarding.completeModel.request.safeParse({
+				...request,
+				licensesAcknowledged: {
+					bear: "GPL-3.0-only",
+					gitForWindows: "GPL-2.0-only",
+				},
+			}),
+		).toMatchObject({ success: true });
+		expect(
+			RPC.systemOnboarding.completeModel.request.safeParse({
+				...request,
+				licensesAcknowledged: { bear: "accepted" },
+			}),
+		).toMatchObject({ success: false });
+	});
+
 	it("does not expose Host-owned conversation memory mutation endpoints", () => {
 		const channels = JSON.stringify(RPC);
 		for (const obsolete of [

@@ -36,6 +36,10 @@ async function completeLiveOnboarding(rpc: LiveRpc, context: string): Promise<vo
 	await rpc("systemOnboarding.completeModel", {
 		reply: { providerId: configuredProviderId, modelId },
 		vision: { mode: "auto" },
+		licensesAcknowledged: {
+			bear: "GPL-3.0-only",
+			...(process.platform === "win32" ? { gitForWindows: "GPL-2.0-only" } : {}),
+		},
 	});
 	await rpc("systemOnboarding.completeEmbedding", { choice: "none" });
 	await rpc("model.defaults.completeOnboarding", {});
