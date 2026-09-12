@@ -1,0 +1,14 @@
+format_version: 1
+language: zh-CN
+sources:
+  - id: reference
+    title: Test reference
+    path: reference.txt
+    kind: reference
+entities: []
+modules:
+  - id: reference_root
+    kind: root
+    title: Reference
+    bindings:
+      - source: reference

@@ -60,9 +60,6 @@ export const en = {
 			"Separate character instructions, not product rules. Persona and prompt changes apply when a session next reopens and reloads the package; the current response is not interrupted.",
 		revealPackage: "Open in system folder",
 		promptFields: {
-			description: "Additional description (optional)",
-			personality: "Personality",
-			scenario: "Scenario",
 			system_prompt: "System prompt",
 		},
 		storageTab: "Role storage",

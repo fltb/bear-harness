@@ -1,0 +1,112 @@
+# The id matches productConfig.defaultCharacterId; all content is test-owned.
+format_version: 1
+id: jizhou
+name: Test Character
+language: zh-CN
+character:
+  subtitle: Runtime test fixture
+  greeting: Hello.
+  composer_placeholder: Message
+  correction:
+    trigger_label: Correct
+    reason_group_label: Reason
+    presets:
+      - id: voice
+        label: Voice
+    custom_label: Custom
+    custom_placeholder: Describe the correction
+  work_presentation:
+    labels:
+      proposal: Proposal
+      running: Running
+      needs_user: Confirm
+      interrupted: Paused
+      completed: Result
+      failed: Failed
+      steer_placeholder: Instructions
+      interrupt: Pause
+      resume: Resume
+      approve: Approve
+      reject: Reject
+      artifact_open: Open
+      artifact_reveal: Reveal
+  first_meeting:
+    step_label: Setup {step}/{total}
+    dialog_label: Setup
+    error_prefix: Required
+    steps:
+      - id: welcome
+        kind: acknowledge
+        heading: Welcome
+        body: Set up this test character.
+        submit_label: Continue
+      - id: nickname
+        kind: text
+        heading: Name
+        body: Choose your name.
+        answer_key: nickname
+        input_label: Name
+        input_placeholder: Name
+        min_length: 1
+        max_length: 64
+        submit_label: Save
+        effects:
+          - type: identity.nickname
+behavior:
+  identity:
+    summary: A character used only for runtime contract tests.
+    invariants: [Respect the user's decisions.]
+    knowledge_boundaries: [Use supplied facts.]
+  agency:
+    never: [Invent tool results.]
+    when_uncertain: [Ask for missing information.]
+  interaction: Respond directly.
+  examples:
+    - user: Hello
+      assistant: Hello.
+system_prompt: Follow the test conversation.
+state_schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  additionalProperties: false
+  properties:
+    relationship:
+      type: object
+      x-scope: global
+      additionalProperties: false
+      properties:
+        affinity: { type: number, default: 0 }
+        summary: { type: string, default: "" }
+    story:
+      type: object
+      x-scope: conversation
+      additionalProperties: false
+      properties:
+        active: { type: boolean, default: false }
+        summary: { type: string, default: "" }
+media:
+  - id: sample
+    kind: image
+    label: Sample
+    description: Test image.
+    use_when: When requested.
+    asset: assets/avatar.png
+scenes:
+  - id: study
+    label: Room
+    background: null
+    description: A test room.
+    use_when: During ordinary conversation.
+visual:
+  default_scene: study
+  default_expression: calm
+  avatar: assets/avatar.png
+  expressions:
+    - id: calm
+      label: Calm
+      asset: assets/avatar.png
+      use_when: At rest.
+    - id: reflective
+      label: Reflective
+      asset: assets/avatar.png
+      use_when: While thinking.

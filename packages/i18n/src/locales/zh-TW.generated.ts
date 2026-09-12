@@ -61,9 +61,6 @@ export const zhTW = {
 		"systemPromptHint": "獨立的角色系統提示詞，不修改產品底層規則。人設與提示詞會在會話下次重新開啟、載入角色包時生效；不會中斷當前回覆。",
 		"revealPackage": "在系統資料夾中開啟",
 		"promptFields": {
-			"description": "補充描述（可選）",
-			"personality": "性格",
-			"scenario": "情境",
 			"system_prompt": "系統提示詞"
 		},
 		"storageTab": "角色包儲存",

@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CredentialVault, createHostRuntime, type HostRuntime } from "../src/index.js";
 import type { CompanionStorageRegistry } from "../src/storage/companion-storage.js";
 
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const roots: string[] = [];
 const vault: CredentialVault = {
 	securityLevel: "session",

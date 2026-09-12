@@ -64,7 +64,9 @@ const StateArgs = z.discriminatedUnion("action", [
 			.array(CharacterStateChange)
 			.min(1)
 			.max(50)
-			.describe("Path/value replacements. Paths start with /character or /display."),
+			.describe(
+				"Path/value replacements: Character uses /character/<declared field path>; visible expression uses /display/expressionId and scene uses /display/sceneId. Display values are ids from host_display_catalog. Multiple changes may be submitted together.",
+			),
 	}),
 ]);
 const MediaArgs = z.strictObject({ id: z.string().min(1).max(64) });
@@ -139,7 +141,7 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 			"Companion state",
 			StateArgs,
 			(args) => state(input, args),
-			"Read or update Character and Display fields.",
+			"Read current Character and Display, or persist updates for this conversation. To change the visible expression or scene, use action:update with /display/expressionId or /display/sceneId and a declared catalog id. A successful update applies the visible change; read is only needed when the current context is insufficient.",
 		),
 		host_media: tool(
 			"host_media",

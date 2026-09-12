@@ -356,11 +356,11 @@ if (Number.isFinite(soakMinutes) && soakMinutes > 0)
 			if (cycle % 100 === 2) {
 				await markOperation(page, "media:open");
 				// test-quality-allow last: repeated historical media cards share product-owned accessible copy; the newest rendered card belongs to this cycle
-				const mediaCard = page.getByRole("region", { name: "极昼的来处" }).last();
+				const mediaCard = page.getByRole("region", { name: "极光书桌" }).last();
 				const trigger = mediaCard.getByRole("button", { name: zhCN.messages.openMedia });
 				await expect(trigger).toBeVisible({ timeout: 15_000 });
 				await trigger.click();
-				const viewer = page.getByRole("dialog", { name: "极昼的来处" });
+				const viewer = page.getByRole("dialog", { name: "极光书桌" });
 				await expect(viewer).toBeVisible();
 				await markOperation(page, "media:close");
 				await viewer.getByRole("button", { name: zhCN.messages.closeMedia }).click();

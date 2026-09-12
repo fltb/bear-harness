@@ -388,14 +388,6 @@ export const CharacterMedia = z.discriminatedUnion("kind", [
 	}),
 ]);
 
-export const CharacterPrompt = z.strictObject({
-	description: z.string().max(65_536),
-	personality: z.string().max(65_536),
-	scenario: z.string().max(65_536),
-	system_prompt: z.string().max(65_536),
-});
-export type CharacterPrompt = z.infer<typeof CharacterPrompt>;
-
 export const CharacterDisplay = z
 	.strictObject({
 		id: z.string().min(1).max(64),
@@ -423,7 +415,7 @@ export const CharacterDisplay = z
 			work_presentation: CharacterWorkPresentation.optional(),
 			first_meeting: CharacterOnboardingFlow,
 		}),
-		prompt: CharacterPrompt,
+		system_prompt: z.string().max(65_536),
 		theme: CharacterTheme,
 		scenes: z
 			.array(

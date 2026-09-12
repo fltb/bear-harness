@@ -17,7 +17,7 @@ import {
 
 const roots: string[] = [];
 const runtimes: HostRuntime[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const silentLogger = { debug: () => undefined, warn: () => undefined };
 const vault: CredentialVault = {
 	securityLevel: "session",

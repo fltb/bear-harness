@@ -26,7 +26,7 @@ import {
 import { CompanionStorageRegistry } from "../src/storage/companion-storage.js";
 
 const roots: string[] = [];
-const characterSeedRoot = resolve(import.meta.dirname, "../../../config/characters");
+const characterSeedRoot = resolve(import.meta.dirname, "./fixtures/characters");
 
 function root(): string {
 	const value = mkdtempSync(join(tmpdir(), "bear-bootstrap-recovery-"));

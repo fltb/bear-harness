@@ -95,7 +95,6 @@ export type CharacterDisplay = z.infer<typeof schema.CharacterDisplay>;
 export type CharacterTheme = z.infer<typeof schema.CharacterTheme>;
 export type CharacterOnboardingFlow = z.infer<typeof schema.CharacterOnboardingFlow>;
 export type CharacterActivateRequest = z.infer<typeof schema.CharacterActivateRequest>;
-export type CharacterPrompt = z.infer<typeof schema.CharacterPrompt>;
 export type CharacterPackageDocument = z.infer<typeof schema.CharacterPackageDocument>;
 export type CharacterPackageGetRequest = z.infer<typeof schema.CharacterPackageGetRequest>;
 export type CharacterPackageUpdateRequest = z.infer<typeof schema.CharacterPackageUpdateRequest>;

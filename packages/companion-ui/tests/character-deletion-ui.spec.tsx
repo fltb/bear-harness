@@ -18,11 +18,7 @@ const document = {
   examples:
     - user: Hello
       assistant: Hi
-prompt:
-  description: Test description
-  personality: Test personality
-  scenario: Test scenario
-  system_prompt: Test system prompt
+system_prompt: Test system prompt
 media: []
 `,
 	sha256: "a".repeat(64),
@@ -123,8 +119,7 @@ describe("character physical deletion UI", () => {
 		expect(sha256).toBe(document.sha256);
 		expect(next.behavior.identity.summary).toBe("Changed identity");
 		expect(next.behavior.examples).toEqual([{ user: "Hello", assistant: "Updated answer" }]);
-		expect(next.prompt.system_prompt).toBe("Independent prompt");
-		expect(next.prompt.description).toBe("Test description");
+		expect(next.system_prompt).toBe("Independent prompt");
 		expect(next.media).toEqual([]);
 		expect(parse(document.yaml).behavior.identity.summary).toBe("Canonical package identity");
 	});
@@ -156,9 +151,6 @@ describe("character physical deletion UI", () => {
 				screen.getByRole("group", { name: zhCN.currentRolePackage.systemPromptTitle }),
 			).getByRole("textbox", { name: zhCN.currentRolePackage.promptFields.system_prompt }),
 		).toHaveValue("Test system prompt");
-		expect(
-			screen.getByRole("textbox", { name: zhCN.currentRolePackage.promptFields.description }),
-		).toHaveValue("Test description");
 	});
 
 	it("keeps default-package protection separate from runtime deletion", () => {

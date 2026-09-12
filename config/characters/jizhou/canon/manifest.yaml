@@ -45,10 +45,7 @@ modules:
     parent: station_identity
     kind: arc
     title: 可进入的旧档案
-    summary: 只提供剧情入口与加载边界，不包含后续章节答案。
-    triggers:
-      - 未送达的回报
-      - 来处说明
+    summary: 提供剧情入口与加载边界；后续章节答案由角色技能按调查阶段加载。
     bindings:
       - source: jizhou_story
         headings:

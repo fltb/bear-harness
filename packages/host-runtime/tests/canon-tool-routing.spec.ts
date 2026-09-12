@@ -86,9 +86,9 @@ describe("scoped Canon tool search", () => {
 	});
 
 	it("routes a package module through the actual Host tool and rejects misspellings", async () => {
-		const loaded = new CharacterLoader(
-			resolve(import.meta.dirname, "../../../config/characters"),
-		).load("jizhou");
+		const loaded = new CharacterLoader(resolve(import.meta.dirname, "./fixtures/characters")).load(
+			"jizhou",
+		);
 		if (!loaded) throw new Error("Shipped package required");
 		const tools = registerHostTools({
 			character: () => ({ ...loaded, canon: fixture }),

@@ -11,7 +11,7 @@ import type { SystemDatabase } from "../src/storage/database.js";
 
 const roots: string[] = [];
 const runtimes: HostRuntime[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const vault: CredentialVault = {
 	securityLevel: "os",
 	isEncryptionAvailable: () => true,

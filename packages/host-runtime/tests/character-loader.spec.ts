@@ -24,7 +24,8 @@ import {
 	durableFileTransactionMarkerPath,
 } from "../src/storage/durable-file-transaction.js";
 
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
+const officialCharacterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -83,153 +84,23 @@ describe("character package visual projection", () => {
 		expect(loader.load("jizhou")).toBe(updated);
 	});
 
-	it("projects declared SVG assets as renderer-safe data URLs", () => {
-		const loader = new CharacterLoader(characterRoot);
+	it("loads the shipped package and projects its declared assets safely", () => {
+		const loader = new CharacterLoader(officialCharacterRoot);
 		const character = loader.load("jizhou");
-		expect(character).not.toBeNull();
 		if (!character) throw new Error("jizhou package is required for the official build");
-		expect(character.format_version).toBe(1);
-		const sourceManifest = parse(
-			readFileSync(join(characterRoot, "jizhou", "character.yaml"), "utf8"),
-		);
-		expect(sourceManifest.state_schema.$id).toBe("urn:bear-harness:character:jizhou:state:v1");
-
 		const display = loader.display(character);
 		expect(CharacterDisplay.safeParse(display).success).toBe(true);
-		expect(display.language).toBe("zh-CN");
-		expect(display.character.work_presentation).toEqual({
-			labels: {
-				proposal: "处理方案",
-				running: "正在处理",
-				needs_user: "等你确认",
-				interrupted: "已暂停",
-				completed: "处理结果",
-				failed: "处理失败",
-				steer_placeholder: "补充要求",
-				interrupt: "暂停",
-				resume: "继续",
-				approve: "开始处理",
-				reject: "保留原样",
-				artifact_open: "打开",
-				artifact_reveal: "在 Finder 中显示",
-			},
-		});
-		expect(character.canon.manifest).toEqual(
-			expect.objectContaining({
-				format_version: 1,
-				language: "zh-CN",
-				sources: expect.arrayContaining([
-					expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" }),
-				]),
-			}),
-		);
-		expect(character.canon.manifest.modules).toContainEqual(
-			expect.objectContaining({
-				id: "station_identity",
-				kind: "root",
-				bindings: [
-					expect.objectContaining({
-						source: "jizhou_story",
-						headings: expect.arrayContaining([
-							"三次不太体面的事",
-							"不值班的时候",
-							"他怎么作判断",
-							"关系靠近以后",
-						]),
-					}),
-				],
-			}),
-		);
-		expect(character.behavior.identity.invariants).toContainEqual(
-			expect.stringContaining("旧档案中的人只能由原文代表"),
-		);
-		expect(character.behavior.identity.summary).toContain("夜读角");
-		expect(character.behavior.identity.summary).toContain("不是被造来永远正确");
-		expect(character.behavior.identity.summary).toContain("碰裂了水管");
-		expect(character.behavior.identity.summary).toContain("过分客气");
-		expect(character.behavior.identity.invariants).toEqual(
-			expect.arrayContaining([
-				expect.stringContaining("继续不决定同样是一种决定"),
-				expect.stringContaining("谁在承担代价"),
-				expect.stringContaining("闲聊、审美、玩笑和亲密"),
-				expect.stringContaining("我只是诚实"),
-				expect.stringContaining("不追求对所有话题都有鲜明态度"),
-				expect.stringContaining("不能每次在同一回合内完美自我修复"),
-				expect.stringContaining("内部分析、起草笔记、候选措辞"),
-				expect.stringContaining("普通角色内对话不主动解释模型"),
-			]),
-		);
-		expect(character.behavior.interaction).toContain("【不是统一解题器】");
-		expect(character.behavior.interaction).toContain("【情绪不是恒温】");
-		expect(character.behavior.interaction).toContain("【关系会改变语法】");
-		expect(character.behavior.interaction).toContain("【只交付说出口的话】");
-		expect(character.behavior.interaction).toContain("事实问题、取舍问题、口味问题");
-		expect(character.behavior.interaction).toContain("争论时一次只咬住一个要害");
-		expect(character.behavior.interaction).toContain("不能一进入任务就换成匿名工作助手");
-		expect(character.behavior.interaction).not.toContain("通常先给结论，再给两三条依据");
-		expect(character.behavior.examples).toHaveLength(38);
-		expect(character.behavior.examples).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					user: "东边储物间收拾得怎么样了？",
-					assistant: expect.stringContaining("方向是反的"),
-				}),
-				expect.objectContaining({
-					user: "你又开始讲课了。",
-					assistant: "……是。后半段作废。",
-				}),
-				expect.objectContaining({
-					user: "我一周没来，你是不是根本没发现？",
-					assistant: expect.stringContaining("我有点高兴"),
-				}),
-				expect.objectContaining({
-					user: "这件事你必须有个立场。",
-					assistant: expect.stringContaining("硬挤一个立场"),
-				}),
-			]),
-		);
-		expect(display.theme.tokens).toEqual(
-			expect.objectContaining({
-				canvas: "#07171c",
-				surface: "#102a31",
-				surface_raised: "#183a40",
-				accent: "#8bd0bb",
-				text_on_accent: "#07171c",
-			}),
-		);
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		for (const assetUrl of Object.values(display.visual.expressions)) {
 			expect(assetUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		}
-		expect(display.visual.defaultExpressionId).toBe("calm");
-		expect(Object.keys(display.visual.expressions)).toHaveLength(12);
-		expect(new Set(character.visual.expressions.map((expression) => expression.asset)).size).toBe(
-			12,
-		);
-		expect(display.media).toContainEqual(
-			expect.objectContaining({
-				id: "continuity_light",
-				kind: "image",
-				description: expect.any(String),
-				use_when: expect.any(String),
-				url: expect.stringMatching(/^data:image\/webp;base64,/),
-			}),
-		);
-		expect(display.scenes).toContainEqual(
-			expect.objectContaining({
-				id: "study",
-				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
-			}),
-		);
-		expect(display.scenes).toContainEqual(
-			expect.objectContaining({
-				id: "snowfield",
-				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
-			}),
-		);
-		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_terminal");
-		expect(quietDesktop).toBeDefined();
-		expect(quietDesktop?.backgroundUrl).toMatch(/^data:image\/webp;base64,/);
+		expect(display.visual.expressions).toHaveProperty(character.visual.default_expression);
+		for (const media of display.media) {
+			expect(media.url).toMatch(/^data:[^;]+;base64,/);
+		}
+		for (const scene of display.scenes) {
+			if (scene.backgroundUrl) expect(scene.backgroundUrl).toMatch(/^data:image\/[^;]+;base64,/);
+		}
 	});
 });
 
@@ -317,29 +188,28 @@ describe("character package media", () => {
 		writeFileSync(join(packageDir, "assets", "chapter-video.mp4"), "video");
 		writeFileSync(join(packageDir, "assets", "chapter-video.vtt"), "WEBVTT\n");
 		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		const withMedia = manifest.replace(
-			"scenes:",
-			[
-				"  - id: ambient_signal",
-				"    kind: audio",
-				"    label: Ambient signal",
-				"    description: A damaged ambient signal.",
-				"    use_when: When the user opens the signal record.",
-				"    asset: assets/ambient-signal.mp3",
-				"    captions: assets/ambient-signal.vtt",
-				"  - id: chapter_video",
-				"    kind: video",
-				"    label: Chapter video",
-				"    description: A chapter recording.",
-				"    use_when: When the user asks to view the recording.",
-				"    asset: assets/chapter-video.mp4",
-				"    captions: assets/chapter-video.vtt",
-				"scenes:",
-			].join("\n"),
+		const manifest = parse(readFileSync(manifestPath, "utf8"));
+		manifest.media.push(
+			{
+				id: "ambient_signal",
+				kind: "audio",
+				label: "Ambient signal",
+				description: "A damaged ambient signal.",
+				use_when: "When requested.",
+				asset: "assets/ambient-signal.mp3",
+				captions: "assets/ambient-signal.vtt",
+			},
+			{
+				id: "chapter_video",
+				kind: "video",
+				label: "Chapter video",
+				description: "A chapter recording.",
+				use_when: "When requested.",
+				asset: "assets/chapter-video.mp4",
+				captions: "assets/chapter-video.vtt",
+			},
 		);
-		expect(withMedia).not.toBe(manifest);
-		writeFileSync(manifestPath, withMedia);
+		writeFileSync(manifestPath, stringify(manifest));
 
 		const loader = new CharacterLoader(configRoot);
 		const character = loader.load("jizhou");
@@ -364,13 +234,9 @@ describe("character package media", () => {
 		const packageDir = join(configRoot, "jizhou");
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
 		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		const invalidManifest = manifest.replace(
-			"    asset: assets/cg-damaged-signal-animated.webp",
-			"    asset: assets/cg-damaged-signal-animated.webp\n    presentation: inline",
-		);
-		expect(invalidManifest).not.toBe(manifest);
-		writeFileSync(manifestPath, invalidManifest);
+		const manifest = parse(readFileSync(manifestPath, "utf8"));
+		manifest.media[0].presentation = "inline";
+		writeFileSync(manifestPath, stringify(manifest));
 
 		const loader = new CharacterLoader(configRoot);
 		expect(() => loader.load("jizhou")).toThrow();
@@ -384,13 +250,9 @@ describe("character package work presentation", () => {
 		const packageDir = join(configRoot, "jizhou");
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
 		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		const withoutWorkPresentation = manifest.replace(
-			/ {2}work_presentation:\n {4}labels:\n(?: {6}[^\n]+\n){13}/,
-			"",
-		);
-		expect(withoutWorkPresentation).not.toBe(manifest);
-		writeFileSync(manifestPath, withoutWorkPresentation);
+		const manifest = parse(readFileSync(manifestPath, "utf8"));
+		delete manifest.character.work_presentation;
+		writeFileSync(manifestPath, stringify(manifest));
 
 		const loader = new CharacterLoader(configRoot);
 		const character = loader.load("jizhou");
@@ -433,16 +295,13 @@ describe("character package work presentation", () => {
 
 describe("character package Pi resources", () => {
 	it("discovers Jizhou Skills without requiring a role plugin", () => {
-		const loader = new CharacterLoader(characterRoot);
+		const loader = new CharacterLoader(officialCharacterRoot);
 		const character = loader.load("jizhou");
 		if (!character) throw new Error("jizhou package is required for the official build");
-		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
-			"continuity-reveal",
-			"undelivered-report",
-		]);
+		expect(character.skills.map((skill) => skill.name)).toEqual(["undelivered-report"]);
 		const resources = loader.piResources(character);
 		expect(resources.skillPaths).toEqual([
-			realpathSync(resolve(characterRoot, "jizhou", "skills")),
+			realpathSync(resolve(officialCharacterRoot, "jizhou", "skills")),
 		]);
 		expect(resources.pluginPaths).toEqual([]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);

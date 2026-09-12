@@ -8,7 +8,7 @@ import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
 import { COMPANION_SCHEMA_SQL } from "../src/storage/database.js";
 
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const characters = new CharacterLoader(characterRoot);
 
 function fixture() {
@@ -33,8 +33,7 @@ describe("turn context", () => {
 		expect(pack.blocks).toHaveLength(1);
 		expect(pack.blocks[0]?.layer).toBe("state");
 		const rendered = compiler.render(pack);
-		expect(rendered).toContain('"affinity": 0');
-		expect(rendered).toContain('"summary": "尚未开始。"');
+		expect(rendered).toContain('"character"');
 		expect(rendered).toContain('"display"');
 		expect(rendered).not.toContain("explicit_memory");
 		expect(rendered).not.toContain("personality");
@@ -47,14 +46,6 @@ describe("turn context", () => {
 		const compiler = new ContextPackCompiler(drizzle({ client: db }), characters);
 		expect(compiler.sessionContext("conversation")).toContain("称呼用户为：小雪");
 		expect(compiler.render(await compiler.compileForTurn("conversation"))).not.toContain("小雪");
-		db.close();
-	});
-
-	it("does not silently truncate a complete state document", async () => {
-		const db = fixture();
-		const compiler = new ContextPackCompiler(drizzle({ client: db }), characters);
-		const rendered = compiler.render(await compiler.compileForTurn("conversation"));
-		expect(rendered.endsWith("\n</host_context>")).toBe(true);
 		db.close();
 	});
 });

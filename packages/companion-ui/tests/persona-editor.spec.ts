@@ -15,9 +15,7 @@ behavior:
   examples:
     - user: Hello
       assistant: Hi
-prompt:
-  description: ''
-  system_prompt: Independent instructions
+system_prompt: Independent instructions
 scenes: [{id: snow}]
 state_schema: {type: object}
 `;
@@ -35,13 +33,13 @@ describe("persona package editing", () => {
 		expect(next.behavior.identity.summary).toBe("Edited identity");
 		expect(next.behavior.agency.never).toEqual(["Do not impersonate", "Do not invent"]);
 		expect(next.behavior.examples).toEqual(draft.examples);
-		expect(next.prompt).toEqual(original.prompt);
+		expect(next.system_prompt).toEqual(original.system_prompt);
 		expect(next.scenes).toEqual(original.scenes);
 		expect(next.state_schema).toEqual(original.state_schema);
 		expect(output).toContain("# package comment");
 	});
 	it("does not synthesize behavior when saving unrelated prompt edits", () => {
-		const input = "prompt: {system_prompt: Hello}\n";
+		const input = "system_prompt: Hello\n";
 		expect(parse(writePersona(input, readPersona(input)))).toEqual(parse(input));
 	});
 	it("rejects malformed source instead of silently rewriting it", () => {

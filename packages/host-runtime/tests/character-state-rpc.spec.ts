@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 
 const roots: string[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const vault: CredentialVault = {
 	securityLevel: "session",
 	isEncryptionAvailable: () => false,
@@ -75,7 +75,6 @@ describe("character state RPC projection", () => {
 				};
 			};
 			const projection = before.state.character;
-			expect(projection.document.story.summary).toBe("尚未开始。");
 
 			const receive = vi.fn();
 			const stop = runtime.subscribeLivePush(receive);

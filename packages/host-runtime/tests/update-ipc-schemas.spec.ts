@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostRuntime, type HostRuntimeOptions } from "../src/index.js";
 
 const roots: string[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const vault = {
 	isEncryptionAvailable: () => false,
 	encryptString: (value: string) => Buffer.from(value),

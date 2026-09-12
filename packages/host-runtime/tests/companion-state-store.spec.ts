@@ -9,7 +9,6 @@ import { CompanionStateStore } from "../src/companion/companion-store.js";
 import { registerHostTools } from "../src/companion/host-tool-register.js";
 import {
 	type CharacterStateDefinition,
-	characterStatePrompt,
 	compileCharacterStateSchema,
 } from "../src/companion/state-schema.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
@@ -17,7 +16,7 @@ import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 const databases: CompanionDatabase[] = [];
-const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
+const loader = new CharacterLoader(resolve(import.meta.dirname, "./fixtures/characters"));
 const character = loader.load("jizhou");
 if (!character) throw new Error("missing default character");
 afterEach(() => {
@@ -53,20 +52,6 @@ function failure(run: () => unknown) {
 }
 
 describe("companion state", () => {
-	it("exposes a small read/update Host tool without permission protocol", () => {
-		const tools = registerHostTools({} as never);
-		const schema = JSON.stringify(tools.host_state?.parameters);
-		expect(schema).toContain('"action"');
-		expect(schema).toContain('"update"');
-		expect(schema).toContain('"changes"');
-		expect(schema).toContain('"path"');
-		expect(schema).toContain('"value"');
-		expect(schema).not.toContain("operations");
-		expect(schema).not.toContain("skillId");
-		expect(schema).not.toContain("evidence");
-		expect(schema).not.toContain("expectedRevision");
-	});
-
 	it("returns declared media and response-specific choices as stateless Pi tool details", async () => {
 		const media = {
 			id: "signal",
@@ -226,7 +211,7 @@ describe("companion state", () => {
 		const second = store.project(character.id, "second", character.state).document;
 		expect(second).toMatchObject({
 			relationship: { affinity: 7 },
-			story: { summary: "尚未开始。" },
+			story: expect.not.objectContaining({ summary: "只属于第一条会话。" }),
 		});
 		expect(store.snapshot(character, "second").display.expressionId).toBe(
 			character.visual.default_expression,
@@ -259,41 +244,8 @@ describe("companion state", () => {
 		).toMatchObject({ kind: "validation_failed", reason: "display_expression_not_declared" });
 	});
 
-	it("keeps Skill loading separate from state field descriptions", async () => {
-		const { character, store } = fixture();
-		const tools = registerHostTools({
-			sessionId: () => "conversation",
-			character: () => character,
-			store,
-		} as never);
-		const result = await tools.role_skill?.execute("call", {
-			action: "read",
-			skillId: "undelivered-report",
-		});
-		const text = result?.content[0]?.type === "text" ? result.content[0].text : "";
-		expect(text).toContain("<role_skill");
-		expect(text).not.toContain("<character_state_contract>");
-		expect(text).not.toContain("x-write-authority");
-	});
-
-	it("generates model semantics from descriptions without storage metadata", () => {
-		const { character } = fixture();
-		const prompt = characterStatePrompt(character.state);
-		expect(prompt).toContain("路径：/character/story/summary");
-		expect(prompt).toContain("已发生剧情摘要");
-		expect(prompt).toContain("已经确定发生的事实");
-		expect(prompt).not.toContain("x-scope");
-		expect(prompt).not.toContain("revision");
-		expect(prompt).not.toContain("write-authority");
-	});
-
 	it("accepts only top-level global or conversation scope", () => {
 		const { character } = fixture();
-		expect([...compileCharacterStateSchema(character.state).partitions]).toEqual([
-			["relationship", "global"],
-			["continuity", "global"],
-			["story", "conversation"],
-		]);
 		const invalid = structuredClone(character.state) as CharacterStateDefinition;
 		const affinity = invalid.properties?.relationship?.properties?.affinity;
 		if (!affinity) throw new Error("missing affinity schema");

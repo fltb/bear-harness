@@ -17,7 +17,7 @@ import type { LocalEmbeddingAcquisitionOptions } from "../src/memory/local-embed
 import type { CompanionDatabase, SystemDatabase } from "../src/storage/database.js";
 
 const temporaryDirectories: string[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const vault: CredentialVault = {
 	securityLevel: "session",
 	isEncryptionAvailable: () => false,

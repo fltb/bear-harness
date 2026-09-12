@@ -1136,7 +1136,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .persona-examples {
-	@apply grid min-w-0 gap-4 border-0 p-0;
+	@apply grid min-w-0 gap-3 border-0 p-0;
 }
 
 .role-row > div:first-of-type,
@@ -1174,12 +1174,20 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .persona-examples > legend {
-	@apply mb-3 text-base font-medium;
+	@apply mb-2 text-base font-medium;
 }
 
 .persona-example {
-	@apply grid min-w-0 gap-3 rounded-xl border p-4;
+	@apply grid min-w-0 gap-2 rounded-xl border p-3;
 	border-color: var(--line-glass);
+}
+
+.persona-example .prompt-field {
+	@apply gap-1;
+}
+
+.persona-example .prompt-textarea {
+	@apply min-h-16 py-2 leading-snug;
 }
 
 .nav-item-wrap .nav-item > span {

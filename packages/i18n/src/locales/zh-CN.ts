@@ -57,9 +57,6 @@ export const zhCN = {
 			"独立的角色系统提示词，不修改产品底层规则。人设与提示词会在会话下次重新打开、加载角色包时生效；不会中断当前回复。",
 		revealPackage: "在系统文件夹中打开",
 		promptFields: {
-			description: "补充描述（可选）",
-			personality: "性格",
-			scenario: "情境",
 			system_prompt: "系统提示词",
 		},
 		storageTab: "角色包存储",

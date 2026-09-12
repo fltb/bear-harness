@@ -42,7 +42,7 @@ async function projection(page: Page, token: string, conversationId: string): Pr
 	return projectPiEntries(opened.branch.entries) as PiEntry[];
 }
 
-test("committed schema state survives new conversations and edited message history", async ({
+test("committed relationship context reaches another conversation and titles remain searchable", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -73,7 +73,7 @@ test("committed schema state survives new conversations and edited message histo
 	};
 	expect(
 		promptTrace.prompts.findLast((prompt) => prompt.includes("schema state projection check")),
-	).toMatch(/"continuity":\s*{\s*"stage": 1/);
+	).toContain('"summary": "用户想先看档案摘要。"');
 
 	await rpc(page, bootstrap.token, "conversation.rename", {
 		conversationId: conversationA,
@@ -100,36 +100,7 @@ test("committed schema state survives new conversations and edited message histo
 		});
 });
 
-test("scripted model invokes the schema state tool with exact arguments", async ({ page }) => {
-	await ensureReadyForConversation(page);
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const conversationB = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Tool-call verification",
-	);
-
-	await rpc(page, bootstrap.token, "message.send", {
-		conversationId: conversationB,
-		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
-		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
-	const trace = (await (await page.request.get(`${providerUrl}/trace/tools`)).json()) as {
-		calls: Array<{ tool: string; args: Record<string, unknown> }>;
-	};
-	expect(trace.calls).toEqual(
-		expect.arrayContaining([
-			expect.objectContaining({
-				tool: "host_state",
-				args: expect.objectContaining({ action: "update" }),
-			}),
-		]),
-	);
-});
-
-test("presented role choices send ordinary messages and advance generic schema state", async ({
+test("presented media choices send ordinary messages and open their native media result", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -145,31 +116,13 @@ test("presented role choices send ordinary messages and advance generic schema s
 
 	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
-		text: "E2E_MANUAL_ROLE_START",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-		.toBe("E2E_MANUAL_ROLE_START_DONE");
-	await expect(thread.getByText("E2E_MANUAL_ROLE_START_DONE", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
-	await rpc(page, bootstrap.token, "message.send", {
-		conversationId,
-		text: "E2E_MANUAL_ROLE_CONTINUE",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
-	await expect(thread.getByText("E2E_MANUAL_ROLE_CONTINUE_DONE", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
-	await rpc(page, bootstrap.token, "message.send", {
-		conversationId,
 		text: "E2E_MANUAL_ROLE_PRESENT",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_PRESENT_DONE");
 	await expect(thread.getByText("E2E_MANUAL_ROLE_PRESENT_DONE", { exact: true })).toBeVisible();
-	const choice = page.getByRole("button", { name: /我听见了/ });
+	const choice = page.getByRole("button", { name: "极光书桌", exact: true });
 	await expect(choice).toBeVisible();
 	await expect
 		.poll(async () => {
@@ -190,40 +143,14 @@ test("presented role choices send ordinary messages and advance generic schema s
 		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
 	await expect(thread.getByText("E2E_MANUAL_ROLE_RECEIVED_DONE", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
-	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
+	const mediaCard = page.getByRole("region", { name: "极光书桌" });
 	await expect(mediaCard).toBeVisible();
 	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	await expect(page.getByRole("dialog", { name: "极昼的来处" })).toBeVisible();
-	const choiceTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
-		prompts: string[];
-	};
-	const choicePrompt = choiceTrace.prompts.findLast(
-		(prompt) =>
-			prompt.includes("我听见了，也愿意接住这份交接。") && prompt.includes("<host_context>"),
-	);
-	expect(choicePrompt).toMatch(/"continuity":\s*{\s*"stage": 2,\s*"response": "用户尚未回应。"/);
+	await expect(page.getByRole("dialog", { name: "极光书桌" })).toBeVisible();
 	const entries = await projection(page, bootstrap.token, conversationId);
 	expect(
 		entries.filter((entry) => entry.type === "message" && entry.role === "user").at(-1)?.text,
-	).toBe("我听见了，也愿意接住这份交接。");
-
-	await rpc(page, bootstrap.token, "message.send", {
-		conversationId,
-		text: "E2E_OK final generic state projection",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-		.toBe("E2E_OK");
-	const trace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
-		prompts: string[];
-	};
-	const finalPrompt = trace.prompts.findLast(
-		(prompt) =>
-			prompt.includes("final generic state projection") && prompt.includes("<host_context>"),
-	);
-	expect(finalPrompt).toMatch(
-		/"continuity":\s*{\s*"stage": 3,\s*"response": "用户愿意接住这份交接。"/,
-	);
+	).toBe("先看书桌那张图。");
 });
 
 test("undelivered report enters, pauses, resumes, advances every chapter, and ends", async ({

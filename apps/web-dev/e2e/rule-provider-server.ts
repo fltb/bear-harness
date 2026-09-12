@@ -247,7 +247,7 @@ function reply(payload: {
 	if (waiting) {
 		const [, mode, holdId] = waiting;
 		if (mode === "TOOL" && !currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
 		return {
 			content: `E2E_WAIT_DONE_${holdId}\n`,
 			holdId,
@@ -345,30 +345,6 @@ function reply(payload: {
 			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
 		return { content: "E2E_STORY_END_CHECK_DONE\n" };
 	}
-	if (current.includes("E2E_MANUAL_ROLE_START")) {
-		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_state"))
-			return invoke("host_state", {
-				action: "update",
-				changes: [
-					{ path: "/character/continuity/stage", value: 1 },
-					{ path: "/display/sceneId", value: "quiet_terminal" },
-					{ path: "/display/expressionId", value: "reflective" },
-				],
-			});
-		return { content: "E2E_MANUAL_ROLE_START_DONE\n" };
-	}
-	if (current.includes("E2E_MANUAL_ROLE_CONTINUE")) {
-		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_state"))
-			return invoke("host_state", {
-				action: "update",
-				changes: [{ path: "/character/continuity/stage", value: 2 }],
-			});
-		return { content: "E2E_MANUAL_ROLE_CONTINUE_DONE\n" };
-	}
 	if (current.includes("E2E_MANUAL_ROLE_VISUAL")) {
 		if (!currentCalls.includes("role_skill"))
 			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
@@ -383,27 +359,21 @@ function reply(payload: {
 		return { content: "E2E_MANUAL_ROLE_VISUAL_DONE\n" };
 	}
 	if (current.includes("E2E_MANUAL_ROLE_PRESENT")) {
-		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
 		if (!currentCalls.includes("host_choices"))
 			return invoke("host_choices", {
-				prompt: "你想怎样回应？",
+				prompt: "先看哪一张？",
 				choices: [
-					{ label: "我听见了", message: "我听见了，也愿意接住这份交接。" },
-					{ label: "先放在这里", message: "我想先把这件事放在这里，安静一会儿。" },
+					{ label: "极光书桌", message: "先看书桌那张图。" },
+					{ label: "雪夜小路", message: "我想看看雪夜的小路。" },
 				],
 			});
 		return { content: "E2E_MANUAL_ROLE_PRESENT_DONE\n" };
 	}
-	if (current.includes("我听见了，也愿意接住这份交接。")) {
-		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
+	if (current.includes("先看书桌那张图。")) {
 		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
 				changes: [
-					{ path: "/character/continuity/stage", value: 3 },
-					{ path: "/character/continuity/response", value: "用户愿意接住这份交接。" },
 					{ path: "/display/sceneId", value: "study" },
 					{ path: "/display/expressionId", value: "warm" },
 				],
@@ -418,12 +388,12 @@ function reply(payload: {
 		: directMemoryTexts.find((value) => current.includes(value));
 	if (current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
 		if (currentCalls.includes("host_state"))
 			return { content: "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n" };
 		const args = {
 			action: "update",
-			changes: [{ path: "/character/continuity/stage", value: 1 }],
+			changes: [{ path: "/character/relationship/summary", value: "用户想先看档案摘要。" }],
 		};
 		appendBoundedTrace(
 			calls,

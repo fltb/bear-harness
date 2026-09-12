@@ -12,11 +12,6 @@ import {
 import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
 import { Button, Dialog, TextField } from "../ui/primitives.js";
 
-const PROMPT_FIELDS = ["description", "personality", "scenario", "system_prompt"] as const;
-type PromptField = (typeof PROMPT_FIELDS)[number];
-
-type PromptDraft = Record<PromptField, string>;
-
 type PluginTrust = {
 	origin: CharacterPackageDocument["origin"];
 	pluginHash: string;
@@ -55,18 +50,18 @@ export function CurrentRolePackageManager(props: {
 	const documentId = () => props.document()?.characterId ?? "";
 	const originalPersona = createMemo(() => readPersona(props.document()?.yaml ?? ""));
 	const [drafts, setDrafts] = createSignal<
-		Record<string, { prompt: PromptDraft; persona: PersonaDraft; baseSha256: string }>
+		Record<string, { system_prompt: string; persona: PersonaDraft; baseSha256: string }>
 	>({});
 	const draft = () => drafts()[documentId()];
 	const persona = () => draft()?.persona ?? originalPersona();
 	const updatePersona = (next: PersonaDraft) => {
 		const current = props.document();
-		if (!current || !current.writable || saving()) return;
+		if (!current?.writable || saving()) return;
 		setDrafts((all) => ({
 			...all,
 			[current.characterId]: {
 				baseSha256: draft()?.baseSha256 ?? current.sha256,
-				prompt: { ...prompt() },
+				system_prompt: prompt(),
 				persona: next,
 			},
 		}));
@@ -76,15 +71,9 @@ export function CurrentRolePackageManager(props: {
 			...persona(),
 			fields: { ...persona().fields, [field]: value },
 		});
-	const prompt = (): PromptDraft =>
-		draft()?.prompt ??
-		props.document()?.character.prompt ?? {
-			description: "",
-			personality: "",
-			scenario: "",
-			system_prompt: "",
-		};
-	const updatePrompt = (field: PromptField, value: string) => {
+	const prompt = (): string =>
+		draft()?.system_prompt ?? props.document()?.character.system_prompt ?? "";
+	const updatePrompt = (value: string) => {
 		const current = props.document();
 		if (!current) return;
 		setDrafts((drafts) => {
@@ -94,10 +83,7 @@ export function CurrentRolePackageManager(props: {
 				[current.characterId]: {
 					baseSha256: existing?.baseSha256 ?? current.sha256,
 					persona: existing?.persona ?? originalPersona(),
-					prompt: {
-						...(existing?.prompt ?? current.character.prompt),
-						[field]: value,
-					},
+					system_prompt: value,
 				},
 			};
 		});
@@ -114,7 +100,7 @@ export function CurrentRolePackageManager(props: {
 		const current = props.document();
 		return Boolean(
 			current &&
-				(PROMPT_FIELDS.some((field) => prompt()[field] !== current.character.prompt[field]) ||
+				(prompt() !== current.character.system_prompt ||
 					JSON.stringify(persona()) !== JSON.stringify(originalPersona())),
 		);
 	};
@@ -161,14 +147,14 @@ export function CurrentRolePackageManager(props: {
 				setParseError(yaml.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
 				return;
 			}
-			for (const field of PROMPT_FIELDS) yaml.setIn(["prompt", field], prompt()[field]);
+			yaml.set("system_prompt", prompt());
 			const next = await props.savePackage(String(yaml), draft()?.baseSha256 ?? current.sha256);
 			setDrafts((drafts) => ({
 				...drafts,
 				[next.characterId]: {
 					baseSha256: next.sha256,
 					persona: readPersona(next.yaml),
-					prompt: { ...next.character.prompt },
+					system_prompt: next.character.system_prompt,
 				},
 			}));
 		} catch (error) {
@@ -347,24 +333,6 @@ export function CurrentRolePackageManager(props: {
 									</TextField>
 								)}
 							</For>
-							<For each={PROMPT_FIELDS.filter((field) => field !== "system_prompt")}>
-								{(field) => (
-									<TextField
-										value={prompt()[field]}
-										disabled={!current().writable || saving()}
-										class="prompt-field"
-									>
-										<TextField.Label>
-											{t(`currentRolePackage.promptFields.${field}`)}
-										</TextField.Label>
-										<TextField.TextArea
-											class="prompt-textarea"
-											rows={4}
-											onInput={(event) => updatePrompt(field, event.currentTarget.value)}
-										/>
-									</TextField>
-								)}
-							</For>
 							<fieldset class="persona-examples">
 								<legend>{t("currentRolePackage.examplesTitle")}</legend>
 								<Index each={persona().examples}>
@@ -382,7 +350,7 @@ export function CurrentRolePackageManager(props: {
 														</TextField.Label>
 														<TextField.TextArea
 															class="prompt-textarea"
-															rows={3}
+															rows={2}
 															onInput={(event) =>
 																updatePersona({
 																	...persona(),
@@ -431,7 +399,7 @@ export function CurrentRolePackageManager(props: {
 							<p class="field-hint">{t("currentRolePackage.systemPromptHint")}</p>
 							<TextField
 								class="prompt-field"
-								value={prompt().system_prompt}
+								value={prompt()}
 								disabled={!current().writable || saving()}
 							>
 								<TextField.Label>
@@ -440,7 +408,7 @@ export function CurrentRolePackageManager(props: {
 								<TextField.TextArea
 									class="prompt-textarea"
 									rows={9}
-									onInput={(event) => updatePrompt("system_prompt", event.currentTarget.value)}
+									onInput={(event) => updatePrompt(event.currentTarget.value)}
 								/>
 							</TextField>
 						</fieldset>

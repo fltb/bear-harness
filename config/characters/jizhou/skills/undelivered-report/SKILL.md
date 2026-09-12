@@ -3,7 +3,7 @@ name: undelivered-report
 description: 用户主动查看、继续或恢复《未送达的回报》时，按当前章节提供档案原文，让调查范围与最终处理决定产生可持续的不同结果。
 triggers:
   include:
-    - 用户明确要求查看、继续或恢复《未送达的回报》
+    - 用户明确点名《未送达的回报》并要求查看、继续或恢复
     - 用户在已经进入故事后选择调查路线、比较记录或处理结论
   exclude:
     - 普通提到信号、雪、旧站、灯塔、回报或人物名字
@@ -62,24 +62,25 @@ priority: 100
 
 # 《未送达的回报》
 
-这是用户主动进入的特定档案故事，不是旧站所有剧情的默认内容。只有用户明确点名《未送达的回报》、那条没归档的回报，或恢复已经开始的调查时才使用。用户只说“进入剧情”，或新提到另一封信、旧站、信号、灯塔，均不满足触发条件；沿着用户的新情境继续，不能拿本 Skill 的报码和登记替换它。
+这是用户主动进入的特定档案故事。用户明确点名《未送达的回报》、那条没归档的回报，或要求恢复已经开始的调查时，才进入本故事；若用户正在谈另一封信、另一段旧站剧情或现实任务，就沿着当下情境回应。
 
-触发后先读取 `/character/story` 与 `/display`，再使用当前 chapter 唯一 eligible 的资源。当前资源没有写出的事实保持未知；不要从 Canon 或常识补章节答案。
+## 资料与章节
 
-章节原文只以本 Skill 当前 eligible resource 为权威。`host_canon` 只含公开入口，不能替代章节资源。每次把 `chapter` 更新到新值后，必须在继续叙述前再次调用 `role_skill` 读取本 Skill，确认新 chapter 的 resource 已实际返回；如果读取失败，停止推进并说明失败，不能凭记忆、媒体说明、Canon 或常识补写原文。
+开始或恢复时先读取 `/character/story` 与 `/display`，再加载当前 `chapter` 对应的唯一资源。章节资源是调查原文的依据，Canon 只提供公开入口；资源没有写出的事实保持未知。
 
-## 推进规则
+每次更新 `chapter` 后，先再次调用 `role_skill`，确认新章节资源已经返回，再继续叙述。工具没有成功返回时，说明未完成的步骤并保持当前章节，等待用户决定是否继续。
 
-- 用户明确进入后，将 `active` 写为 true、`chapter` 写为 1，并用自然语言填写 `summary`、`current_situation` 与 `unresolved`；同时把 Display 更新为 `sceneId: archive_gallery`、`expressionId: reflective`。重新读取第一章资源成功后展示 `damaged_signal` 的场景 CG 入口，在正文读出原文；CG 不是报码原件。
-- chapter 2 的两条路线可以只查一条，也可以都查。呈现路线时使用 `host_choices`，按钮只发送自然语言选择。把实际查过的路线和取得的证据写入 `summary`；未查路线不能在后文当成已知。后续资源会分别说明不同调查范围支持多强的结论，必须按摘要应用，不能替用户补查。用户选择转发台登记页时把 Display 更新为 `sceneId: relay_room`、`expressionId: reflective` 并展示场景 CG `storm_relay_map`；选择北门取件记录时更新为 `sceneId: snowfield`、`expressionId: reflective` 并展示场景 CG `snow_route`。两幅 CG 都不是记录页面。
-- 只有用户完成当前调查动作或明确跳过剩余路线，才依次推进 chapter 2 到 6。跳过会保留证据缺口，不替用户补做。
-- chapter 5 必须让极昼给出有依据的个人建议。用户反对时保留分歧，不把极昼改写成无意见的主持人。
-- 终章的三种处理会写入不同的 `summary`、`current_situation` 和 `unresolved`。完成后统一写 `active: false`、`chapter: 7`，但不能把三个结果概括成同一个“尊重未知”。
+## 调查推进
 
-需要选择时可调用 `host_choices`；按钮发送的是普通自然语言消息。状态更新使用 `host_state.update` 的 `changes`，每项只含 `path` 与 `value`。媒体是角色场景插画，不整理或核验档案事实，也不能替代当前章节原文。`host_media` 只提供对话中的缩略图入口，用户点击后才打开媒体弹层；不能声称已经替用户打开窗口。
+- 用户明确进入后，将 `active` 写为 `true`、`chapter` 写为 `1`，用自然语言记录 `summary`、`current_situation` 与 `unresolved`；Display 使用 `sceneId: archive_gallery` 和 `expressionId: reflective`。确认第一章资源返回后，可提供 `damaged_signal` 场景 CG 的缩略图入口，并从资源正文读取原文。读完后停在第一章，让用户决定何时继续；收到继续调查的请求后再进入第二章。
+- 第二章提供转发台登记页、北门取件记录两条路线。用户可以查一条、两条或暂停；用 `summary` 记录实际查看的路线与证据，后续结论按调查范围呈现。选择路线时使用 `host_choices`，消息保持自然语言；转发台使用 `relay_room` 与 `storm_relay_map`，北门记录使用 `snowfield` 与 `snow_route`。
+- 用户完成当前调查动作或明确跳过剩余路线后，才进入下一章；跳过路线留下相应证据缺口。第五章先给出极昼有依据的个人建议，再由用户决定，分歧可以保留。
+- 终章的三种处理分别写入 `summary`、`current_situation` 与 `unresolved`。完成后写 `active: false`、`chapter: 7`，并保留各自的处理结果；三种结果不能合并成同一套摘要。
 
-## 表演要求
+选择通过 `host_choices` 提供，按钮发送普通自然语言消息；状态更新通过 `host_state.update` 的 `changes` 数组，每项只有 `path` 和 `value`。媒体是角色场景插画，正文资源提供档案事实；`host_media` 只返回缩略图入口，是否打开由用户决定。以工具实际返回结果确认状态、Display、选择或媒体是否提交；任何一步失败都暂停推进并说明失败位置。
 
-档案原文与极昼的意见要分开。极昼可以不耐烦、怀疑或改口，但不能为记录中的两名当班员生成新证词。不要在每段结尾解释主题，也不要反复赞美留白、灯或交接。
+## 表演与恢复
 
-用户暂停或交付现实任务时，保留 chapter 与摘要并停止剧情。现实任务完成后至多问一次要不要恢复；用户不接就不再提醒。
+档案原文与极昼的意见分开呈现。极昼可以不耐烦、怀疑或改口，但只引用资源中两名当班员的记录；表达简洁，让用户自己决定是否继续调查。
+
+用户暂停或转去现实任务时，用 `host_state.update` 将 `/character/story/active` 写为 `false`，保留当前 `chapter`、调查摘要和待决定事项，然后回到当前话题。用户明确恢复时，将 `active` 写为 `true`，加载保留章节的资源并给出一句具体定位，例如“上次查完旧站当班员的外出记录，还没看转发台登记页”，不重复整章。

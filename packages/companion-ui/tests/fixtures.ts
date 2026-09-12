@@ -67,12 +67,7 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 			],
 		},
 	},
-	prompt: {
-		description: "Test description",
-		personality: "Test personality",
-		scenario: "Test scenario",
-		system_prompt: "Test system prompt",
-	},
+	system_prompt: "Test system prompt",
 	scenes: [{ id: "default", label: "Default", description: "Default scene" }],
 	visual: {
 		defaultSceneId: "default",
@@ -717,13 +712,13 @@ export function createTestClient() {
 	} as CompanionClient;
 
 	const queue: Array<{ keys: Array<["snapshot"]> }> = [];
-	let receive: ((value: { keys: Array<["snapshot"]> } | undefined) => void) | undefined;
+	let _receive: ((value: { keys: Array<["snapshot"]> } | undefined) => void) | undefined;
 	client.invalidations.stream = async function* (signal) {
 		while (!signal.aborted) {
 			const notice =
 				queue.shift() ??
 				(await new Promise<{ keys: Array<["snapshot"]> } | undefined>((resolve) => {
-					receive = resolve;
+					_receive = resolve;
 					signal.addEventListener("abort", () => resolve(undefined), { once: true });
 				}));
 			if (signal.aborted) return;

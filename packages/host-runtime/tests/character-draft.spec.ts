@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HostRuntime } from "../src/runtime.js";
 
 const roots: string[] = [];
-const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 
 afterEach(async () => {
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

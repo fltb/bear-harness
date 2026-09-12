@@ -2,7 +2,6 @@
 
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CharacterLoader } from "../src/companion/character-loader.js";
 import {
 	eligibleRoleSkillResources,
 	loadRoleSkills,
@@ -12,20 +11,6 @@ import {
 const characterRoot = resolve(process.cwd(), "../../config/characters");
 
 describe("《未送达的回报》natural-language path contract", () => {
-	it("keeps choices out of the package and delegates response-specific choices to the tool", () => {
-		const character = new CharacterLoader(characterRoot).load("jizhou");
-		expect(character).not.toBeNull();
-		if (!character) return;
-		expect(character).not.toHaveProperty("roleplay");
-		expect(character).not.toHaveProperty("choice_sets");
-		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
-		expect(skill?.content).toContain("`host_choices`");
-		expect(skill?.triggers.exclude).toContainEqual(
-			expect.stringContaining("另一封信、另一项事件或一段新剧情"),
-		);
-		expect(skill?.content).toContain("不是旧站所有剧情的默认内容");
-	});
-
 	it("selects one chapter resource from a simple number", () => {
 		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
 		if (!skill) throw new Error("undelivered-report skill missing");

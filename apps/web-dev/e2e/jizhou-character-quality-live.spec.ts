@@ -46,7 +46,6 @@ function characterSourceHash(): string {
 		"config/characters/jizhou/character.yaml",
 		"config/characters/jizhou/canon/manifest.yaml",
 		"config/characters/jizhou/canon/jizhou-story.md",
-		"config/characters/jizhou/skills/continuity-reveal/SKILL.md",
 		"config/characters/jizhou/skills/undelivered-report/SKILL.md",
 		"config/characters/jizhou/skills/undelivered-report/resources/story.md",
 	]) {

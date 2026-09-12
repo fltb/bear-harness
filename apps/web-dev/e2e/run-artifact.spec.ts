@@ -124,9 +124,9 @@ test("media opens above a persistent two-column result workspace without selecti
 	await page.setViewportSize({ width: 1920, height: 1080 });
 	await ensureReadyForConversation(page);
 	await sendMessage(page, "E2E_MEDIA_PREVIEW");
-	const card = page.getByRole("region", { name: "极昼的来处" });
+	const card = page.getByRole("region", { name: "极光书桌" });
 	const mediaTrigger = card.getByRole("button", { name: zhCN.messages.openMedia });
-	await expect(card.getByRole("img", { name: "极昼的来处" })).toBeVisible();
+	await expect(card.getByRole("img", { name: "极光书桌" })).toBeVisible();
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 	await sendMessage(page, "E2E_DELEGATE_ARTIFACT");
 	const artifactTrigger = page.getByRole("button", {
@@ -148,9 +148,9 @@ test("media opens above a persistent two-column result workspace without selecti
 	await composer.fill("边看结果边继续聊");
 	await expect(result).toBeVisible();
 	await mediaTrigger.click();
-	const viewer = page.getByRole("dialog", { name: "极昼的来处" });
+	const viewer = page.getByRole("dialog", { name: "极光书桌" });
 	await expect(viewer).toBeVisible();
-	const picture = viewer.getByRole("img", { name: "极昼的来处" });
+	const picture = viewer.getByRole("img", { name: "极光书桌" });
 	await expect(picture).toBeVisible();
 	await expect
 		.poll(() => picture.evaluate((image: HTMLImageElement) => image.naturalWidth))
@@ -183,7 +183,7 @@ test("media opens above a persistent two-column result workspace without selecti
 	await mediaTrigger.click();
 	await expect(viewer).toHaveJSProperty("clientWidth", 390);
 	await expect(viewer).toHaveJSProperty("clientHeight", 844);
-	await expect(viewer.getByRole("img", { name: "极昼的来处" })).toBeVisible();
+	await expect(viewer.getByRole("img", { name: "极光书桌" })).toBeVisible();
 	await viewer.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 	await artifactTrigger.click();
 	await expect(result).toHaveJSProperty("clientWidth", 390);

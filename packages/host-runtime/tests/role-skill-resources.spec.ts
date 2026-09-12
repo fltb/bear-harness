@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,18 +29,19 @@ describe("state-gated role Skill resources", () => {
 	it("loads numeric metadata from Windows CRLF frontmatter", () => {
 		const directory = mkdtempSync(join(tmpdir(), "bear-role-skill-crlf-"));
 		temporaryDirectories.push(directory);
-		const source = readFileSync(
-			resolve(
-				import.meta.dirname,
-				"../../../config/characters/jizhou/skills/continuity-reveal/SKILL.md",
-			),
-			"utf8",
-		);
+		const source = [
+			"---",
+			"name: numeric-metadata",
+			"description: Read a bounded test resource.",
+			"triggers: { include: [Read this resource], exclude: [Unrelated request] }",
+			"allowed-tools: [host_state]",
+			"priority: 50",
+			"---",
+			"Read the supplied resource.",
+		].join("\n");
 		writeFileSync(join(directory, "SKILL.md"), source.split("\n").join("\r\n"));
 
-		expect(loadRoleSkills([directory])).toMatchObject([
-			{ name: "continuity-reveal", priority: 50 },
-		]);
+		expect(loadRoleSkills([directory])).toMatchObject([{ name: "numeric-metadata", priority: 50 }]);
 	});
 
 	it("rejects a resource tree deeper than the bounded traversal contract", () => {
@@ -76,13 +77,13 @@ describe("state-gated role Skill resources", () => {
 		expect(readRoleSkillResource(story, lastShift)).toContain("## 第四章：关站清点");
 	});
 
-	it("uses simple scalars and natural-language summaries instead of an enum state machine", () => {
-		expect(story.content).toContain("`host_state.update` 的 `changes`");
-		expect(story.content).toContain("`summary`");
-		expect(story.content).toContain("`current_situation`");
-		expect(story.content).toContain("`host_choices`");
-		expect(story.content).not.toContain("branch=none");
-		expect(story.content).not.toContain("evidence_mode=inferred");
+	it("returns every heading declared by each chapter resource", () => {
+		for (const resource of story.resources) {
+			const text = readRoleSkillResource(story, resource);
+			for (const heading of resource.headings ?? []) {
+				expect(text).toContain(`## ${heading}`);
+			}
+		}
 	});
 });
 

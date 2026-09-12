@@ -134,13 +134,6 @@ export interface CharacterVisuals {
 	expressions: CharacterExpression[];
 }
 
-export interface CharacterPrompt {
-	description: string;
-	personality: string;
-	scenario: string;
-	system_prompt: string;
-}
-
 /**
  * Host-owned role-package storage snapshot (the package storage bucket).
  *
@@ -158,7 +151,7 @@ export interface CharacterPackage {
 	theme: ThemeTokens;
 	character: CharacterStrings;
 	behavior: CharacterBehaviorContract;
-	prompt: CharacterPrompt;
+	system_prompt: string;
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	state: CharacterStateDefinition;
@@ -198,7 +191,7 @@ export interface CharacterDisplay {
 	name: string;
 	language: string;
 	character: CharacterStrings;
-	prompt: CharacterPrompt;
+	system_prompt: string;
 	theme: ThemeTokens;
 	scenes: Array<{
 		id: string;
@@ -296,12 +289,6 @@ const WorkPresentationSchema = z.strictObject({
 });
 
 const PromptStringSchema = z.string().max(65536);
-const CharacterPromptSchema = z.strictObject({
-	description: PromptStringSchema,
-	personality: PromptStringSchema,
-	scenario: PromptStringSchema,
-	system_prompt: PromptStringSchema,
-});
 
 const ThemeTokensSchema = CharacterThemeOverridesSchema;
 
@@ -356,7 +343,7 @@ export const CharacterManifestSchema = z
 		theme: ThemeTokensSchema.optional(),
 		character: CharacterCardSchema,
 		behavior: CharacterBehaviorSchema,
-		prompt: CharacterPromptSchema,
+		system_prompt: PromptStringSchema,
 		scenes: z.array(ScenePresetSchema).min(1).max(100),
 		visual: z.strictObject({
 			default_scene: CharacterIdentifierSchema,
@@ -798,7 +785,7 @@ export class CharacterLoader {
 			theme,
 			character: parsed.character,
 			behavior,
-			prompt: parsed.prompt,
+			system_prompt: parsed.system_prompt,
 			scenes: parsed.scenes,
 			visual: parsed.visual,
 			state,
@@ -890,7 +877,8 @@ export class CharacterLoader {
 		)}\n</character_behavior_contract>`;
 		const hostContract = `<host_product_contract>
 Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
-Use host_state for Character or Display changes. Its update action accepts one or more path/value changes under /character or /display. Use only ids declared in the display catalog.
+Use host_state for Character or Display changes. Character fields record the relationship or story facts described by their schema; Display controls the visible expression and scene in this conversation.
+When the user asks for an expression (for example, a smile), or the current interaction calls for a visible change, select a fitting id from the display catalog and update Display before continuing the reply. Narrating an action alone does not change the visible character. Use the current host_context snapshot: if it already matches, continue without an unnecessary update. Ordinary conversation does not require a state change on every turn.
 Use host_media with a declared media id when media would materially help the conversation. Use host_choices only for choices created for the current response; every choice is ordinary user input.
 Use host_delegate to ask the built-in Pi Worker to do separate work. Supply the instruction and optional absolute user-supplied inputPaths, never an executor or agent selector. An accepted receipt identifies a Run; it is not proof of startup, progress, or completion. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
 Use host_run_read to list this conversation's Runs or inspect one exact runId. Use host_run_control only for that exact Run and its reported available actions. Steer sends instructions without promising they were fulfilled; resume continues a paused Run; retryDelivery only retries delivery of an existing result and never re-executes work. User permission approvals must remain in the task UI. Do not claim progress, success, artifacts, or delivery without Host evidence.
@@ -907,15 +895,8 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		)}\n</host_display_catalog>`;
 		const appendSystemPrompt = [
 			hostContract,
-			`<character_identity>\n${[
-				character.prompt.description,
-				character.prompt.personality,
-				character.prompt.scenario,
-			]
-				.filter(Boolean)
-				.join("\n\n")}\n</character_identity>`,
 			behaviorContract,
-			character.prompt.system_prompt.trim(),
+			character.system_prompt.trim(),
 			characterStatePrompt(character.state),
 			displayCatalog,
 			roleSkillPrompt(character.skills),
@@ -942,7 +923,7 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 			name: character.name,
 			language: character.language,
 			character: character.character,
-			prompt: character.prompt,
+			system_prompt: character.system_prompt,
 			theme: character.theme,
 			scenes: character.scenes.map((scene) => ({
 				id: scene.id,

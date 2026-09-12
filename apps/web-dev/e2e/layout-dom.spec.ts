@@ -362,10 +362,10 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	expect(await choiceResponse.json()).toMatchObject({ ok: true });
 
 	await sendMessage(page, "E2E_MEDIA_PREVIEW");
-	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
+	const mediaCard = page.getByRole("region", { name: "极光书桌" });
 	const mediaTrigger = mediaCard.getByRole("button", { name: zhCN.messages.openMedia });
-	const mediaPreview = page.getByRole("dialog", { name: "极昼的来处" });
-	await expect(mediaCard.getByRole("img", { name: "极昼的来处" })).toBeVisible();
+	const mediaPreview = page.getByRole("dialog", { name: "极光书桌" });
+	await expect(mediaCard.getByRole("img", { name: "极光书桌" })).toBeVisible();
 	await expect(mediaPreview).toHaveCount(0);
 	await mediaTrigger.click();
 	await assertSurface(page, viewport, mediaPreview);
@@ -373,7 +373,7 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 		"motion-modal-enter",
 	);
 	await expect(mediaPreview).toHaveAttribute("data-bear-media-expanded", "false");
-	const picture = mediaPreview.getByRole("img", { name: "极昼的来处" });
+	const picture = mediaPreview.getByRole("img", { name: "极光书桌" });
 	await expect(picture).toBeVisible();
 	await expect
 		.poll(() =>
