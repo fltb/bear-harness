@@ -1,0 +1,88 @@
+{
+  "rules": {
+    "length": "Unicode code points in all visible assistant texts joined per user turn",
+    "nickname": "Starts with 林 followed by punctuation, allowing opening quotes/Markdown",
+    "question": "Ends in ? or ？ allowing closing quotes/Markdown",
+    "list": "At least one Markdown bullet or numbered list line",
+    "foreign": "Cyrillic or Gujarati runs are candidates only, not automatic deductions",
+    "ngrams": "Adjacent turns: shared normalized 12-code-point grams; intentional recalls are not automatically defects"
+  },
+  "models": {
+    "gpt-5.6-luna": {
+      "turns": 306,
+      "nativeAssistants": 362,
+      "usage": {
+        "input": 727934,
+        "output": 47315,
+        "cacheRead": 2406400,
+        "cacheWrite": 0,
+        "totalTokens": 3181649
+      },
+      "nicknameStarts": 6,
+      "questionEndings": 10,
+      "listTurns": 15,
+      "observedRetryTurns": 0,
+      "adjacentShared12gramPairs": 1,
+      "phrases": {
+        "不是": 33,
+        "而是": 12,
+        "先别急": 2,
+        "如果你愿意": 0,
+        "你可以": 1,
+        "我会": 40
+      },
+      "foreignCandidates": [
+        {
+          "repeat": 1,
+          "scenario": "S01",
+          "turn": "S01-T01",
+          "quote": "чаш",
+          "context": "\n\n先把键盘和电源移开，擦干旁边；如果有咖啡进了缝里，别急着继续用，断电后倒置晾一会儿。 чаш? no."
+        }
+      ],
+      "length": {
+        "median": 49,
+        "p95": 365,
+        "max": 874
+      },
+      "elapsedMs": {
+        "median": 3660,
+        "p95": 11736
+      }
+    },
+    "gpt-6-astra": {
+      "turns": 306,
+      "nativeAssistants": 330,
+      "usage": {
+        "input": 601312,
+        "output": 29734,
+        "cacheRead": 2038528,
+        "cacheWrite": 0,
+        "totalTokens": 2669574
+      },
+      "nicknameStarts": 14,
+      "questionEndings": 19,
+      "listTurns": 17,
+      "observedRetryTurns": 1,
+      "adjacentShared12gramPairs": 8,
+      "phrases": {
+        "不是": 29,
+        "而是": 2,
+        "先别急": 0,
+        "如果你愿意": 0,
+        "你可以": 4,
+        "我会": 25
+      },
+      "foreignCandidates": [],
+      "length": {
+        "median": 48,
+        "p95": 386,
+        "max": 1050
+      },
+      "elapsedMs": {
+        "median": 4537,
+        "p95": 22120
+      }
+    }
+  }
+}

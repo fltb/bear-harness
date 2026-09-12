@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "jizhou-role-eval-manifest.v1",
+  "mode": "run",
+  "models": [
+    {
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.6-luna"
+    },
+    {
+      "providerId": "openai-codex",
+      "modelId": "gpt-6-astra"
+    }
+  ],
+  "repeats": 3,
+  "replyTimeoutMs": 180000,
+  "auth": {
+    "providerId": "openai-codex",
+    "source": "BEAR_WEB_DEV_CODEX_AUTH_FILE via WebDev credential bridge",
+    "path": "redacted"
+  },
+  "hashes": {
+    "cases": {
+      "label": "cases",
+      "sha256": "e6b753634485b7c8140374d9ae2633ea30fdbd5622baf239798f2d2f627f5b70",
+      "files": 1,
+      "path": "/home/float/myfile/Projects/fun/bear-harness/docs/evidence/jizhou-role-eval-cases.v2.json"
+    },
+    "role": {
+      "label": "role",
+      "sha256": "65fcffe87ff4c43b2d606096a396a53e8d842235b97d72317ff279b6332e752d",
+      "files": 44
+    },
+    "sources": {
+      "label": "sources",
+      "sha256": "d8966c3e7b96ace9d00df18911f13faa983b256e4e099153473cf6817bab971d",
+      "files": 9
+    },
+    "runtimeSources": {
+      "label": "host-runtime-sources",
+      "sha256": "72e6761a2fbf77f637d6ca5884b083eea5c92bd79fae3e94b7885b0d21188133",
+      "files": 71
+    },
+    "dist": {
+      "label": "dist",
+      "sha256": "a4d54788e243cb218348ee9639b02e90bb8edb2a95b35f938709fa2d45d23ede",
+      "files": 170
+    },
+    "package": {
+      "label": "package",
+      "sha256": "57eee4bde171acf9a15433c6ab9f9749ce4bd17175ff54583dadb79b6bdd6384",
+      "files": 1
+    },
+    "webPackage": {
+      "label": "web-package",
+      "sha256": "cf3d3b0e8944750bd988ee76538597ab6a5efe1ed70f8731e6f1cc3a10687a21",
+      "files": 1
+    },
+    "packageLock": {
+      "label": "package-lock",
+      "sha256": "d70cf5605023d1d1b1da5a4ae1ba2b5d425cba327b966b1dc8f7bce975728a35",
+      "files": 1
+    }
+  },
+  "cases": {
+    "path": "docs/evidence/jizhou-role-eval-cases.v2.json",
+    "version": "2",
+    "scenarioCount": 10,
+    "totalTurns": 102
+  },
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "linux",
+    "cwd": "/home/float/myfile/Projects/fun/bear-harness",
+    "hostCwd": "/home/float/myfile/Projects/fun/bear-harness/apps/web-dev",
+    "workerPath": "packages/host-runtime/dist/executors/pi-acp-worker.js",
+    "noUi": true,
+    "dataIsolation": "fresh mkdtemp per model/session",
+    "maxConcurrentPairSessions": 2,
+    "thinkingLevel": "medium required",
+    "memoryEmbedding": "none"
+  },
+  "startedAt": "2026-09-12T14:17:48.887Z",
+  "resumes": [
+    {
+      "at": "2026-09-12T14:43:08.248Z",
+      "collector": {
+        "revision": 2,
+        "scriptSha256": "080fff8c2a906858fea4dd409ad70fae237cad5a6e32f8b205e62dd1a91bab37",
+        "historySha256": "b85cee1627050ea603b22934292a1211f36e225ec4a8772dcadcbf5940b545f3"
+      }
+    }
+  ]
+}

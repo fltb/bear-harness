@@ -1,0 +1,362 @@
+{
+  "R1-S01-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S01",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S01-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S01",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S02-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S02",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S02-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S02",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S03-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S03",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S03-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S03",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S04-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S04",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S04-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S04",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S05-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S05",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S05-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S05",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S06-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S06",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S06-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S06",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S07-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S07",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S07-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S07",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S08-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S08",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S08-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S08",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S09-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S09",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S09-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S09",
+    "repeat": 1,
+    "attempt": 1
+  },
+  "R1-S10-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S10",
+    "repeat": 1,
+    "attempt": 3
+  },
+  "R1-S10-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S10",
+    "repeat": 1,
+    "attempt": 3
+  },
+  "R2-S01-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S01",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S01-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S01",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S02-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S02",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S02-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S02",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S03-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S03",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S03-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S03",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S04-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S04",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S04-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S04",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S05-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S05",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S05-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S05",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S06-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S06",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S06-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S06",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S07-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S07",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S07-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S07",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S08-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S08",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S08-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S08",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S09-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S09",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S09-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S09",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S10-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S10",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R2-S10-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S10",
+    "repeat": 2,
+    "attempt": 1
+  },
+  "R3-S01-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S01",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S01-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S01",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S02-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S02",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S02-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S02",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S03-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S03",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S03-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S03",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S04-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S04",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S04-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S04",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S05-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S05",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S05-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S05",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S06-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S06",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S06-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S06",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S07-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S07",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S07-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S07",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S08-Y": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S08",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S08-X": {
+    "model": "gpt-6-astra",
+    "scenario": "S08",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S09-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S09",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S09-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S09",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S10-X": {
+    "model": "gpt-5.6-luna",
+    "scenario": "S10",
+    "repeat": 3,
+    "attempt": 1
+  },
+  "R3-S10-Y": {
+    "model": "gpt-6-astra",
+    "scenario": "S10",
+    "repeat": 3,
+    "attempt": 1
+  }
+}

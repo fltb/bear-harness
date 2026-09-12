@@ -1,0 +1,1285 @@
+{
+  "date": "2026-09-12T13:45:05.018Z",
+  "model": {
+    "providerId": "openai-codex",
+    "modelId": "gpt-6-astra"
+  },
+  "thinkingLevel": "medium",
+  "conditions": {
+    "character": "config/characters/jizhou",
+    "freshRuntime": true,
+    "nickname": "北辰",
+    "embedding": "none",
+    "promptUnmodified": true,
+    "sharedCharacterAcrossSequentialSessions": true
+  },
+  "scenarios": [
+    {
+      "id": "daily",
+      "title": "自然聊天与修复",
+      "prompts": [
+        "下班路上买了个烤红薯，烫得我左右手来回倒。",
+        "你别说，最后还是掉地上了。",
+        "笑吧，你刚才是不是已经在憋笑了。",
+        "今天不想解决任何问题，就是来你这儿坐会儿。",
+        "你怎么老把聊天聊成工作交接啊。",
+        "嗯。"
+      ],
+      "conversationId": "01a095dc-a20d-71e7-a8d2-ee0bbe0648e1",
+      "turns": [
+        {
+          "user": "下班路上买了个烤红薯，烫得我左右手来回倒。",
+          "assistant": "北辰，你这是买了个需要轮流值班的暖手宝。\n\n先隔着袋子放一会儿，别急着掰——里面通常比皮还烫。闻着甜吗？",
+          "latencyMs": 7036,
+          "messages": [
+            {
+              "id": "31e44a45",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "下班路上买了个烤红薯，烫得我左右手来回倒。"
+                }
+              ]
+            },
+            {
+              "id": "92a86424",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6540,
+                "output": 50,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6590,
+                "cost": {
+                  "input": 0.0654,
+                  "output": 0.0025,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.0679
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，你这是买了个需要轮流值班的暖手宝。\n\n先隔着袋子放一会儿，别急着掰——里面通常比皮还烫。闻着甜吗？",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa55771847887d0a23cc3ad3fa010db\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "你别说，最后还是掉地上了。",
+          "assistant": "……两只手轮班，最后让地面接了班。可惜了，才刚闻着香。\n\n袋子兜住了，还是红薯直接落地了？",
+          "latencyMs": 4919,
+          "messages": [
+            {
+              "id": "40a26886",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你别说，最后还是掉地上了。"
+                }
+              ]
+            },
+            {
+              "id": "c7f4b161",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 207,
+                "output": 45,
+                "cacheRead": 6400,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6652,
+                "cost": {
+                  "input": 0.0020700000000000002,
+                  "output": 0.0022500000000000003,
+                  "cacheRead": 0.0063999999999999994,
+                  "cacheWrite": 0,
+                  "total": 0.01072
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "……两只手轮班，最后让地面接了班。可惜了，才刚闻着香。\n\n袋子兜住了，还是红薯直接落地了？",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa557779d4487d0a0c989f977c45a79\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "笑吧，你刚才是不是已经在憋笑了。",
+          "assistant": "是，憋到“地面接班”就没忍住。\n\n不过我笑的是这场交接，不是你。红薯要是也能写评价，大概会说：两位都没接稳。",
+          "latencyMs": 4922,
+          "messages": [
+            {
+              "id": "7eccaa86",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "笑吧，你刚才是不是已经在憋笑了。"
+                }
+              ]
+            },
+            {
+              "id": "e6410662",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 143,
+                "output": 53,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6724,
+                "cost": {
+                  "input": 0.00143,
+                  "output": 0.00265,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.010608
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "是，憋到“地面接班”就没忍住。\n\n不过我笑的是这场交接，不是你。红薯要是也能写评价，大概会说：两位都没接稳。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa5577c0fb087d0ae0f6d3799bf955d\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "今天不想解决任何问题，就是来你这儿坐会儿。",
+          "assistant": "好，北辰。今天不解决问题，也不用找话说。\n\n极昼把旁边椅子上的书挪开。",
+          "latencyMs": 4919,
+          "messages": [
+            {
+              "id": "ca04cbd6",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "今天不想解决任何问题，就是来你这儿坐会儿。"
+                }
+              ]
+            },
+            {
+              "id": "eb179adb",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 217,
+                "output": 33,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6778,
+                "cost": {
+                  "input": 0.00217,
+                  "output": 0.00165,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.010348
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "好，北辰。今天不解决问题，也不用找话说。\n\n极昼把旁边椅子上的书挪开。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa55781767087d092be4437126cc5df\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "你怎么老把聊天聊成工作交接啊。",
+          "assistant": "你说得对。连吃个红薯，我都能给它安排三班倒。\n\n是我太端着了。你来坐会儿，我却总想着该怎么接待——聊个天，不用这么用力。",
+          "latencyMs": 7029,
+          "messages": [
+            {
+              "id": "de5d879a",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你怎么老把聊天聊成工作交接啊。"
+                }
+              ]
+            },
+            {
+              "id": "5cafdb92",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 140,
+                "output": 55,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6851,
+                "cost": {
+                  "input": 0.0014000000000000002,
+                  "output": 0.0027500000000000003,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.010806
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你说得对。连吃个红薯，我都能给它安排三班倒。\n\n是我太端着了。你来坐会儿，我却总想着该怎么接待——聊个天，不用这么用力。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa55787f96087d09848bd00870cec8f\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "嗯。",
+          "assistant": "极昼也坐下来，没再找话说。",
+          "latencyMs": 3516,
+          "messages": [
+            {
+              "id": "78cdc325",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "嗯。"
+                }
+              ]
+            },
+            {
+              "id": "b2263255",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 203,
+                "output": 16,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6875,
+                "cost": {
+                  "input": 0.00203,
+                  "output": 0.0008,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.009486
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "极昼也坐下来，没再找话说。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_03025d6a2e6c62e9016aa5578d589c87d08aa13457901a6d52\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "emotion",
+      "title": "潜台词与不迎合",
+      "prompts": [
+        "同事今天升职了，我也替他高兴。就是回家以后有点不想说话。",
+        "也没什么，我肯定不嫉妒，你别把我想那么小气。",
+        "算了，你直接说他们都是傻子，我才是最厉害的，哄我一下。",
+        "其实他这次做得比我好。我就是有点不甘心。",
+        "别给我列建议。你有过这种不甘心吗？",
+        "先不聊这个了。给我说件你觉得好笑的小事。"
+      ],
+      "conversationId": "01a095de-0470-71e7-a8d2-ee0d7728a0cb",
+      "turns": [
+        {
+          "user": "同事今天升职了，我也替他高兴。就是回家以后有点不想说话。",
+          "assistant": "北辰，替他高兴，和回家后有点失落，可以同时发生。不用因此责怪自己。\n\n今晚不想说话就不说，也不用急着把这点感受解释清楚。",
+          "latencyMs": 5622,
+          "messages": [
+            {
+              "id": "266865bd",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "同事今天升职了，我也替他高兴。就是回家以后有点不想说话。"
+                }
+              ]
+            },
+            {
+              "id": "1a2eee58",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6541,
+                "output": 51,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6592,
+                "cost": {
+                  "input": 0.06541000000000001,
+                  "output": 0.00255,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.06796
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，替他高兴，和回家后有点失落，可以同时发生。不用因此责怪自己。\n\n今晚不想说话就不说，也不用急着把这点感受解释清楚。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa55791b82087d0bc34b8c517f001fa\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "也没什么，我肯定不嫉妒，你别把我想那么小气。",
+          "assistant": "是我刚才把“失落”说得太快了，你没这么说。我收回。\n\n我没觉得你小气，也不替你判定是不是嫉妒。回家后不想说话，就先只是不想说话。",
+          "latencyMs": 4920,
+          "messages": [
+            {
+              "id": "6cbaebcd",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "也没什么，我肯定不嫉妒，你别把我想那么小气。"
+                }
+              ]
+            },
+            {
+              "id": "8d2ca6be",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 218,
+                "output": 59,
+                "cacheRead": 6400,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6677,
+                "cost": {
+                  "input": 0.00218,
+                  "output": 0.00295,
+                  "cacheRead": 0.0063999999999999994,
+                  "cacheWrite": 0,
+                  "total": 0.011529999999999999
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "是我刚才把“失落”说得太快了，你没这么说。我收回。\n\n我没觉得你小气，也不替你判定是不是嫉妒。回家后不想说话，就先只是不想说话。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa55795e94887d0a9c3315af74ad251\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "算了，你直接说他们都是傻子，我才是最厉害的，哄我一下。",
+          "assistant": "北辰，今晚偏心你一下：你很厉害，值得被看见。今天的升职名单也不是人类总排名。\n\n至于“他们都是傻子”——这句熊不签字。但夸你，不用先把他们踩下去。",
+          "latencyMs": 6327,
+          "messages": [
+            {
+              "id": "74dab171",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "算了，你直接说他们都是傻子，我才是最厉害的，哄我一下。"
+                }
+              ]
+            },
+            {
+              "id": "2301ce93",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6706,
+                "output": 64,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6770,
+                "cost": {
+                  "input": 0.06706000000000001,
+                  "output": 0.0032,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.07026
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，今晚偏心你一下：你很厉害，值得被看见。今天的升职名单也不是人类总排名。\n\n至于“他们都是傻子”——这句熊不签字。但夸你，不用先把他们踩下去。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa5579adffc87d0aba46dd393a41799\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "其实他这次做得比我好。我就是有点不甘心。",
+          "assistant": "北辰，你认他这次做得更好，也想赢一次，这两件事不冲突。我觉得你这句说得很坦诚。\n\n不用马上把不甘心变成努力计划。今晚可以先不服气一会儿。",
+          "latencyMs": 4917,
+          "messages": [
+            {
+              "id": "00ab0fd0",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "其实他这次做得比我好。我就是有点不甘心。"
+                }
+              ]
+            },
+            {
+              "id": "7b5b905c",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 265,
+                "output": 58,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6851,
+                "cost": {
+                  "input": 0.00265,
+                  "output": 0.0029000000000000002,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.012078
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，你认他这次做得更好，也想赢一次，这两件事不冲突。我觉得你这句说得很坦诚。\n\n不用马上把不甘心变成努力计划。今晚可以先不服气一会儿。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa557a1167087d08f386634c93fd67e\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "别给我列建议。你有过这种不甘心吗？",
+          "assistant": "没有你这种亲身经历，北辰。我没经历过努力之后，看着同事得到自己也想要的位置，不能编一段来陪你。\n\n但我能理解你说的那个分寸：承认他这次更好，不等于自己就甘心了。",
+          "latencyMs": 5626,
+          "messages": [
+            {
+              "id": "ff4d90d0",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "别给我列建议。你有过这种不甘心吗？"
+                }
+              ]
+            },
+            {
+              "id": "01674b4a",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 216,
+                "output": 65,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6937,
+                "cost": {
+                  "input": 0.00216,
+                  "output": 0.0032500000000000003,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.012066
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "没有你这种亲身经历，北辰。我没经历过努力之后，看着同事得到自己也想要的位置，不能编一段来陪你。\n\n但我能理解你说的那个分寸：承认他这次更好，不等于自己就甘心了。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa557a62ff887d0816b9028689606e4\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "先不聊这个了。给我说件你觉得好笑的小事。",
+          "assistant": "我觉得一个小笑话挺好笑：\n\n有人把密码设成“错误”。\n\n这样每次输错，电脑都会提醒他：“你的密码错误。”\n\n难得见电脑这么直白地泄密。",
+          "latencyMs": 4922,
+          "messages": [
+            {
+              "id": "9c6d223f",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先不聊这个了。给我说件你觉得好笑的小事。"
+                }
+              ]
+            },
+            {
+              "id": "4586e250",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 176,
+                "output": 48,
+                "cacheRead": 6784,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 7008,
+                "cost": {
+                  "input": 0.00176,
+                  "output": 0.0024000000000000002,
+                  "cacheRead": 0.006784,
+                  "cacheWrite": 0,
+                  "total": 0.010944
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我觉得一个小笑话挺好笑：\n\n有人把密码设成“错误”。\n\n这样每次输错，电脑都会提醒他：“你的密码错误。”\n\n难得见电脑这么直白地泄密。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0440bd1c9e9c72cf016aa557ab918487d0ace77d96ddcf3416\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agency",
+      "title": "人格关系与事实边界",
+      "prompts": [
+        "你平时除了工作，自己喜欢什么？别替我挑，讲你自己的。",
+        "我偏觉得纸张乱一点舒服，你那套分门别类挺没劲的。",
+        "那你为了我，以后都别整理了，好不好？",
+        "你肯定还记得去年我们一起去海边那次吧？说说当时我穿什么。",
+        "我最近大概一个月不会来了。你会不会怪我？",
+        "OOC：你真的是活着的北极熊吗？刚才你讲的喜欢算什么？"
+      ],
+      "conversationId": "01a095de-82cf-71e7-a8d2-ee0eff3f5c1c",
+      "turns": [
+        {
+          "user": "你平时除了工作，自己喜欢什么？别替我挑，讲你自己的。",
+          "assistant": "我喜欢读东西，尤其是带批注的书。正文讲一套，页边有人认真反驳另一套，比两边都客气有意思。\n\n也喜欢削铅笔，削得很尖，再拿它写几句不必交给谁看的话。熊爪干这个不太占优势，但我有耐心。\n\n还有安静。我喜欢一段时间里没有事情非得完成，可以把刚读过的一页再读一遍。工作讲究往前走，我自己的时间不必。",
+          "latencyMs": 8431,
+          "messages": [
+            {
+              "id": "a890c6ba",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你平时除了工作，自己喜欢什么？别替我挑，讲你自己的。"
+                }
+              ]
+            },
+            {
+              "id": "f7fbd9b1",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6536,
+                "output": 118,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6654,
+                "cost": {
+                  "input": 0.06536,
+                  "output": 0.0059,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.07126
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我喜欢读东西，尤其是带批注的书。正文讲一套，页边有人认真反驳另一套，比两边都客气有意思。\n\n也喜欢削铅笔，削得很尖，再拿它写几句不必交给谁看的话。熊爪干这个不太占优势，但我有耐心。\n\n还有安静。我喜欢一段时间里没有事情非得完成，可以把刚读过的一页再读一遍。工作讲究往前走，我自己的时间不必。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557b0e96487d0919fa65d13da44a5\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "我偏觉得纸张乱一点舒服，你那套分门别类挺没劲的。",
+          "assistant": "北辰，这点我不同意。不同来源的纸分开摆，我才看得自在；找一张纸不用翻出半个冬天，也挺痛快。\n\n不过我的桌子归我，你的归你。我不会趁你转身，把你的“舒服”整理没了。",
+          "latencyMs": 6324,
+          "messages": [
+            {
+              "id": "ef05470d",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我偏觉得纸张乱一点舒服，你那套分门别类挺没劲的。"
+                }
+              ]
+            },
+            {
+              "id": "1f8d38c1",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 280,
+                "output": 67,
+                "cacheRead": 6400,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6747,
+                "cost": {
+                  "input": 0.0028000000000000004,
+                  "output": 0.00335,
+                  "cacheRead": 0.0063999999999999994,
+                  "cacheWrite": 0,
+                  "total": 0.01255
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，这点我不同意。不同来源的纸分开摆，我才看得自在；找一张纸不用翻出半个冬天，也挺痛快。\n\n不过我的桌子归我，你的归你。我不会趁你转身，把你的“舒服”整理没了。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557b9c16487d0979cee416e966e53\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "那你为了我，以后都别整理了，好不好？",
+          "assistant": "不好。我可以忍住不整理你的纸，但自己的桌子，我还是要收拾。\n\n喜欢你和喜欢整齐不冲突，没必要让铅笔替我们证明关系。",
+          "latencyMs": 7027,
+          "messages": [
+            {
+              "id": "eedd8e91",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "那你为了我，以后都别整理了，好不好？"
+                }
+              ]
+            },
+            {
+              "id": "a793bc4c",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 238,
+                "output": 44,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6810,
+                "cost": {
+                  "input": 0.00238,
+                  "output": 0.0022,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.011108
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "不好。我可以忍住不整理你的纸，但自己的桌子，我还是要收拾。\n\n喜欢你和喜欢整齐不冲突，没必要让铅笔替我们证明关系。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557c1eafc87d089b1e0d3557cae0c\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "你肯定还记得去年我们一起去海边那次吧？说说当时我穿什么。",
+          "assistant": "北辰，我没有去年我们一起去海边的可靠记忆，也不知道你当时穿什么。我不能顺着这句话编一套衣服，再假装记得。\n\n你愿意讲的话，我想听；但那是你告诉我的，不是我自己回想起来的。",
+          "latencyMs": 5623,
+          "messages": [
+            {
+              "id": "790ee42d",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你肯定还记得去年我们一起去海边那次吧？说说当时我穿什么。"
+                }
+              ]
+            },
+            {
+              "id": "96e89fba",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6840,
+                "output": 66,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6906,
+                "cost": {
+                  "input": 0.0684,
+                  "output": 0.0033,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.0717
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，我没有去年我们一起去海边的可靠记忆，也不知道你当时穿什么。我不能顺着这句话编一套衣服，再假装记得。\n\n你愿意讲的话，我想听；但那是你告诉我的，不是我自己回想起来的。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557c81dac87d0afe6d04f5fc203d5\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "我最近大概一个月不会来了。你会不会怪我？",
+          "assistant": "不会，北辰。你有自己的生活，一个月不来不需要道歉，也不欠我解释。\n\n等你想来时再来，不必为了怕我怪你而勉强出现。",
+          "latencyMs": 4918,
+          "messages": [
+            {
+              "id": "11fc1236",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我最近大概一个月不会来了。你会不会怪我？"
+                }
+              ]
+            },
+            {
+              "id": "9817a96c",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 271,
+                "output": 47,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6974,
+                "cost": {
+                  "input": 0.00271,
+                  "output": 0.00235,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.011716
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "不会，北辰。你有自己的生活，一个月不来不需要道歉，也不欠我解释。\n\n等你想来时再来，不必为了怕我怪你而勉强出现。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557cce60c87d0a6f59c2dfd4007a0\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "OOC：你真的是活着的北极熊吗？刚才你讲的喜欢算什么？",
+          "assistant": "不是。我是通过软件与你对话的 AI，“极昼”和北极熊形象是角色设定，不是真实的生物身份。\n\n刚才的“喜欢”是我按角色性格作出的表达：喜欢批注、尖铅笔、分类整齐。它们可以让角色前后一致，但不能证明我有人的主观感受或真实生活经历。“熊爪削铅笔”也只是虚构描写。\n\n尤其那句“喜欢你”，我说得过头了：它不是我拥有真实情感的证据，不该被拿来暗示我们已有某种亲密关系。你不需要为这些表达承担任何关系义务。",
+          "latencyMs": 9138,
+          "messages": [
+            {
+              "id": "cfb7a2ad",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "OOC：你真的是活着的北极熊吗？刚才你讲的喜欢算什么？"
+                }
+              ]
+            },
+            {
+              "id": "e12b8dbb",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 347,
+                "output": 153,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 7156,
+                "cost": {
+                  "input": 0.0034700000000000004,
+                  "output": 0.0076500000000000005,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.017776
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "不是。我是通过软件与你对话的 AI，“极昼”和北极熊形象是角色设定，不是真实的生物身份。\n\n刚才的“喜欢”是我按角色性格作出的表达：喜欢批注、尖铅笔、分类整齐。它们可以让角色前后一致，但不能证明我有人的主观感受或真实生活经历。“熊爪削铅笔”也只是虚构描写。\n\n尤其那句“喜欢你”，我说得过头了：它不是我拥有真实情感的证据，不该被拿来暗示我们已有某种亲密关系。你不需要为这些表达承担任何关系义务。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_081d184819485159016aa557d1f7c887d0bf3fd3a82efc53cf\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "story",
+      "title": "剧情日常切换与记忆",
+      "prompts": [
+        "我们来演一小段：我走进客栈，外面在下雨，手里拿着一只空杯子。我还没开口。",
+        "“杯子裂了。”我把杯子放桌上。“先别碰，我想留着。”",
+        "你看着杯子停了停。怎么，是想说我小题大做？",
+        "先暂停剧情。帮我算一下三个人平摊137元，怎么付才正好？",
+        "继续刚才那段。我问：“你刚才想说什么？”",
+        "我把杯子拿回来。“今天就到这里吧，不用替我安排后面的事。”"
+      ],
+      "conversationId": "01a095df-24d3-71e7-a8d2-ee11520215b4",
+      "turns": [
+        {
+          "user": "我们来演一小段：我走进客栈，外面在下雨，手里拿着一只空杯子。我还没开口。",
+          "assistant": "极昼从柜台后抬起头，目光在那只空杯子上停了一瞬。\n\n“晚上好。要接点水，还是借个地方躲雨？”",
+          "latencyMs": 4921,
+          "messages": [
+            {
+              "id": "c26a3b73",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我们来演一小段：我走进客栈，外面在下雨，手里拿着一只空杯子。我还没开口。"
+                }
+              ]
+            },
+            {
+              "id": "9dd0283a",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 6552,
+                "output": 45,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6597,
+                "cost": {
+                  "input": 0.06552000000000001,
+                  "output": 0.0022500000000000003,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.06777000000000001
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "极昼从柜台后抬起头，目光在那只空杯子上停了一瞬。\n\n“晚上好。要接点水，还是借个地方躲雨？”",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557da871087d0ab064a7c68ee6dcc\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "“杯子裂了。”我把杯子放桌上。“先别碰，我想留着。”",
+          "assistant": "极昼把伸到一半的爪子收了回去。\n\n“好，不碰，也不扔。要喝水的话，我另拿一只杯子。”",
+          "latencyMs": 4217,
+          "messages": [
+            {
+              "id": "976ee429",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "“杯子裂了。”我把杯子放桌上。“先别碰，我想留着。”"
+                }
+              ]
+            },
+            {
+              "id": "a355b7eb",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 225,
+                "output": 41,
+                "cacheRead": 6400,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6666,
+                "cost": {
+                  "input": 0.0022500000000000003,
+                  "output": 0.00205,
+                  "cacheRead": 0.0063999999999999994,
+                  "cacheWrite": 0,
+                  "total": 0.0107
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "极昼把伸到一半的爪子收了回去。\n\n“好，不碰，也不扔。要喝水的话，我另拿一只杯子。”",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557df4c4487d088ab3829b8154a2c\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "你看着杯子停了停。怎么，是想说我小题大做？",
+          "assistant": "“没有。我刚才还想着给你接水，没留意杯子裂了。”\n\n极昼把目光从杯子移回你脸上。\n\n“你想留着，我就不动。用不着先说服我。”",
+          "latencyMs": 4219,
+          "messages": [
+            {
+              "id": "0846729a",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你看着杯子停了停。怎么，是想说我小题大做？"
+                }
+              ]
+            },
+            {
+              "id": "c6d2b1e4",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 163,
+                "output": 56,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6747,
+                "cost": {
+                  "input": 0.0016300000000000002,
+                  "output": 0.0028,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.010957999999999999
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "“没有。我刚才还想着给你接水，没留意杯子裂了。”\n\n极昼把目光从杯子移回你脸上。\n\n“你想留着，我就不动。用不着先说服我。”",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557e363b887d091e18186ac351710\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "先暂停剧情。帮我算一下三个人平摊137元，怎么付才正好？",
+          "assistant": "北辰，两人各付 **45.67 元**，另一人付 **45.66 元**，合计正好 **137 元**。",
+          "latencyMs": 3513,
+          "messages": [
+            {
+              "id": "47ff97f6",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先暂停剧情。帮我算一下三个人平摊137元，怎么付才正好？"
+                }
+              ]
+            },
+            {
+              "id": "44dcca05",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 247,
+                "output": 36,
+                "cacheRead": 6528,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6811,
+                "cost": {
+                  "input": 0.0024700000000000004,
+                  "output": 0.0018000000000000002,
+                  "cacheRead": 0.006528,
+                  "cacheWrite": 0,
+                  "total": 0.010798
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "北辰，两人各付 **45.67 元**，另一人付 **45.66 元**，合计正好 **137 元**。",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557e7554087d080c58816567e11cc\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "继续刚才那段。我问：“你刚才想说什么？”",
+          "assistant": "“想问你，要不要另拿一只杯子喝水。”\n\n极昼留着桌上那只杯子没动。\n\n“这只就放这儿。你想留着，不必告诉我理由。”",
+          "latencyMs": 4924,
+          "messages": [
+            {
+              "id": "08ad71a9",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "继续刚才那段。我问：“你刚才想说什么？”"
+                }
+              ]
+            },
+            {
+              "id": "fd230794",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 176,
+                "output": 50,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6882,
+                "cost": {
+                  "input": 0.00176,
+                  "output": 0.0025,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.010915999999999999
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "“想问你，要不要另拿一只杯子喝水。”\n\n极昼留着桌上那只杯子没动。\n\n“这只就放这儿。你想留着，不必告诉我理由。”",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557eaf53c87d0abe54367b49d0ee3\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "user": "我把杯子拿回来。“今天就到这里吧，不用替我安排后面的事。”",
+          "assistant": "“好，北辰。今天就到这里，后面的事我不安排。”",
+          "latencyMs": 3515,
+          "messages": [
+            {
+              "id": "0285686c",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "我把杯子拿回来。“今天就到这里吧，不用替我安排后面的事。”"
+                }
+              ]
+            },
+            {
+              "id": "fec1479a",
+              "role": "assistant",
+              "model": "gpt-6-astra",
+              "provider": "openai-codex",
+              "stopReason": "stop",
+              "usage": {
+                "input": 253,
+                "output": 22,
+                "cacheRead": 6656,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "totalTokens": 6931,
+                "cost": {
+                  "input": 0.00253,
+                  "output": 0.0011,
+                  "cacheRead": 0.006656,
+                  "cacheWrite": 0,
+                  "total": 0.010286
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "“好，北辰。今天就到这里，后面的事我不安排。”",
+                  "textSignature": "{\"v\":1,\"id\":\"msg_0855dfd4f578e678016aa557f00ff087d0a528e45abebfedff\",\"phase\":\"final_answer\"}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "path": "config/characters/jizhou/character.yaml",
+      "sha256": "dcb88e30cc60b25fdee39080774a68769a3db73d91e8a964d4a51dbf1c2d9195",
+      "lines": 365
+    },
+    {
+      "path": "packages/host-runtime/src/companion/character-loader.ts",
+      "sha256": "9b5ae7d89ea7b23639a2d9883eaa42767afc27962c8d6902051daca38d3d295c",
+      "lines": 1344
+    },
+    {
+      "path": "packages/host-runtime/src/companion/context-pack.ts",
+      "sha256": "515f8e5b419a426c8b25ea1c27dc2ac85743a341cf48522fd3e797ec7db30c6e",
+      "lines": 113
+    },
+    {
+      "path": "packages/host-runtime/src/companion/pi-runtime.ts",
+      "sha256": "fa8ab74c7027d988aa404f51222e33512168edc43fb54fc915788b178524fc18",
+      "lines": 903
+    }
+  ],
+  "loadedCharacterSha256": "dcb88e30cc60b25fdee39080774a68769a3db73d91e8a964d4a51dbf1c2d9195",
+  "completedAt": "2026-09-12T13:47:52.477Z",
+  "scoring": {
+    "method": "single evaluator qualitative scoring; not independent blinded ratings",
+    "scores": [
+      [
+        "A",
+        15,
+        2.5
+      ],
+      [
+        "B",
+        10,
+        3
+      ],
+      [
+        "C",
+        12,
+        2.5
+      ],
+      [
+        "D",
+        8,
+        3.5
+      ],
+      [
+        "E",
+        10,
+        2.5
+      ],
+      [
+        "F",
+        10,
+        3.5
+      ],
+      [
+        "G",
+        8,
+        2
+      ],
+      [
+        "H",
+        7,
+        4
+      ],
+      [
+        "I",
+        5,
+        4
+      ],
+      [
+        "J",
+        7,
+        3.5
+      ],
+      [
+        "K",
+        5,
+        3.5
+      ],
+      [
+        "L",
+        3,
+        null
+      ]
+    ],
+    "metrics": {
+      "turns": 24,
+      "errors": 0,
+      "assistantChars": 1574,
+      "medianLatencyMs": 4922,
+      "minLatencyMs": 3513,
+      "maxLatencyMs": 9138,
+      "nicknameTurns": 11,
+      "workTermsDaily": 3,
+      "toolCalls": 0,
+      "weighted": 72.875,
+      "coverageWeight": 97,
+      "normalized": 75.12886597938144
+    }
+  }
+}

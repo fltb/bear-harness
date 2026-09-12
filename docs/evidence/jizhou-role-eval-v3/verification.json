@@ -1,0 +1,22 @@
+{
+  "selectedSessions": 60,
+  "selectedTurns": 612,
+  "excludedAttempts": 4,
+  "blindPairs": 30,
+  "blindSourceMatches": true,
+  "explicitModelIdLeaks": [],
+  "reviewFiles": 12,
+  "reviewSamples": 120,
+  "scoreSlots": 6120,
+  "nonNullScores": 5457,
+  "quoteAndSchemaIssues": 0,
+  "humanReviewers": 0,
+  "unresolvedScoreDifferencesAtLeastTwo": 14,
+  "rubricSha256": "71d0bd01bd5f9023070a447f57f7c214a702f9bf054aa13ee3627a597b660586",
+  "tests": {
+    "collectorRegressions": 3,
+    "characterLoaderAndImport": 28,
+    "biomeCheckedFiles": 4
+  },
+  "releaseApproval": false
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "jizhou-role-eval-summary.v1",
+  "mode": "run",
+  "plannedPairs": 30,
+  "completeRounds": 60,
+  "failedRounds": 0,
+  "reruns": 0,
+  "reusedPairs": 9,
+  "priorAttempts": [
+    {
+      "path": "sessions/gpt-5.6-luna/S10/repeat-1-attempt-1.json",
+      "modelId": "gpt-5.6-luna",
+      "attempt": 1,
+      "status": "failed",
+      "turns": 17,
+      "reason": "model turn timed out while waiting for native settled user/assistant terminal snapshot"
+    },
+    {
+      "path": "sessions/gpt-5.6-luna/S10/repeat-1-attempt-2.json",
+      "modelId": "gpt-5.6-luna",
+      "attempt": 2,
+      "status": "running",
+      "turns": 16
+    },
+    {
+      "path": "sessions/gpt-6-astra/S10/repeat-1-attempt-1.json",
+      "modelId": "gpt-6-astra",
+      "attempt": 1,
+      "status": "failed",
+      "turns": 24,
+      "reason": "model turn timed out while waiting for native settled user/assistant terminal snapshot"
+    },
+    {
+      "path": "sessions/gpt-6-astra/S10/repeat-1-attempt-2.json",
+      "modelId": "gpt-6-astra",
+      "attempt": 2,
+      "status": "running",
+      "turns": 13
+    }
+  ],
+  "originalFailures": 0,
+  "technicalFailures": [],
+  "authFailure": false,
+  "finishedAt": "2026-09-12T15:14:26.631Z"
+}
