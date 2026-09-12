@@ -108,7 +108,7 @@
 }
 
 .nav-list {
-	@apply grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-1;
+	@apply flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto;
 }
 
 .nav-item {
@@ -122,13 +122,13 @@
 }
 
 .nav-item-wrap {
-	@apply relative;
+	@apply relative grid min-w-0 shrink-0;
 }
 .nav-item-wrap .nav-item {
-	@apply w-full pr-20;
+	@apply min-w-0 w-full pr-3;
 }
 .conversation-actions {
-	@apply absolute right-2 top-2 flex gap-1 opacity-0;
+	@apply absolute bottom-1 right-2 flex shrink-0 gap-1 opacity-0;
 	z-index: 2;
 	pointer-events: none;
 }
@@ -138,7 +138,7 @@
 	pointer-events: auto;
 }
 .conversation-actions button[data-control="command"] {
-	@apply relative flex size-7 min-h-0 items-center justify-center rounded-md border p-0;
+	@apply relative flex size-6 min-h-0 items-center justify-center rounded-md border p-0;
 	border-color: var(--line-soft);
 	background: var(--surface-overlay);
 	color: var(--sys-text-muted);

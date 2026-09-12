@@ -21,6 +21,101 @@ function createAppDatabase(client: DatabaseSync) {
 
 export type AppDatabase = ReturnType<typeof createAppDatabase>;
 
+export interface TraceIndexRow {
+	traceId: string;
+	modifiedAt: string;
+	event: string;
+	level: string;
+	conversationId?: string;
+	runId?: string;
+}
+
+export interface TraceQuery {
+	incidents?: boolean;
+	before?: string;
+	limit?: number;
+	level?: string;
+	event?: string;
+	conversationId?: string;
+	runId?: string;
+}
+
+/** Disposable search metadata only. JSONL remains the diagnostic source;
+ * no messages or Pi lifecycle are reconstructed from this database. */
+export class TraceIndex {
+	private readonly db: DatabaseSync;
+	constructor(path: string) {
+		this.db = new DatabaseSync(path);
+		try {
+			this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=100;
+			CREATE TABLE IF NOT EXISTS trace_search (
+			 trace_id TEXT NOT NULL, event TEXT NOT NULL, level TEXT NOT NULL,
+			 conversation_id TEXT NOT NULL, run_id TEXT NOT NULL, modified_at TEXT NOT NULL,
+			 PRIMARY KEY(trace_id,event,level,conversation_id,run_id));
+			CREATE INDEX IF NOT EXISTS trace_search_time ON trace_search(modified_at,trace_id);`);
+		} catch (error) {
+			this.db.close();
+			throw error;
+		}
+	}
+	add(row: TraceIndexRow): void {
+		this.db
+			.prepare(`INSERT INTO trace_search VALUES(?,?,?,?,?,?)
+			ON CONFLICT DO UPDATE SET modified_at=MAX(modified_at,excluded.modified_at)`)
+			.run(
+				row.traceId,
+				row.event,
+				row.level,
+				row.conversationId ?? "",
+				row.runId ?? "",
+				row.modifiedAt,
+			);
+	}
+	remove(traceId: string): void {
+		this.db.prepare("DELETE FROM trace_search WHERE trace_id=?").run(traceId);
+	}
+	clear(): void {
+		this.db.exec("DELETE FROM trace_search");
+	}
+	query(query: TraceQuery = {}): {
+		traces: Array<{ traceId: string; modifiedAt: string }>;
+		next?: string;
+	} {
+		const clauses: string[] = [];
+		if (query.incidents) clauses.push("level IN ('error','fatal')");
+		const values: Array<string | number> = [];
+		for (const [column, value] of [
+			["level", query.level],
+			["event", query.event],
+			["conversation_id", query.conversationId],
+			["run_id", query.runId],
+		]) {
+			if (value !== undefined) {
+				clauses.push(`${column}=?`);
+				values.push(value);
+			}
+		}
+		const limit = Math.max(1, Math.min(100, query.limit ?? 100));
+		const having = query.before ? "HAVING MAX(modified_at)||'|'||trace_id < ?" : "";
+		if (query.before) values.push(query.before);
+		values.push(limit + 1);
+		const rows = this.db
+			.prepare(`SELECT trace_id AS traceId, MAX(modified_at) AS modifiedAt FROM trace_search
+			${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} GROUP BY trace_id ${having}
+			ORDER BY modifiedAt DESC,trace_id DESC LIMIT ?`)
+			.all(...values) as unknown as Array<{ traceId: string; modifiedAt: string }>;
+		const traces = rows.slice(0, limit);
+		const last = traces.at(-1);
+		return {
+			traces,
+			...(rows.length > limit && last ? { next: `${last.modifiedAt}|${last.traceId}` } : {}),
+		};
+	}
+	close(): void {
+		this.db.close();
+	}
+}
+
 const INSTALLATION_IDENTITY_SINGLETON_ID = 1;
 export const DATABASE_SCHEMA_VERSION = 1;
 

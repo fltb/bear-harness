@@ -19,9 +19,9 @@ export type SpanStatus = "ok" | "error" | "cancelled";
 
 export interface DiagnosticsPolicy {
 	readonly localOnly: true;
-	readonly contentMode: "metadata-unless-trace";
-	readonly maxAgeDays: 30;
-	readonly maxBytes: 209715200;
+	readonly contentMode: "metadata";
+	readonly maxAgeDays: number;
+	readonly maxBytes: number;
 	readonly segmentBytes: 5242880;
 	readonly queueMaxRecords: 500;
 	readonly queueMaxBytes: 1048576;
@@ -31,13 +31,12 @@ export interface DiagnosticsPolicy {
 }
 
 /**
- * Pinned diagnostics policy. `localOnly` and `contentMode` are part of the
- * privacy contract: diagnostics never leave this machine. Content is accepted
- * only by the redacted TRACE catalog entry, and packaged apps clamp TRACE off.
+ * System diagnostics contain operational metadata only. Character content
+ * belongs to CharacterTrace, regardless of log level or packaging.
  */
 export const DIAGNOSTICS_POLICY: Readonly<DiagnosticsPolicy> = Object.freeze({
 	localOnly: true,
-	contentMode: "metadata-unless-trace",
+	contentMode: "metadata",
 	maxAgeDays: 30,
 	maxBytes: 209715200,
 	segmentBytes: 5242880,
@@ -149,6 +148,28 @@ export const PLATFORMS = ["darwin", "win32", "linux"] as const;
  * base level.
  */
 export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFreeze({
+	"embedding.failure": {
+		kind: "event",
+		level: "error",
+		origin: "main",
+		attributes: {
+			stage: strEnum(["network", "download", "storage", "acquisition"]),
+			outcome: str(),
+			durationMs: int(0, Number.MAX_SAFE_INTEGER),
+			bytes: int(0, Number.MAX_SAFE_INTEGER),
+		},
+	},
+	"embedding.measurement": {
+		kind: "event",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			stage: strEnum(["network", "download", "storage", "acquisition"]),
+			outcome: str(),
+			durationMs: int(0, Number.MAX_SAFE_INTEGER),
+			bytes: int(0, Number.MAX_SAFE_INTEGER),
+		},
+	},
 	// ---- completed spans ----
 	"app.session": {
 		kind: "span",
@@ -307,24 +328,6 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 			from: str(),
 			to: str(),
 			source: str(),
-		},
-	},
-	"trace.content": {
-		kind: "event",
-		level: "trace",
-		origin: "main",
-		attributes: {
-			conversationId: str(),
-			phase: strEnum([
-				"user",
-				"host_context",
-				"assistant",
-				"tool_arguments",
-				"tool_result",
-			] as const),
-			content: longStr(),
-			originalBytes: int(0, Number.MAX_SAFE_INTEGER),
-			truncated: bool(),
 		},
 	},
 	"webdev.rpc_dispatch_failure": {

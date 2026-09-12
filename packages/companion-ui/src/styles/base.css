@@ -55,6 +55,15 @@
 	--surface-warning: color-mix(in srgb, var(--sys-warning) 12%, var(--sys-canvas));
 	--surface-danger: color-mix(in srgb, var(--sys-danger) 12%, var(--sys-canvas));
 	--surface-overlay: color-mix(in srgb, var(--sys-canvas) 72%, transparent);
+	/* Scene-facing surfaces: translucency belongs to the container, not its text.
+	 * Keep popovers/forms denser than the reading plane on arbitrary package art. */
+	--surface-reading: color-mix(in srgb, var(--sys-surface) 86%, transparent);
+	--surface-glass: color-mix(in srgb, var(--sys-surface) 94%, transparent);
+	--surface-inset: color-mix(in srgb, var(--sys-text) 5%, var(--sys-surface));
+	--line-glass: color-mix(in srgb, var(--sys-text) 18%, transparent);
+	--line-timeline: color-mix(in srgb, var(--sys-text-muted) 45%, transparent);
+	--blur-reading: 18px;
+	--blur-surface: 24px;
 	--text-strong: var(--sys-text);
 	--text-soft: var(--sys-text-muted);
 	--text-on-action: var(--sys-text-on-accent);

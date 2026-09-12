@@ -89,6 +89,11 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const embeddingContinue = embeddingSetup.getByRole("button", {
 		name: zhCN.messages.continue,
 	});
+	await expect(embeddingContinue).toBeDisabled();
+	await embeddingSetup.getByText(zhCN.settings.vectorProviders.none, { exact: true }).click();
+	await expect(
+		embeddingSetup.getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+	).toBeChecked();
 	await expect(embeddingContinue).toBeEnabled();
 	await embeddingContinue.click();
 

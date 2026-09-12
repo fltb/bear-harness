@@ -160,6 +160,8 @@ export interface HostAdapter {
 
 	/** Get the logger instance provided by the host. */
 	getLogger(): Logger;
+	/** Optional host-owned diagnostic span. Never supplies runtime state. */
+	observeOperation?<T>(event: string, input: unknown, work: () => Promise<T>): Promise<T>;
 
 	/** Get the LLM runner factory configured for this host. */
 	getLLMRunnerFactory(): LLMRunnerFactory;

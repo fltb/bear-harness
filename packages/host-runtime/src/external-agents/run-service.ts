@@ -135,6 +135,11 @@ export class ExternalAgentRunService {
 			signal: AbortSignal,
 		) => TerminalReconcileResult | Promise<TerminalReconcileResult>,
 		private readonly reconciliationTimeoutMs = DEFAULT_RECONCILIATION_TIMEOUT_MS,
+		private readonly observeExecutor?: (
+			runId: string,
+			conversationId: string,
+			event: ExecutorEvent,
+		) => void,
 	) {
 		mkdirSync(runRoot, { recursive: true });
 	}
@@ -312,6 +317,11 @@ export class ExternalAgentRunService {
 		paths: string[],
 	): Promise<void> {
 		const run = this.getRun(runId);
+		try {
+			this.observeExecutor?.(runId, run.conversationId, event);
+		} catch {
+			/* Diagnostics never controls execution. */
+		}
 		if (run.completedAt) return;
 		switch (event.type) {
 			case "started":

@@ -24,7 +24,11 @@ import {
 	codexCodeModeHost,
 	managedCodexExecutable,
 } from "../src/executors/codex-adapter.js";
-import { PiAcpAdapter, piModelEnvironment } from "../src/executors/pi-adapter.js";
+import {
+	PiAcpAdapter,
+	piModelEnvironment,
+	piWorkerDependencyPaths,
+} from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 
@@ -85,6 +89,37 @@ function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): Execut
 }
 
 describe("ACP executor adapters", () => {
+	it("grants worker dependencies and package metadata without exposing the checkout", () => {
+		const root = fixtureDirectory();
+		const worker = join(root, "packages", "runtime", "dist", "executors", "worker.js");
+		mkdirSync(dirname(worker), { recursive: true });
+		writeFileSync(worker, "");
+		mkdirSync(join(root, "node_modules"));
+		const metadata = join(root, "packages", "runtime", "package.json");
+		writeFileSync(metadata, '{"type":"module"}');
+		const grants = piWorkerDependencyPaths(worker);
+		expect(grants).toContain(join(root, "node_modules"));
+		expect(grants).toContain(metadata);
+		expect(grants).not.toContain(root);
+		expect(grants).not.toContain(dirname(metadata));
+		const { system, run, runDb } = createDatabases();
+		class InspectablePiAdapter extends PiAcpAdapter {
+			spec(input: ExecutorLaunchRequest) {
+				return this.processSpec(input);
+			}
+		}
+		try {
+			const cwd = join(root, "workspace");
+			mkdirSync(cwd);
+			const input = request(cwd, { id: "pi-default", type: "pi", capabilities: {} });
+			input.task.readOnlyPaths = [join(root, "input.txt")];
+			const spec = new InspectablePiAdapter(runDb, join(root, "auth"), worker).spec(input);
+			expect(spec.readOnlyPaths).toEqual([...grants, join(root, "input.txt")]);
+		} finally {
+			run.close();
+			system.close();
+		}
+	});
 	it("resolves the managed npm Codex launcher to its exact native binary", () => {
 		const resolver = createRequire(import.meta.url);
 		const launcher = resolver.resolve("@openai/codex/bin/codex.js");

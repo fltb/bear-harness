@@ -34,6 +34,7 @@ export interface LocalWriterOptions {
 	clock?: () => number;
 	stderr?: (line: string) => void;
 	minimumLevel?: DiagnosticLevel;
+	minimumLevelSource?: () => DiagnosticLevel;
 }
 
 export type EnqueueResult =
@@ -61,7 +62,11 @@ export class LocalWriter {
 	private readonly policy: Readonly<DiagnosticsPolicy>;
 	private readonly clock: () => number;
 	private readonly stderr: (line: string) => void;
-	private readonly minimumLevel: DiagnosticLevel;
+	private readonly initialMinimumLevel: DiagnosticLevel;
+	private readonly minimumLevelSource?: () => DiagnosticLevel;
+	private get minimumLevel(): DiagnosticLevel {
+		return this.minimumLevelSource?.() ?? this.initialMinimumLevel;
+	}
 
 	private queue: QueueEntry[] = [];
 	private queueBytes = 0;
@@ -78,7 +83,8 @@ export class LocalWriter {
 		this.policy = options.policy;
 		this.clock = options.clock ?? Date.now;
 		this.stderr = options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
-		this.minimumLevel = options.minimumLevel ?? "trace";
+		this.initialMinimumLevel = options.minimumLevel ?? "trace";
+		this.minimumLevelSource = options.minimumLevelSource;
 	}
 
 	/** Queue a record. Never throws; never rejects. */

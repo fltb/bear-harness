@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDatabase } from "../storage/database.js";
@@ -28,6 +28,20 @@ export interface PiRunManifest {
 
 /** Default first-party Pi external-agent profile. */
 export const PI_ACP_PROFILE_ID = "pi-default";
+
+/** Grant installed dependencies, never the source checkout or the user's home. */
+export function piWorkerDependencyPaths(workerPath: string): string[] {
+	const paths: string[] = [];
+	let directory = dirname(realpathSync.native(workerPath));
+	while (dirname(directory) !== directory) {
+		const modules = resolve(directory, "node_modules");
+		if (existsSync(modules)) paths.push(realpathSync.native(modules));
+		const metadata = resolve(directory, "package.json");
+		if (existsSync(metadata)) paths.push(realpathSync.native(metadata));
+		directory = dirname(directory);
+	}
+	return [...new Set(paths)];
+}
 
 function piWorkerPath(bundledEntries: readonly string[] = []): string | undefined {
 	if (process.platform !== "darwin") {
@@ -87,7 +101,10 @@ export class PiAcpAdapter extends AcpExecutorController {
 			command: realpathSync.native(process.execPath),
 			args: [realpathSync.native(this.workerPath)],
 			cwd,
-			readOnlyPaths: request.task.readOnlyPaths,
+			readOnlyPaths: [
+				...piWorkerDependencyPaths(this.workerPath),
+				...(request.task.readOnlyPaths ?? []),
+			],
 			env: isolatedRunEnvironment(runRoot, {
 				ELECTRON_RUN_AS_NODE: "1",
 				BEAR_PI_AUTH_DIR: authDir,

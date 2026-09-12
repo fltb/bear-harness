@@ -47,6 +47,10 @@ CREATE TABLE provider_accounts (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE diagnostics_settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	policy TEXT NOT NULL
+);
 CREATE TABLE provider_removal_journal (
 	provider_id TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))

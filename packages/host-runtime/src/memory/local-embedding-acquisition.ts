@@ -92,6 +92,12 @@ export interface ResolvedLocalEmbeddingTarget {
 }
 
 export interface LocalEmbeddingAcquisitionOptions {
+	readonly diagnostic?: (attributes: {
+		stage: string;
+		outcome: string;
+		durationMs: number;
+		bytes: number;
+	}) => void;
 	readonly layout?: Pick<RuntimeLayout, "systemEmbeddingModels">;
 	readonly cacheRoot?: string;
 	readonly candidates?: readonly HostLocalEmbeddingCandidate[];
@@ -218,6 +224,7 @@ export class LocalEmbeddingAcquisitionService {
 	private readonly fetchModel: NonNullable<LocalEmbeddingAcquisitionOptions["fetch"]>;
 	private readonly validateModel: NonNullable<LocalEmbeddingAcquisitionOptions["validate"]>;
 	private readonly onStateChange?: LocalEmbeddingAcquisitionOptions["onStateChange"];
+	private readonly diagnostic?: LocalEmbeddingAcquisitionOptions["diagnostic"];
 	private readonly createOperationId: () => string;
 	private state: LocalEmbeddingAcquisitionState = {
 		revision: 0,
@@ -231,6 +238,7 @@ export class LocalEmbeddingAcquisitionService {
 	private closed = false;
 
 	constructor(options: LocalEmbeddingAcquisitionOptions) {
+		this.diagnostic = options.diagnostic;
 		const cacheRoot = options.cacheRoot ?? options.layout?.systemEmbeddingModels;
 		if (!cacheRoot) throw new Error("local embedding acquisition cacheRoot is required");
 		this.cacheRoot = cacheRoot;
@@ -516,10 +524,13 @@ export class LocalEmbeddingAcquisitionService {
 		operationId: string,
 		signal: AbortSignal,
 	): Promise<void> {
+		const started = performance.now();
 		let response: Response;
 		try {
 			response = await this.fetchModel(url.href, { signal, redirect: "follow" });
+			this.measure("network", String(response.status), started, 0);
 		} catch (error) {
+			this.measure("network", signal.aborted ? "cancelled" : "error", started, 0);
 			if (signal.aborted) throw error;
 			throw new AcquisitionFailure("local_embedding_download_failed");
 		}
@@ -566,11 +577,30 @@ export class LocalEmbeddingAcquisitionService {
 				});
 			}
 			await handle.sync();
+			this.measure("download", "ok", started, this.state.downloadedBytes);
 		} catch (error) {
+			this.measure(
+				"download",
+				signal.aborted ? "cancelled" : "error",
+				started,
+				this.state.downloadedBytes,
+			);
 			if (signal.aborted || error instanceof AcquisitionFailure) throw error;
 			throw new AcquisitionFailure("local_embedding_io_failed");
 		} finally {
 			await handle?.close().catch(() => undefined);
+		}
+	}
+	private measure(stage: string, outcome: string, started: number, bytes: number): void {
+		try {
+			this.diagnostic?.({
+				stage,
+				outcome,
+				durationMs: Math.round(performance.now() - started),
+				bytes,
+			});
+		} catch {
+			/* Diagnostics never changes acquisition outcome. */
 		}
 	}
 
@@ -626,9 +656,11 @@ export class LocalEmbeddingAcquisitionService {
 		await this.persist(next);
 		this.state = copyState(next);
 		this.onStateChange?.(copyState(next));
+		this.measure("acquisition", next.phase, performance.now(), next.downloadedBytes);
 	}
 
 	private async persist(state: LocalEmbeddingAcquisitionState): Promise<void> {
+		const started = performance.now();
 		await mkdir(this.cacheRoot, { recursive: true });
 		const temporary = join(this.cacheRoot, `.acquisition-state-${randomUUID()}.tmp`);
 		let handle: FileHandle | undefined;
@@ -640,6 +672,10 @@ export class LocalEmbeddingAcquisitionService {
 			await handle.close();
 			handle = undefined;
 			await rename(temporary, this.statePath);
+			this.measure("storage", "ok", started, 0);
+		} catch (error) {
+			this.measure("storage", "error", started, 0);
+			throw error;
 		} finally {
 			await handle?.close().catch(() => undefined);
 			await rm(temporary, { force: true }).catch(() => undefined);

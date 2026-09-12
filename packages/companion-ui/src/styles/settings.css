@@ -562,7 +562,27 @@
 }
 
 .prompt-textarea {
-	@apply min-h-24 w-full resize-y;
+	@apply box-border min-h-24 w-full resize-y rounded-lg border px-3 py-3 text-sm leading-relaxed;
+	border-color: var(--line-soft);
+	background: var(--surface-control);
+	color: var(--text-strong);
+}
+
+.prompt-textarea:hover:not(:disabled) {
+	border-color: var(--line-strong);
+}
+
+.prompt-textarea:focus-visible {
+	outline: var(--stroke-focus) solid var(--focus-ring);
+	outline-offset: var(--space-1);
+}
+
+.prompt-field > label {
+	@apply text-sm font-medium;
+}
+
+.prompt-field .field-hint {
+	@apply m-0 text-xs;
 }
 .message-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5 rounded-xl border p-4;
@@ -669,4 +689,41 @@
 	@apply m-0 max-h-28 overflow-y-auto border-t p-4 text-sm;
 	border-color: var(--line-soft);
 	color: var(--sys-text-muted);
+}
+
+.diagnostics-output {
+	@apply m-0 max-h-96 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs;
+	border-color: var(--line-soft);
+	background: var(--surface-canvas);
+}
+
+.diagnostics-events {
+	@apply flex min-w-0 flex-col gap-2;
+}
+
+.diagnostics-events details {
+	@apply flex min-w-0 flex-col gap-2 border-l pl-3;
+	border-color: var(--line-soft);
+}
+
+.diagnostics-events summary {
+	@apply cursor-pointer py-2 text-sm;
+}
+
+.diagnostics-controls {
+	@apply flex flex-wrap items-center gap-2;
+}
+
+.diagnostics-controls button[aria-pressed="true"] {
+	border-color: var(--sys-accent);
+	background: var(--surface-control);
+	color: var(--sys-text);
+}
+
+.diagnostics-traces {
+	@apply flex max-h-64 min-w-0 flex-col gap-2 overflow-auto;
+}
+
+.diagnostics-traces button[data-control="command"] {
+	@apply shrink-0 justify-start text-left;
 }

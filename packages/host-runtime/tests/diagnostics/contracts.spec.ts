@@ -30,7 +30,7 @@ describe("DIAGNOSTICS_POLICY", () => {
 		expect(Object.isFrozen(DIAGNOSTICS_POLICY)).toBe(true);
 		expect(DIAGNOSTICS_POLICY).toEqual({
 			localOnly: true,
-			contentMode: "metadata-unless-trace",
+			contentMode: "metadata",
 			maxAgeDays: 30,
 			maxBytes: 209715200,
 			segmentBytes: 5242880,

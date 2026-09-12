@@ -27,6 +27,7 @@ import {
 	isNewerPiVersion,
 	retainPiHistory,
 } from "../lib/pi-event-replay.js";
+import { createRendererDiagnostics } from "../lib/renderer-diagnostics.js";
 import { createCanonApi, createCharacterApi } from "./character-api.js";
 import { createExternalAgentApi } from "./external-agent-api.js";
 import type {
@@ -129,6 +130,8 @@ export type TimelineProjectionItem =
 			message: Extract<NonNullable<PiLiveState["streamingMessage"]>, { role: "assistant" }>;
 	  };
 export interface CompanionStore {
+	readonly diagnostics: CompanionClient["diagnostics"];
+	reportTimelineScroll(conversationId: string, distance: number): void;
 	readonly loading: boolean;
 	readonly systemSetupReady: boolean;
 	readonly characterSetupReady: boolean;
@@ -271,6 +274,16 @@ export function createCompanionStore(source: CompanionClient): CompanionStore {
 function createStoreForClient(source: CompanionClient): CompanionStore {
 	const queryClient = useQueryClient();
 	const client = withRpcMutations(source, queryClient);
+	const rendererId = crypto.randomUUID();
+	const rendererDiagnostics = createRendererDiagnostics(async (records) => {
+		const response = await client.diagnostics.renderer({
+			records,
+			rendererId,
+			dropped: rendererDiagnostics.health().dropped,
+		});
+		if (!response.ok) throw new Error("renderer diagnostics unavailable");
+	});
+	onCleanup(() => rendererDiagnostics.dispose());
 	const [cacheRevision, setCacheRevision] = createSignal(0);
 	const [operationError, setOperationError] = createSignal<CompanionErrorMetadata | null>(null);
 	const [mutationSessions, setMutationSessions] = createSignal<ReadonlySet<string>>(new Set());
@@ -450,6 +463,27 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	// Primitive identity equality keeps same-character refreshes valid; a new token
 	// on every transition also retires manual reads when switching A → B → A.
 	const runIdentity = createMemo(() => ({ characterId: currentCharacterId() }));
+	const recordRendererFault = (event: Event) => {
+		rendererDiagnostics.scope(currentCharacterId());
+		const conversationId = activeConversationId();
+		const cause: unknown =
+			event instanceof ErrorEvent ? event.error : "reason" in event ? event.reason : undefined;
+		const error =
+			cause instanceof Error
+				? { name: cause.name, message: cause.message, stack: cause.stack }
+				: undefined;
+		if (conversationId)
+			rendererDiagnostics.record(
+				{ conversationId, event: "fault", at: new Date().toISOString(), error },
+				true,
+			);
+	};
+	window.addEventListener("error", recordRendererFault);
+	window.addEventListener("unhandledrejection", recordRendererFault);
+	onCleanup(() => {
+		window.removeEventListener("error", recordRendererFault);
+		window.removeEventListener("unhandledrejection", recordRendererFault);
+	});
 	const runsRequest = async (request?: RunListRequest, signal?: AbortSignal) => {
 		const identity = runIdentity();
 		if (!identity.characterId) throw new CancelledError({ silent: true });
@@ -1477,8 +1511,27 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			}
 		};
 		const applyLiveEvent = (event: LivePush) => {
-			if (event.type === "pi")
+			rendererDiagnostics.scope(currentCharacterId());
+			if (event.type === "pi") {
+				const started = performance.now();
+				rendererDiagnostics.record({
+					conversationId: event.conversationId,
+					event: "received",
+					at: new Date().toISOString(),
+					sequence: event.version?.sequence,
+				});
 				applyPiEvent(event.conversationId, event.event, { capture: true, version: event.version });
+				rendererDiagnostics.record(
+					{
+						conversationId: event.conversationId,
+						event: "projected",
+						at: new Date().toISOString(),
+						sequence: event.version?.sequence,
+						durationMs: performance.now() - started,
+					},
+					event.event.type === "agent_end" || event.event.type === "message_end",
+				);
+			}
 			if (
 				event.type === "conversationActivity" &&
 				!deletedConversationIds.has(event.conversationId)
@@ -1838,6 +1891,14 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	};
 	const companionState = () => companionStateQuery.data;
 	const store: CompanionStore = {
+		diagnostics: client.diagnostics,
+		reportTimelineScroll: (conversationId, distance) => {
+			rendererDiagnostics.scope(currentCharacterId());
+			rendererDiagnostics.record(
+				{ conversationId, distance, event: "scroll", at: new Date().toISOString() },
+				true,
+			);
+		},
 		get loading() {
 			return snapshotQuery.isPending;
 		},

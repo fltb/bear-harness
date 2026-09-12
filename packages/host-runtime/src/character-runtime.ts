@@ -13,6 +13,7 @@ import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { projectPiTransientEvent } from "./companion/pi-live-events.js";
 import { PiRuntime } from "./companion/pi-runtime.js";
 import { SessionCatalog } from "./companion/session-catalog.js";
+import { CharacterTrace } from "./diagnostics/character-trace.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import {
@@ -35,6 +36,7 @@ import { InvalidationHub } from "./storage/invalidation-hub.js";
 import { conversations } from "./storage/schema.js";
 
 export interface CharacterRuntimeOptions {
+	systemLaunchId?: string;
 	dataRoot: string;
 	systemProviderDir: string;
 	storage: CompanionStorageHandle;
@@ -65,6 +67,7 @@ export class CharacterRuntime {
 	readonly sessions: SessionCatalog;
 	readonly externalAgentRuns: ExternalAgentRunService;
 	readonly auditStore: AuditStore;
+	readonly diagnostics: CharacterTrace;
 	private readonly explicitMemoryFile: ExplicitMemoryFile;
 	private memory?: TencentDbRuntime;
 	private readonly memoryCaptures = new Map<string, Set<Promise<void>>>();
@@ -76,6 +79,12 @@ export class CharacterRuntime {
 		const db = database.orm;
 		const character = this.character();
 		this.companionId = character.id;
+		this.diagnostics = new CharacterTrace(
+			paths.diagnostics,
+			character.id,
+			() => options.appSettings.loadDiagnostics(),
+			options.systemLaunchId,
+		);
 		this.explicitMemoryFile = new ExplicitMemoryFile(
 			options.dataRoot,
 			options.memoryScope.userId,
@@ -149,22 +158,32 @@ export class CharacterRuntime {
 				this.canon.retrieve(this.companionId, query, { limit, moduleId, includeAdjacent: false }),
 			memory: {
 				enabled: () => this.memoryEnabled(),
-				recall: async (_companionId, _sessionId, userText) => {
+				recall: async (_companionId, sessionId, userText) => {
 					if (!this.memoryEnabled()) return {};
-					return (await this.startMemory()).recall(userText, this.memoryNamespace);
+					return this.diagnostics.operation(
+						"memory.recall",
+						{ conversationId: sessionId },
+						{ userText },
+						async () => (await this.startMemory()).recall(userText, this.memoryNamespace),
+					);
 				},
 				capture: async (_companionId, sessionId, messages) => {
 					const pending = this.memoryCaptures.get(sessionId) ?? new Set<Promise<void>>();
 					this.memoryCaptures.set(sessionId, pending);
-					const capture = (async () => {
-						await (await this.startMemory()).captureTurn({
-							userText: messageTextForRole(messages, "user"),
-							assistantText: messageTextForRole(messages, "assistant"),
-							messages,
-							sessionKey: this.memoryNamespace,
-							sessionId,
-						});
-					})();
+					const capture = this.diagnostics.operation(
+						"memory.capture",
+						{ conversationId: sessionId },
+						undefined,
+						async () => {
+							await (await this.startMemory()).captureTurn({
+								userText: messageTextForRole(messages, "user"),
+								assistantText: messageTextForRole(messages, "assistant"),
+								messages,
+								sessionKey: this.memoryNamespace,
+								sessionId,
+							});
+						},
+					);
 					pending.add(capture);
 					try {
 						await capture;
@@ -178,11 +197,19 @@ export class CharacterRuntime {
 				},
 				search: async (_companionId, query, limit) => {
 					this.requireMemoryEnabled();
-					return (await this.startMemory()).searchMemories(query, limit);
+					return this.diagnostics.operation("memory.search", {}, { query, limit }, async () =>
+						(await this.startMemory()).searchMemories(query, limit),
+					);
 				},
-				searchConversations: async (_companionId, _sessionId, query, limit) => {
+				searchConversations: async (_companionId, sessionId, query, limit) => {
 					this.requireMemoryEnabled();
-					return (await this.startMemory()).searchConversations(query, this.memoryNamespace, limit);
+					return this.diagnostics.operation(
+						"memory.conversation_search",
+						{ conversationId: sessionId },
+						{ query, limit },
+						async () =>
+							(await this.startMemory()).searchConversations(query, this.memoryNamespace, limit),
+					);
 				},
 				explicit: {
 					read: () => this.explicitMemory(this.companionId).read(),
@@ -197,14 +224,19 @@ export class CharacterRuntime {
 				this.models.multimodalFallback(options.providers.modelProjectionFacts()),
 			sessionDiscarded: (sessionId) =>
 				db.delete(conversations).where(eq(conversations.id, sessionId)).run(),
-			context: async (conversationId, message) => {
-				const context = await contextPack.compileForTurn(conversationId, { canonQuery: message });
-				return contextPack.render(context);
-			},
-			sessionContext: (conversationId) => contextPack.sessionContext(conversationId),
+			context: (conversationId, message) =>
+				this.diagnostics.operation("pi.context.turn", { conversationId }, undefined, async () => {
+					const context = await contextPack.compileForTurn(conversationId, { canonQuery: message });
+					return contextPack.render(context);
+				}),
+			sessionContext: (conversationId) =>
+				this.diagnostics.operation("pi.context.session", { conversationId }, undefined, async () =>
+					contextPack.sessionContext(conversationId),
+				),
 			titleChanged: () => this.invalidations.invalidate(CacheKey.conversations()),
 			sessionActivity: (event) => options.onLivePush(event),
 			sessionEvent: (sessionId, nativeEvent, version) => {
+				this.diagnostics.native(sessionId, nativeEvent);
 				const event = projectPiTransientEvent(nativeEvent);
 				if (!event) return;
 				// Pi notifies message_end listeners before appending to SessionManager.
@@ -217,6 +249,12 @@ export class CharacterRuntime {
 							event,
 							version,
 						});
+						this.diagnostics.emit(
+							"transport.pi.published",
+							"trace",
+							{ version },
+							{ conversationId: sessionId },
+						);
 					} catch {
 						// A UI transport cannot interrupt Pi's event loop.
 					}
@@ -245,20 +283,48 @@ export class CharacterRuntime {
 				return { ...route, ...(apiKey ? { apiKey } : {}) };
 			},
 			async ({ run, outputs, needsResultReport }: TerminalRunResult, signal) => {
-				await awaitSource(
-					this.pi.deliverExternalResult(
-						run.conversationId,
-						run.id,
-						externalAgentResultMessage({ run, outputs }),
-					),
-					signal,
+				await this.diagnostics.operation(
+					"run.delivery",
+					{ runId: run.id, conversationId: run.conversationId },
+					{ needsResultReport },
+					() =>
+						awaitSource(
+							this.pi.deliverExternalResult(
+								run.conversationId,
+								run.id,
+								externalAgentResultMessage({ run, outputs }),
+							),
+							signal,
+						),
 				);
 				return { resultReported: needsResultReport };
 			},
+			undefined,
+			(runId, conversationId, event) =>
+				this.diagnostics.emit(
+					`executor.${event.type}`,
+					"debug",
+					{},
+					{ runId, conversationId },
+					event,
+					{ traceId: runId.replaceAll("-", ""), spanId: runId.replaceAll("-", "").slice(0, 16) },
+				),
 		);
-		this.unsubscribeRunChanges = this.externalAgentRuns.subscribeChanges((run) =>
-			options.onLivePush({ type: "run", companionId: this.companionId, run }),
-		);
+		this.unsubscribeRunChanges = this.externalAgentRuns.subscribeChanges((run) => {
+			this.diagnostics.protect(
+				run.id.replaceAll("-", ""),
+				["enqueued", "running", "needs_user", "interrupted"].includes(run.status),
+			);
+			this.diagnostics.emit(
+				"run.changed",
+				run.status === "failed" || run.status === "forced_termination" ? "error" : "info",
+				{ status: run.status },
+				{ runId: run.id, conversationId: run.conversationId },
+				run,
+				{ traceId: run.id.replaceAll("-", ""), spanId: run.id.replaceAll("-", "").slice(0, 16) },
+			);
+			options.onLivePush({ type: "run", companionId: this.companionId, run });
+		});
 		this.sessions = new SessionCatalog(db, this.pi, this.companionStore, {
 			beforeDelete: (sessionId) => this.externalAgentRuns.prepareConversationDeletion(sessionId),
 			artifacts: this.artifacts,
@@ -285,7 +351,8 @@ export class CharacterRuntime {
 				installationId: this.options.memoryScope.installationId,
 				userId: this.options.memoryScope.userId,
 				memoryConfig: this.options.memoryConfig(),
-				logger: createMemoryDiagnosticsLogger(this.options.storage.paths.diagnostics),
+				diagnostics: this.diagnostics,
+				logger: createMemoryDiagnosticsLogger(this.diagnostics),
 			});
 		}
 		return this.memory;
@@ -323,6 +390,7 @@ export class CharacterRuntime {
 		} catch (error) {
 			failure ??= error;
 		}
+		await this.diagnostics.close();
 		if (failure) throw failure;
 	}
 

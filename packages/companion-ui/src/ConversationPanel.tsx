@@ -17,7 +17,17 @@ import {
 	defaultRangeExtractor,
 	type Range,
 } from "@tanstack/solid-virtual";
-import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import {
+	createMemo,
+	createSignal,
+	For,
+	type JSX,
+	Match,
+	onCleanup,
+	onMount,
+	Show,
+	Switch,
+} from "solid-js";
 import { Icon } from "./Icon.js";
 import { finishMotionExitImmediately } from "./lib/motion.js";
 import {
@@ -38,7 +48,7 @@ import {
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
-import { DelegatedRunCard, WorkTimelineItem } from "./WorkPanel.js";
+import { DelegatedRunCard, WorkRunCard, WorkTimelineItem } from "./WorkPanel.js";
 
 type PiSessionEntryId = PiSessionEntry["id"];
 const MAX_REMEMBERED_TOOL_DISCLOSURES = 32;
@@ -125,6 +135,8 @@ function displayErrorMessage(value: string): string {
 }
 
 function PiTimelineEntryView(props: {
+	startNavigationInHeading?: boolean;
+	onEndAnchor?: (element: HTMLSpanElement) => void;
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
 	canEdit: boolean;
@@ -197,6 +209,7 @@ function PiTimelineEntryView(props: {
 					: undefined) ||
 				(assistant()?.stopReason === "error" ? t("messages.responseFailedSaved") : undefined);
 	const longResponse = () => !isUser && messageContentIsLong(content());
+	const hasResponseText = () => !isUser && text().trim().length > 0;
 	if (
 		!isUser &&
 		Array.isArray(message.content) &&
@@ -292,19 +305,7 @@ function PiTimelineEntryView(props: {
 	};
 	return (
 		<div class="timeline-entry-row" data-testid="timeline-entry-row">
-			<Show when={!isUser && store.character !== undefined}>
-				<img
-					class="agent-message-avatar"
-					src={store.character?.visual.avatarUrl}
-					alt=""
-					aria-hidden="true"
-					draggable={false}
-				/>
-			</Show>
 			<div class={isUser ? "user-message-column" : "agent-message-column"}>
-				<Show when={!isUser}>
-					<span class="agent-message-name">{characterName()}</span>
-				</Show>
 				<article
 					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed() ? " stream-failed" : ""}`}
 					data-testid="timeline-message"
@@ -312,53 +313,61 @@ function PiTimelineEntryView(props: {
 					aria-label={isUser ? t("messages.you") : characterName()}
 				>
 					<span ref={messageStartRef} class="message-scroll-anchor" />
-					<div class="msg-heading">
-						<Show when={isUser}>
-							<div class="msg-meta">{t("messages.you")}</div>
-						</Show>
-						<div class="message-direct-actions">
-							<Show when={longResponse()}>
-								<Button
-									type="button"
-									class="msg-text-action"
-									onClick={() => messageEndRef?.scrollIntoView({ block: "end" })}
-								>
-									{t("messages.jumpToResponseEnd")}
-								</Button>
+					<Show
+						when={
+							isUser || (hasResponseText() && longResponse() && !props.startNavigationInHeading)
+						}
+					>
+						<div class="msg-heading">
+							<Show when={isUser}>
+								<div class="msg-meta">{t("messages.you")}</div>
 							</Show>
-							<Show when={props.canEdit && isUser}>
-								<Button
-									ref={(element) => {
-										editOpener = element;
-									}}
-									type="button"
-									class="msg-inline-action"
-									aria-label={t("messages.edit")}
-									data-message-action="edit"
-									title={t("messages.edit")}
-									disabled={messageActionBusy()}
-									onClick={() => {
-										setEditText(text());
-										setEditing(true);
-									}}
-								>
-									<Icon icon={faPen} />
-								</Button>
-							</Show>
-							<Button
-								type="button"
-								class="msg-inline-action"
-								aria-label={
-									copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")
-								}
-								title={copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")}
-								disabled={messageActionBusy()}
-								onClick={() => void copyText(text(), "message")}
-							>
-								<Icon icon={faCopy} />
-							</Button>
+							<div class="message-direct-actions">
+								<Show when={longResponse()}>
+									<Button
+										type="button"
+										class="msg-text-action"
+										onClick={() => messageEndRef?.scrollIntoView({ block: "end" })}
+									>
+										{t("messages.jumpToResponseEnd")}
+									</Button>
+								</Show>
+								<Show when={props.canEdit && isUser}>
+									<Button
+										ref={(element) => {
+											editOpener = element;
+										}}
+										type="button"
+										class="msg-inline-action"
+										aria-label={t("messages.edit")}
+										data-message-action="edit"
+										title={t("messages.edit")}
+										disabled={messageActionBusy()}
+										onClick={() => {
+											setEditText(text());
+											setEditing(true);
+										}}
+									>
+										<Icon icon={faPen} />
+									</Button>
+								</Show>
+								<Show when={isUser}>
+									<Button
+										type="button"
+										class="msg-inline-action"
+										aria-label={
+											copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")
+										}
+										title={copiedTarget() === "message" ? t("messages.copied") : t("messages.copy")}
+										disabled={messageActionBusy()}
+										onClick={() => void copyText(text(), "message")}
+									>
+										<Icon icon={faCopy} />
+									</Button>
+								</Show>
+							</div>
 						</div>
-					</div>
+					</Show>
 					<Show when={!editing()}>
 						<NativeMessageContent
 							content={content()}
@@ -373,22 +382,13 @@ function PiTimelineEntryView(props: {
 							}
 						/>
 					</Show>
-					<Show when={longResponse() && !editing()}>
-						<div class="long-response-actions">
-							<Button
-								type="button"
-								onClick={() => messageStartRef?.scrollIntoView({ block: "start" })}
-							>
-								{t("messages.jumpToResponseStart")}
-							</Button>
-							<Button type="button" onClick={() => void copyText(text(), "message")}>
-								{copiedTarget() === "message"
-									? t("messages.copied")
-									: t("messages.copyFullResponse")}
-							</Button>
-						</div>
-					</Show>
-					<span ref={messageEndRef} class="message-scroll-anchor" />
+					<span
+						ref={(element) => {
+							messageEndRef = element;
+							props.onEndAnchor?.(element);
+						}}
+						class="message-scroll-anchor"
+					/>
 					<Show when={editing() && isUser}>
 						<div class="message-inline-edit motion-feedback">
 							<TextField class="message-inline-editor">
@@ -435,8 +435,24 @@ function PiTimelineEntryView(props: {
 							{errorText()}
 						</span>
 					</Show>
-					<Show when={(props.canCorrect || props.canBranch) && !isUser}>
-						<div class="message-primary-actions">
+					<Show when={hasResponseText() && !editing()}>
+						<footer class="message-response-actions" data-testid="message-response-actions">
+							<Button type="button" onClick={() => void copyText(text(), "message")}>
+								<Icon icon={faCopy} />
+								{copiedTarget() === "message"
+									? t("messages.copied")
+									: longResponse()
+										? t("messages.copyFullResponse")
+										: t("messages.copy")}
+							</Button>
+							<Show when={longResponse()}>
+								<Button
+									type="button"
+									onClick={() => messageStartRef?.scrollIntoView({ block: "start" })}
+								>
+									{t("messages.jumpToResponseStart")}
+								</Button>
+							</Show>
 							<Show when={props.canCorrect}>
 								<Button
 									ref={(element) => {
@@ -464,9 +480,9 @@ function PiTimelineEntryView(props: {
 									{t("messages.branch")}
 								</Button>
 							</Show>
-						</div>
+						</footer>
 					</Show>
-					<Show when={props.canCorrect && !isUser}>
+					<Show when={props.canCorrect && hasResponseText()}>
 						<Dialog
 							open={correcting()}
 							modal
@@ -670,6 +686,29 @@ function NativeToolView(props: {
 	const result = () => nativeRecord(props.result);
 	const payload = () => hostToolPayload(result()?.details);
 	const status = () => t(`messages.toolActivity.${props.status}`);
+	const actionLabel = () => {
+		const action = nativeRecord(props.args)?.action;
+		switch (props.toolName) {
+			case "host_state":
+				return action === "read"
+					? t("messages.toolActivity.stateRead")
+					: action === "update"
+						? t("messages.toolActivity.stateUpdate")
+						: props.toolName;
+			case "role_skill":
+				return t("messages.toolActivity.skill");
+			case "host_delegate":
+				return t("messages.toolActivity.delegate");
+			case "host_run_read":
+				return t("messages.toolActivity.runRead");
+			case "host_media":
+				return t("messages.toolActivity.media");
+			case "host_choices":
+				return t("messages.toolActivity.choices");
+			default:
+				return props.toolName;
+		}
+	};
 	const summary = createMemo(() => {
 		const args = nativeRecord(props.args);
 		if (!args) return "";
@@ -710,15 +749,29 @@ function NativeToolView(props: {
 			data-status={props.status}
 			data-tool-call-id={props.toolCallId}
 			data-pi-entry-id={props.entryId}
+			data-media-message={Boolean(media())}
 		>
+			<Show when={media()}>
+				{(item) => (
+					<div class="native-media-message">
+						<MediaTimelineCard media={item()} onOpen={() => props.onPreviewMedia(item())} />
+					</div>
+				)}
+			</Show>
 			<details
 				class="native-tool-disclosure"
 				open={props.expanded}
 				onToggle={(event) => props.onExpandedChange(event.currentTarget.open)}
 			>
 				<summary>
-					<strong>{props.toolName}</strong> <span>{summary()}</span>{" "}
+					<strong>{actionLabel()}</strong>
+					<Show when={actionLabel() !== props.toolName}>
+						<small>{props.toolName}</small>
+					</Show>
 					<span class="pi-tool-status">{status()}</span>
+					<Show when={summary()}>
+						<span class="native-tool-excerpt">{summary()}</span>
+					</Show>
 				</summary>
 				<h4>{t("messages.native.arguments")}</h4>
 				<Show when={props.args !== undefined} fallback={<p>{t("messages.native.noArguments")}</p>}>
@@ -746,9 +799,6 @@ function NativeToolView(props: {
 					<pre role="alert">{nativeSource(result()?.errorMessage ?? result()?.error)}</pre>
 				</Show>
 			</details>
-			<Show when={media()}>
-				{(item) => <MediaTimelineCard media={item()} onOpen={() => props.onPreviewMedia(item())} />}
-			</Show>
 			<Show when={choices()}>
 				{(value) => (
 					<section class="message-choices motion-feedback" aria-label={value().prompt}>
@@ -784,12 +834,20 @@ function NativeToolView(props: {
 
 function NativeEntryNotice(props: { entry: PiSessionEntry }) {
 	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
 	const value = () =>
 		nativeRecord(props.entry.type === "message" ? props.entry.message : props.entry)!;
 	const kind = () => value().role ?? value().type;
+	const resultRun = () => {
+		if (value().customType !== "host_external_agent_result") return undefined;
+		const runId = nativeRecord(value().details)?.runId;
+		return store.runs.find((run) => run.id === runId);
+	};
 	const hidden = () =>
 		value().display === false || (kind() === "custom" && props.entry.type !== "message");
 	const label = () => {
+		if (value().customType === "host_external_agent_result")
+			return t("messages.toolActivity.externalResult");
 		switch (kind()) {
 			case "custom_message":
 			case "custom":
@@ -825,6 +883,18 @@ function NativeEntryNotice(props: { entry: PiSessionEntry }) {
 						</>
 					}
 				>
+					<Match when={resultRun()}>
+						{(run) => (
+							<>
+								<WorkRunCard run={run()} />
+								<details>
+									<summary>{t("messages.native.source")}</summary>
+									<NativeMessageContent content={value().content} />
+									<pre>{nativeSource(value().details)}</pre>
+								</details>
+							</>
+						)}
+					</Match>
 					<Match when={kind() === "custom_message" || kind() === "custom"}>
 						<NativeMessageContent content={value().content} />
 						<Show when={value().details !== undefined}>
@@ -898,17 +968,7 @@ function StreamingAssistantProjection(props: {
 			class="timeline-entry-row timeline-entry-enter motion-timeline-entry"
 			data-testid="streaming-assistant-message"
 		>
-			<Show when={store.character !== undefined}>
-				<img
-					class="agent-message-avatar"
-					src={store.character?.visual.avatarUrl}
-					alt=""
-					aria-hidden="true"
-					draggable={false}
-				/>
-			</Show>
 			<div class="agent-message-column">
-				<span class="agent-message-name">{characterName()}</span>
 				<article
 					class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
 					aria-label={characterName()}
@@ -938,6 +998,28 @@ type VirtualTimelineItem =
 	| TimelineProjectionItem
 	| { kind: "history-control"; id: "history-control" };
 
+function isUserTimelineItem(item: VirtualTimelineItem | undefined): boolean {
+	return (
+		item?.kind === "queued-user" ||
+		item?.kind === "submission" ||
+		(item?.kind === "entry" && item.entry.type === "message" && item.entry.message.role === "user")
+	);
+}
+
+/** Presentation only: connect adjacent native process entries, never across dialogue. */
+function processItem(item: VirtualTimelineItem | undefined): boolean {
+	if (!item) return false;
+	if (item.kind === "streaming-assistant") return !messageText(item.message.content).trim();
+	if (item.kind === "tool-execution") return item.toolName !== "host_media";
+	if (item.kind !== "entry") return false;
+	if (item.entry.type !== "message") return item.entry.type !== "custom";
+	const message = item.entry.message;
+	if (message.role === "toolResult") return message.toolName !== "host_media";
+	if (message.role === "user") return false;
+	if (message.role === "assistant") return !messageText(message.content).trim();
+	return true;
+}
+
 function PiTimelineRenderer(props: {
 	items: readonly TimelineProjectionItem[];
 	following: boolean;
@@ -949,11 +1031,29 @@ function PiTimelineRenderer(props: {
 	latestLeafIds: readonly PiSessionEntryId[];
 }) {
 	const store = useCompanionStore();
-	const items = createMemo<readonly VirtualTimelineItem[]>(() =>
-		props.hasMoreBefore
-			? [{ kind: "history-control", id: "history-control" }, ...props.items]
-			: props.items,
-	);
+	const items = createMemo<readonly VirtualTimelineItem[]>(() => {
+		// Invisible assistant tool envelopes are not extra visual process nodes.
+		// Keep the authoritative projection unchanged; filter only this rendered list.
+		const visible = props.items.filter((item) => {
+			if (item.kind !== "entry" || item.entry.type !== "message") return true;
+			const message = item.entry.message;
+			if (
+				message.role !== "assistant" ||
+				message.errorMessage ||
+				message.stopReason === "error" ||
+				message.stopReason === "aborted"
+			)
+				return true;
+			return !message.content.every(
+				(part) =>
+					part.type === "toolCall" ||
+					(part.type === "thinking" && (!part.thinking || part.redacted === true)),
+			);
+		});
+		return props.hasMoreBefore
+			? [{ kind: "history-control", id: "history-control" }, ...visible]
+			: visible;
+	});
 	const [scrollMargin, setScrollMargin] = createSignal(0);
 	const [focusedItemId, setFocusedItemId] = createSignal<string>();
 	const [expandedToolIds, setExpandedToolIds] = createSignal<ReadonlySet<string>>(new Set());
@@ -985,6 +1085,28 @@ function PiTimelineRenderer(props: {
 		() => new Map(items().map((item, index) => [item.id, index] as const)),
 	);
 	const itemsById = createMemo(() => new Map(items().map((item) => [item.id, item] as const)));
+	// Display grouping only; native entries and virtual row identities remain untouched.
+	const responseStarts = createMemo(() => {
+		const starts = new Set<string>();
+		let needsHeading = true;
+		for (const item of items()) {
+			if (isUserTimelineItem(item) || item.kind === "history-control") {
+				needsHeading = true;
+				continue;
+			}
+			const response =
+				item.kind === "streaming-assistant" ||
+				item.kind === "tool-execution" ||
+				(item.kind === "entry" &&
+					item.entry.type === "message" &&
+					(item.entry.message.role === "assistant" || item.entry.message.role === "toolResult"));
+			if (response && needsHeading) {
+				starts.add(item.id);
+				needsHeading = false;
+			}
+		}
+		return starts;
+	});
 	const streamingItemId = createMemo(() => {
 		for (let index = items().length - 1; index >= 0; index -= 1) {
 			const item = items()[index];
@@ -1038,7 +1160,7 @@ function PiTimelineRenderer(props: {
 			return scrollMargin();
 		},
 		overscan: 8,
-		gap: 16,
+		gap: 8,
 		anchorTo: "end",
 		followOnAppend: false,
 		useAnimationFrameWithResizeObserver: true,
@@ -1110,7 +1232,7 @@ function PiTimelineRenderer(props: {
 	});
 	const toolArgs = createMemo(() => {
 		const args = new Map<string, unknown>();
-		for (const item of items()) {
+		for (const item of props.items) {
 			const message =
 				item.kind === "entry" && item.entry.type === "message" ? item.entry.message : undefined;
 			if (message?.role !== "assistant") continue;
@@ -1130,6 +1252,7 @@ function PiTimelineRenderer(props: {
 		>
 			<For each={renderedVirtualKeys()}>
 				{(key) => {
+					let responseEnd: HTMLSpanElement | undefined;
 					let lastVirtualItem = virtualItemsByKey().get(key);
 					const virtualItem = () => {
 						lastVirtualItem = virtualItemsByKey().get(key) ?? lastVirtualItem;
@@ -1184,6 +1307,10 @@ function PiTimelineRenderer(props: {
 							data-testid="virtual-timeline-item"
 							data-index={itemIndex()}
 							data-virtual-item-id={itemId()}
+							data-timeline-process={processItem(item())}
+							data-timeline-user={isUserTimelineItem(item())}
+							data-response-start={responseStarts().has(itemId())}
+							data-process-continues={processItem(item()) && processItem(items()[itemIndex() + 1])}
 							aria-posinset={itemIndex() + 1}
 							aria-setsize={items().length}
 							onFocusIn={() => setFocusedItemId(item()?.id)}
@@ -1195,6 +1322,36 @@ function PiTimelineRenderer(props: {
 								virtualizer.measureElement(element);
 							}}
 						>
+							<Show when={responseStarts().has(itemId())}>
+								<header class="timeline-response-heading">
+									<img
+										class="agent-message-avatar"
+										src={store.character?.visual.avatarUrl}
+										alt=""
+										aria-hidden="true"
+										draggable={false}
+									/>
+									<span class="agent-message-name">{store.character?.name}</span>
+									<Show
+										when={(() => {
+											const entry = entryItem()?.entry;
+											return (
+												entry?.type === "message" &&
+												entry.message.role === "assistant" &&
+												messageContentIsLong(entry.message.content)
+											);
+										})()}
+									>
+										<Button
+											type="button"
+											class="msg-text-action"
+											onClick={() => responseEnd?.scrollIntoView({ block: "end" })}
+										>
+											{i18n.t("messages.jumpToResponseEnd")}
+										</Button>
+									</Show>
+								</header>
+							</Show>
 							<Switch>
 								<Match when={historyItem()}>
 									<Button
@@ -1230,6 +1387,10 @@ function PiTimelineRenderer(props: {
 										<>
 											<PiTimelineEntryView
 												entry={entryItem().entry}
+												startNavigationInHeading={responseStarts().has(itemId())}
+												onEndAnchor={(element) => {
+													responseEnd = element;
+												}}
 												onPreviewMedia={props.onPreviewMedia}
 												canEdit={!turnActive()}
 												canCorrect={!turnActive()}
@@ -1269,7 +1430,10 @@ function PiTimelineRenderer(props: {
 	);
 }
 
-export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia): void }) {
+export function ConversationPanel(props: {
+	onPreviewMedia(media: CharacterMedia): void;
+	composer?: JSX.Element;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const view = useConversationViewWorkflow(store);
@@ -1291,6 +1455,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 				threadRef,
 				jumpButtonRef,
 				setTimelineFollowing,
+				(conversationId, distance) => store.reportTimelineScroll(conversationId, distance),
 			);
 	};
 	onCleanup(() => {
@@ -1403,18 +1568,21 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 					)}
 				</Show>
 			</section>
-			<Button
-				type="button"
-				class="timeline-jump-latest"
-				hidden
-				ref={(element) => {
-					jumpButtonRef = element;
-					connectTimelineScroll();
-				}}
-				onClick={() => timelineScroll?.scrollToLatest()}
-			>
-				{t("messages.returnToLatest")}
-			</Button>
+			<div class="conversation-dock">
+				<Button
+					type="button"
+					class="timeline-jump-latest"
+					hidden
+					ref={(element) => {
+						jumpButtonRef = element;
+						connectTimelineScroll();
+					}}
+					onClick={() => timelineScroll?.scrollToLatest()}
+				>
+					{t("messages.returnToLatest")}
+				</Button>
+				{props.composer}
+			</div>
 		</>
 	);
 }

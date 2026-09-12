@@ -100,7 +100,7 @@ function NativePart(props: {
 						part()?.thinking !== ""
 					}
 				>
-					<details>
+					<details class="native-thinking">
 						<summary>{t("messages.native.thinking")}</summary>
 						<MessageContent text={part()?.thinking as string} format="plain" />
 					</details>

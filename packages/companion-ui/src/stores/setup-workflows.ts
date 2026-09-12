@@ -190,10 +190,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 			await store.model.completeDefaultsOnboarding();
 		});
 	};
-	const completeMemorySetup = (): Promise<boolean> =>
-		saveModelDefault(async () => {
-			await store.embedding.completeEmbeddingMutation.mutateAsync({ choice: "none" });
-		});
 	const submit = async (stepId: string, answer?: string): Promise<void> => {
 		if (submittedStepId !== currentOnboardingStepId()) submittedStepId = null;
 		if (submitting() || submittedStepId === stepId) return;
@@ -238,7 +234,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 		selectReplyModel,
 		selectVisionModel,
 		completeModelSetup,
-		completeMemorySetup,
 		submit,
 	};
 }

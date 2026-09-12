@@ -278,10 +278,14 @@ function DesktopFrame(props: { platform?: string }) {
 							const [media, setMedia] = createSignal<CharacterMedia>();
 							return (
 								<>
-									<ConversationPanel onPreviewMedia={setMedia} />
-									<Composer
-										placeholder={workflow.composerPlaceholder()}
-										onOpenModelSettings={() => openBackstage("settings")}
+									<ConversationPanel
+										onPreviewMedia={setMedia}
+										composer={
+											<Composer
+												placeholder={workflow.composerPlaceholder()}
+												onOpenModelSettings={() => openBackstage("settings")}
+											/>
+										}
 									/>
 									<Show when={media()} keyed>
 										{(selection) => (

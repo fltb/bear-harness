@@ -26,11 +26,10 @@ export function diagnosticLevelEnabled(
 	return LEVEL_RANK[candidate] >= LEVEL_RANK[minimum];
 }
 
-/** Packaged builds never persist prompt-bearing TRACE records. */
+/** Packaged builds honor the same explicit level policy as development builds. */
 export function effectiveDiagnosticLevel(
 	requested: DiagnosticLevel | undefined,
-	packaged: boolean,
+	_packaged: boolean,
 ): DiagnosticLevel {
-	const level = requested ?? "info";
-	return packaged && level === "trace" ? "debug" : level;
+	return requested ?? "info";
 }

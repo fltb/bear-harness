@@ -11,6 +11,7 @@ import type { ProviderCatalog } from "../providers/catalog.js";
 import { BearHarnessHostAdapter } from "./tencentdb-host-adapter.js";
 
 export interface TencentDbRuntimeOptions {
+	readonly diagnostics?: import("../diagnostics/character-trace.js").CharacterTrace;
 	readonly dataDir: string;
 	readonly providers: ProviderCatalog;
 	readonly models: ModelRegistry;
@@ -140,6 +141,7 @@ export class TencentDbRuntime {
 			providers: options.providers,
 			models: options.models,
 			logger: options.logger,
+			diagnostics: options.diagnostics,
 		});
 		const config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
 		this.core = new TdaiCore({

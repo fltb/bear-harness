@@ -23,8 +23,8 @@ describe("diagnostic log levels", () => {
 		expect(diagnosticLevelEnabled("trace", "debug")).toBe(true);
 	});
 
-	it("clamps packaged TRACE to DEBUG without weakening other levels", () => {
-		expect(effectiveDiagnosticLevel("trace", true)).toBe("debug");
+	it("honors explicit TRACE in packaged and development builds", () => {
+		expect(effectiveDiagnosticLevel("trace", true)).toBe("trace");
 		expect(effectiveDiagnosticLevel("trace", false)).toBe("trace");
 		expect(effectiveDiagnosticLevel("error", true)).toBe("error");
 		expect(effectiveDiagnosticLevel(undefined, false)).toBe("info");

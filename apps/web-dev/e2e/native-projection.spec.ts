@@ -105,6 +105,36 @@ test("streamed native tool disclosure stays open through execution and restores 
 		await expect(completed.getByText(renderedArgs, { exact: true })).toBeVisible();
 		await expect(completed.getByText(resultText, { exact: true })).toBeVisible();
 
+		const userMessage = thread
+			.getByRole("article", { name: zhCN.messages.you, exact: true })
+			.filter({
+				hasText: `E2E_NATIVE_DISCLOSURE_${hold.id}`,
+			});
+		await userMessage.hover();
+		const edit = userMessage.getByRole("button", { name: zhCN.messages.edit, exact: true });
+		await expect(edit).toHaveCSS("opacity", "1");
+		await expect(edit).toHaveCSS("width", "28px");
+		await expect(edit).toHaveCSS("height", "28px");
+		const responseFooter = thread
+			.getByRole("article", { name: "极昼", exact: true })
+			.filter({
+				hasText: `E2E_NATIVE_DISCLOSURE_DONE_${hold.id}`,
+			})
+			.getByTestId("message-response-actions");
+		const responseButtons = await responseFooter.getByRole("button").all();
+		const toolBox = await completed.boundingBox();
+		const footerBox = await responseFooter.boundingBox();
+		expect(toolBox).not.toBeNull();
+		expect(footerBox).not.toBeNull();
+		expect(Math.abs(toolBox!.x - footerBox!.x)).toBeLessThanOrEqual(1);
+		expect(responseButtons.length).toBeGreaterThanOrEqual(2);
+		const positions = await Promise.all(responseButtons.map((button) => button.boundingBox()));
+		for (const position of positions) {
+			expect(position).not.toBeNull();
+			expect(position!.height).toBe(32);
+			expect(position!.y).toBe(positions[0]!.y);
+		}
+
 		await page.reload();
 		await activeConversationId(page, conversationId);
 		await expect(completed).toHaveAttribute("data-pi-entry-id", toolResult!.id);
@@ -207,6 +237,18 @@ test("native history pagination restores earlier turns without moving the visibl
 	await expect(firstMessage).toHaveAttribute("data-pi-entry-id", firstEntryId);
 	await expect(firstMessage).toBeInViewport();
 	await expect(firstMessage.getByText("E2E_NATIVE_HISTORY_1", { exact: true })).toBeVisible();
+	const jump = page.getByRole("button", { name: zhCN.messages.returnToLatest, exact: true });
+	const input = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await expect(jump).toBeInViewport();
+	await input.fill("Draft line\n".repeat(8));
+	const jumpBox = await jump.boundingBox();
+	const inputBox = await input.boundingBox();
+	expect(jumpBox).not.toBeNull();
+	expect(inputBox).not.toBeNull();
+	expect(jumpBox!.y + jumpBox!.height).toBeLessThan(inputBox!.y);
+	await jump.click();
+	await expect(jump).toBeHidden();
+	await input.fill("");
 
 	// Loaded ancestry belongs to this mounted Query. A new native turn refreshes
 	// its bounded snapshot; a whole browser reload intentionally starts a new window.

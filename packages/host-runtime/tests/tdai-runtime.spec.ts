@@ -1,8 +1,9 @@
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VectorStore } from "@bear-harness/tdai-core";
 import { describe, expect, it, vi } from "vitest";
+import { CharacterTrace } from "../src/diagnostics/character-trace.js";
 import { createMemoryDiagnosticsLogger } from "../src/memory/diagnostics.js";
 import { BearHarnessHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
@@ -152,39 +153,36 @@ describe("TencentDbRuntime standard TDAI path", () => {
 		}
 	});
 
-	it("retains bounded, actionable character diagnostics without conversation or credential content", async () => {
+	it("retains upstream diagnostic messages in the owning character directory without credentials", async () => {
 		const root = await mkdtemp(join(tmpdir(), "bear-tdai-diagnostics-"));
 		const directory = join(root, "role-a", "diagnostics");
 		const otherDirectory = join(root, "role-b", "diagnostics");
-		const logger = createMemoryDiagnosticsLogger(directory);
-		const other = createMemoryDiagnosticsLogger(otherDirectory);
+		const trace = new CharacterTrace(directory, "role-a");
+		const otherTrace = new CharacterTrace(otherDirectory, "role-b");
+		const logger = createMemoryDiagnosticsLogger(trace);
+		const other = createMemoryDiagnosticsLogger(otherTrace);
 		try {
-			for (let index = 0; index < 4000; index += 1) {
+			for (let index = 0; index < 4; index += 1) {
 				logger.warn(
 					"[memory-tdai][sqlite] reindex failed SQLITE_BUSY query=private-midnight token=secret-token /private/role-a",
 				);
 			}
 			other.warn("[memory-tdai][recall] recall timeout private-other-role");
-			const files = await readdir(directory);
-			expect(files.sort()).toEqual(["memory.jsonl", "memory.previous.jsonl"]);
-			for (const file of files) {
-				expect((await stat(join(directory, file))).size).toBeLessThanOrEqual(256 * 1024);
-				const text = await readFile(join(directory, file), "utf8");
-				expect(text).not.toMatch(/private-midnight|secret-token|private-other-role|private/);
-				for (const line of text.trim().split("\n")) {
-					expect(JSON.parse(line)).toMatchObject({
-						schemaVersion: 1,
-						stage: "sqlite",
-						operation: "reindex",
-						outcome: "failed",
-						reason: "SQLITE_BUSY",
-					});
-				}
+			for (const item of await trace.list()) {
+				const text = await trace.exportTrace(item.traceId);
+				expect(text).toContain("query=private-midnight");
+				expect(text).toContain("/private/role-a");
+				expect(text).not.toMatch(/secret-token|private-other-role/);
+				expect(JSON.parse(text).events).toHaveLength(4);
 			}
-			const otherText = await readFile(join(otherDirectory, "memory.jsonl"), "utf8");
-			expect(JSON.parse(otherText)).toMatchObject({ stage: "recall", outcome: "timeout" });
-			expect(otherText).not.toMatch(/SQLITE_BUSY|private-other-role/);
+			const [item] = await otherTrace.list();
+			if (!item) throw new Error("missing upstream trace");
+			const otherText = await otherTrace.exportTrace(item.traceId);
+			expect(otherText).not.toMatch(/SQLITE_BUSY|private-midnight/);
+			expect(otherText).toContain("private-other-role");
 		} finally {
+			await trace.close();
+			await otherTrace.close();
 			await rm(root, { recursive: true, force: true });
 		}
 	});

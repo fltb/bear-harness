@@ -86,6 +86,15 @@ describe("presentation-only DOM effects", () => {
 			notifyTimelineUserSent("a");
 			await flushEffects();
 			expect(scrollingElement.scrollTop).toBe(800);
+			Object.defineProperty(scrollingElement, "scrollHeight", { configurable: true, value: 1500 });
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+			const send = document.createElement("button");
+			document.body.append(send);
+			send.dispatchEvent(new Event("pointerup", { bubbles: true }));
+			await flushEffects();
+			expect(jumpButton.hidden).toBe(true);
+			send.remove();
+			Object.defineProperty(scrollingElement, "scrollHeight", { configurable: true, value: 1000 });
 			expect(jumpButton.hidden).toBe(true);
 
 			scrollingElement.scrollTop = 320;

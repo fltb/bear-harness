@@ -200,8 +200,8 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .intro {
 	@apply fixed inset-0 z-60 grid place-items-center overflow-y-auto p-8;
-	background: var(--surface-canvas);
-	backdrop-filter: none;
+	background: var(--surface-overlay);
+	backdrop-filter: blur(var(--blur-surface));
 }
 
 .intro-card {
@@ -209,7 +209,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 	--semantic-fg-role: default;
 	border-color: var(--line-soft);
 	color: var(--text-strong);
-	background: var(--surface-panel);
+	background: var(--surface-glass);
 	box-shadow: var(--shadow-overlay);
 }
 
@@ -268,7 +268,8 @@ button[data-variant="primary"]:hover:not(:disabled),
 .backstage-sheet {
 	@apply rounded-2xl border;
 	border-color: var(--line-soft);
-	background: var(--surface-panel);
+	background: var(--surface-glass);
+	backdrop-filter: blur(var(--blur-surface));
 	box-shadow: var(--shadow-overlay);
 }
 
@@ -461,8 +462,10 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .thread {
-	@apply gap-4 overflow-x-clip rounded-none border-0 bg-none bg-transparent px-6 py-5;
-	backdrop-filter: none;
+	@apply gap-4 overflow-x-clip rounded-2xl border bg-none px-6 py-6;
+	border-color: var(--line-glass);
+	background: var(--surface-reading);
+	backdrop-filter: blur(var(--blur-reading));
 }
 
 .msg {
@@ -475,22 +478,23 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .bear-msg {
-	@apply relative self-start pr-12;
+	@apply relative self-start pr-0;
 }
 
 .bear-msg {
-	border-color: var(--line-soft);
+	@apply w-full rounded-none border-0 p-0;
+	background: transparent;
 	box-shadow: none;
 }
 
 .agent-message-avatar {
-	@apply mt-5 size-9 shrink-0 rounded-full border object-cover shadow-app;
+	@apply size-8 shrink-0 rounded-full border object-cover;
 	border-color: var(--line-soft);
 	background: var(--surface-panel);
 }
 
 .agent-message-name {
-	@apply mb-1 block text-xs font-medium;
+	@apply block text-sm font-medium;
 	color: var(--sys-text-muted);
 }
 
@@ -503,7 +507,17 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .bear-msg .msg-heading {
-	@apply absolute right-2 top-2 m-0 min-h-0;
+	@apply static m-0 mb-2 min-h-0 justify-end;
+}
+
+.message-markdown th,
+.message-markdown td {
+	@apply min-w-24 align-top;
+}
+
+.message-markdown th:last-child,
+.message-markdown td:last-child {
+	@apply min-w-48;
 }
 
 .msg-heading {
@@ -528,9 +542,65 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .pi-tool-result {
-	@apply max-w-2xl rounded-lg border-0 px-3 py-2;
+	@apply relative w-full max-w-none rounded-none border-0 px-0 py-1;
 	color: var(--sys-text-muted);
-	background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+	background: transparent;
+}
+
+.native-tool-disclosure > summary {
+	@apply flex min-h-8 flex-wrap items-baseline gap-x-3 gap-y-1 py-1 text-sm;
+}
+
+.native-tool-disclosure {
+	@apply border-t-0 pt-0;
+}
+
+.native-tool-disclosure > summary > strong {
+	@apply font-medium;
+	color: var(--text-strong);
+}
+
+.native-tool-disclosure > summary > small {
+	@apply text-xs;
+	color: var(--sys-text-muted);
+}
+
+.native-tool-excerpt {
+	@apply order-3 basis-full text-xs leading-relaxed line-clamp-2;
+}
+
+.native-tool-disclosure > summary::after {
+	@apply ml-1 text-xs;
+	content: "+";
+	color: var(--text-soft);
+}
+
+.native-tool-disclosure[open] > summary::after {
+	content: "−";
+}
+
+.native-tool-disclosure[open] .native-tool-excerpt {
+	@apply line-clamp-none;
+}
+
+.pi-tool-result > .task-inspect {
+	@apply mt-2 min-h-8 rounded-md px-2 py-1 text-xs;
+	background: transparent;
+	border-color: var(--line-glass);
+}
+
+.native-tool-disclosure .pi-tool-status {
+	@apply ml-auto shrink-0 text-xs;
+}
+
+.native-thinking {
+	@apply my-3 border-l pl-4 text-sm;
+	border-color: var(--line-timeline);
+	color: var(--text-soft);
+}
+
+.native-thinking > summary {
+	@apply min-h-10 cursor-pointer py-2;
 }
 
 .tool-activity-group {
@@ -597,8 +667,9 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .composer {
 	@apply gap-2 rounded-2xl border p-3;
-	border-color: var(--line-soft);
-	background: var(--surface-panel);
+	border-color: var(--line-glass);
+	background: var(--surface-glass);
+	backdrop-filter: blur(var(--blur-surface));
 	box-shadow: var(--shadow-raised);
 }
 
@@ -653,7 +724,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .virtual-timeline-item {
-	@apply absolute left-0 top-0 flex min-w-0 w-full flex-col gap-4;
+	@apply absolute left-0 top-0 flex min-w-0 w-full flex-col gap-2;
 	contain: layout style;
 }
 
@@ -852,4 +923,269 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .plugin-trust-dialog {
 	z-index: calc(var(--layer-top-overlay) - 1);
+}
+
+/* Shared surface recipes: scene-facing planes, contained cards, opaque inputs.
+ * These apply to product surfaces without changing their lifecycle or routing. */
+.sidebar {
+	border-color: var(--line-glass);
+	background: var(--surface-glass);
+	backdrop-filter: blur(var(--blur-surface));
+}
+
+.identity {
+	@apply gap-3 pb-6 pt-2;
+}
+
+.identity strong {
+	@apply text-base font-medium;
+}
+
+.nav-item strong {
+	@apply text-sm font-medium;
+}
+
+.nav-item[aria-current="page"] {
+	background: var(--surface-inset);
+}
+
+.nav-item[aria-current="page"]::before {
+	@apply inset-y-4 w-0.5;
+}
+
+.system-nav {
+	@apply border-transparent;
+	background: transparent;
+}
+
+.search-trigger,
+.new-conversation {
+	border-color: var(--line-glass);
+	background: var(--surface-inset);
+}
+
+.attachment-preview-column,
+.conversation-state-panel,
+.queue-pop.task-workspace,
+.media-viewer,
+.confirmation-dialog,
+.plugin-trust-dialog,
+.work-permission-dialog {
+	border-color: var(--line-glass);
+	background: var(--surface-glass);
+	backdrop-filter: blur(var(--blur-surface));
+}
+
+.confirmation-dialog,
+.plugin-trust-dialog,
+.work-permission-dialog {
+	@apply rounded-2xl;
+	box-shadow: var(--shadow-overlay);
+}
+
+.provider-card,
+.detail-card,
+.current-role-package-summary,
+.role-row,
+.canon-row,
+.memory-entry,
+.candidate-card,
+.archived-conversation-row,
+.intro-choice,
+.intro-provider-tile {
+	border-color: var(--line-glass);
+	background: var(--surface-inset);
+}
+
+.settings-section,
+.settings-actions,
+.backstage-head,
+.intro-actions {
+	border-color: var(--line-glass);
+}
+
+.msg.user {
+	@apply rounded-2xl rounded-br-sm border;
+	border-color: var(--line-glass);
+}
+
+.native-tool-disclosure pre,
+.native-session-notice pre,
+.diagnostic-details {
+	@apply rounded-lg border p-3;
+	border-color: var(--line-glass);
+	background: var(--surface-inset);
+}
+
+.native-tool-disclosure h4 {
+	@apply mb-2 mt-4 text-xs font-medium;
+	color: var(--text-soft);
+}
+
+.completion-card,
+.failure-card,
+.work-action-line .action-proposal {
+	@apply rounded-xl border p-4;
+	border-color: var(--line-glass);
+	background: var(--surface-inset);
+}
+
+.failure-card {
+	border-color: color-mix(in srgb, var(--text-danger) 40%, transparent);
+	background: var(--surface-danger);
+}
+
+.presence-stage img {
+	filter: drop-shadow(0 12px 24px var(--shadow-color));
+}
+
+.task-row {
+	@apply rounded-xl border p-4;
+	border-color: var(--line-glass);
+	background: var(--surface-inset);
+}
+
+.task-row[data-run-status="failed"],
+.task-row[data-run-status="forced_termination"] {
+	border-color: color-mix(in srgb, var(--text-danger) 40%, transparent);
+	background: var(--surface-danger);
+}
+
+.task-row[data-run-status="failed"] .system-label,
+.task-row[data-run-status="forced_termination"] .system-label {
+	color: var(--text-danger);
+}
+
+/* Virtual rows own the rail, including the virtualizer's 8px inter-row gap.
+ * Neighbour classification uses the complete Pi projection, not mounted DOM siblings. */
+.virtual-timeline-item:not([data-process-continues="true"]) {
+	@apply pb-2;
+}
+
+.virtual-timeline-item:not([data-timeline-user="true"]) {
+	@apply pl-10;
+}
+
+.timeline-response-heading {
+	@apply relative flex min-h-8 items-center justify-between gap-3;
+}
+
+.timeline-response-heading .agent-message-avatar {
+	@apply absolute -left-10 top-0;
+}
+
+.virtual-timeline-item[data-timeline-process="true"]::before {
+	@apply absolute left-4 top-0 bottom-0 w-px;
+	content: "";
+	background: var(--line-timeline);
+}
+
+.virtual-timeline-item[data-process-continues="true"]::before {
+	@apply -bottom-2;
+}
+
+.virtual-timeline-item[data-timeline-process="true"]::after {
+	@apply absolute left-3 top-4 size-2 rounded-full;
+	content: "";
+	background: var(--sys-text-muted);
+}
+
+.virtual-timeline-item:has(.pi-tool-result[data-status="running"])::after {
+	background: var(--text-action);
+}
+
+.virtual-timeline-item:has(.pi-tool-result[data-status="failed"])::after {
+	background: var(--text-danger);
+}
+
+.virtual-timeline-item[data-timeline-process="true"][data-response-start="true"]::before {
+	@apply top-10;
+}
+
+.virtual-timeline-item[data-timeline-process="true"][data-response-start="true"]::after {
+	@apply top-14;
+}
+
+.virtual-timeline-item[data-timeline-process="true"] .native-thinking {
+	@apply m-0 border-0 pl-0;
+}
+
+.native-session-notice {
+	@apply w-full rounded-none border-0 px-0 py-2;
+	background: transparent;
+}
+
+.native-session-notice > strong {
+	@apply mb-2 block text-xs font-medium;
+}
+
+.native-media-message {
+	@apply grid gap-2;
+}
+
+.pi-tool-result[data-media-message="true"] > .native-tool-disclosure {
+	@apply mt-2;
+}
+
+.pi-tool-result[data-media-message="true"] > .native-tool-disclosure > summary {
+	@apply justify-start text-xs;
+}
+
+.pi-tool-result[data-media-message="true"] .pi-tool-status {
+	@apply ml-0;
+}
+
+.persona-examples {
+	@apply grid min-w-0 gap-4 border-0 p-0;
+}
+
+.role-row > div:first-of-type,
+.current-role-package-summary > div {
+	@apply grid min-w-0 gap-1;
+}
+
+.role-library .role-row {
+	@apply gap-3;
+}
+
+.role-library .role-row img,
+.role-row-avatar-fallback {
+	@apply grid size-12 shrink-0 place-items-center rounded-full border object-cover;
+	border-color: var(--line-glass);
+	background: var(--surface-control);
+}
+
+.current-role-prompt-editor {
+	@apply gap-5 p-5;
+}
+
+.current-role-package-manager {
+	@apply gap-5;
+}
+
+.current-role-prompt-editor > legend {
+	@apply text-base font-medium;
+	color: var(--text-strong);
+}
+
+.role-row strong,
+.role-row span {
+	@apply leading-relaxed;
+}
+
+.persona-examples > legend {
+	@apply mb-3 text-base font-medium;
+}
+
+.persona-example {
+	@apply grid min-w-0 gap-3 rounded-xl border p-4;
+	border-color: var(--line-glass);
+}
+
+.nav-item-wrap .nav-item > span {
+	@apply pr-20;
+}
+
+.nav-list .nav-item strong {
+	@apply min-w-0 truncate;
 }

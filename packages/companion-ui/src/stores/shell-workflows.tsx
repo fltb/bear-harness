@@ -20,7 +20,8 @@ export type SystemSettingsPage =
 	| "providers"
 	| "agents"
 	| "network"
-	| "memory";
+	| "memory"
+	| "diagnostics";
 
 type Translate = TFunction<Namespace, undefined>;
 

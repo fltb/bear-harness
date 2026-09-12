@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { DEFAULT_TRACE_POLICY, type TracePolicy } from "../diagnostics/character-trace.js";
 import type { AppDatabase } from "./database.js";
 import { appSettings } from "./schema.js";
 
@@ -56,7 +57,33 @@ const SINGLETON_ID = 1;
 
 /** Read/write the singleton app_settings row. */
 export class AppSettingsStore {
-	constructor(private readonly db: AppDatabase) {}
+	private diagnosticPolicy?: TracePolicy;
+	constructor(private readonly db: AppDatabase) {
+		// New installation-wide feature table; no character content or copied runtime state.
+		db.run(
+			sql`CREATE TABLE IF NOT EXISTS diagnostics_settings (id INTEGER PRIMARY KEY CHECK(id = 1), policy TEXT NOT NULL)`,
+		);
+		this.loadDiagnostics();
+	}
+
+	loadDiagnostics(): TracePolicy {
+		if (this.diagnosticPolicy) return { ...this.diagnosticPolicy };
+		const row = this.db.get<{ policy: string }>(
+			sql`SELECT policy FROM diagnostics_settings WHERE id = 1`,
+		);
+		this.diagnosticPolicy = row
+			? (JSON.parse(row.policy) as TracePolicy)
+			: { ...DEFAULT_TRACE_POLICY };
+		return { ...this.diagnosticPolicy };
+	}
+
+	saveDiagnostics(policy: TracePolicy): TracePolicy {
+		this.db.run(
+			sql`INSERT INTO diagnostics_settings (id, policy) VALUES (1, ${JSON.stringify(policy)}) ON CONFLICT(id) DO UPDATE SET policy = excluded.policy`,
+		);
+		this.diagnosticPolicy = { ...policy };
+		return this.loadDiagnostics();
+	}
 
 	load(): AppSettingsRecord {
 		const row = this.db

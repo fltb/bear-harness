@@ -482,6 +482,9 @@ export function createL1Runner(opts: {
 					instanceId: getInstanceId?.(),
 				});
 
+				if (!l1Result.success || l1Result.failedCount > 0) {
+					throw new Error(`memory_l1_extraction_incomplete sessionId=${group.sessionId}: extracted=${l1Result.extractedCount}, stored=${l1Result.storedCount}, failed=${l1Result.failedCount}; checkpoint preserved`);
+				}
 				totalExtracted += l1Result.extractedCount;
 				totalStored += l1Result.storedCount;
 				totalSkipped += l1Result.skippedCount;

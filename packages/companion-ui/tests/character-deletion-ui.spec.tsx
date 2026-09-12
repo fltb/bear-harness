@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 import { CurrentRolePackageManager } from "../src/features/CurrentRolePackageManager.js";
 import type { CharacterDeletionStatus } from "../src/stores/ipc.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
@@ -11,7 +12,13 @@ const document = {
 	characterId: "removable-role",
 	origin: "local" as const,
 	writable: true,
-	yaml: `prompt:
+	yaml: `behavior:
+  identity:
+    summary: Canonical package identity
+  examples:
+    - user: Hello
+      assistant: Hi
+prompt:
   description: Test description
   personality: Test personality
   scenario: Test scenario
@@ -25,6 +32,7 @@ media: []
 function renderManager(
 	initialStatus: CharacterDeletionStatus,
 	operations: {
+		savePackage?: (yaml: string, sha256: string) => Promise<typeof document>;
 		deleteRuntime?: (id: string) => Promise<{ deleted: boolean }>;
 		deletePackage?: (id: string) => Promise<{ deleted: boolean }>;
 	} = {},
@@ -54,7 +62,7 @@ function renderManager(
 			loading={() => false}
 			error={() => undefined}
 			selectPackage={() => undefined}
-			savePackage={() => Promise.resolve(document)}
+			savePackage={operations.savePackage ?? (() => Promise.resolve(document))}
 			pluginTrust={() =>
 				Promise.resolve({ origin: "local", pluginHash: "", pluginsPresent: false, trusted: true })
 			}
@@ -76,6 +84,83 @@ function renderManager(
 }
 
 describe("character physical deletion UI", () => {
+	it("saves persona, examples and System Prompt to separate original paths", async () => {
+		const user = userEvent.setup();
+		const savePackage = vi.fn(async () => document);
+		renderManager(
+			{
+				characterId: document.characterId,
+				active: false,
+				default: false,
+				runtimePresent: true,
+				packagePresent: true,
+			},
+			{ savePackage },
+		);
+		const summary = screen.getByRole("textbox", {
+			name: zhCN.currentRolePackage.personaFields.summary,
+		});
+		await user.clear(summary);
+		await user.type(summary, "Changed identity");
+		const example = screen.getByRole("textbox", {
+			name: `${zhCN.currentRolePackage.exampleRoles.assistant} 1`,
+			exact: true,
+		});
+		await user.clear(example);
+		await user.type(example, "Updated answer");
+		expect(example).toHaveFocus();
+		const systemPrompt = screen.getByRole("textbox", {
+			name: zhCN.currentRolePackage.promptFields.system_prompt,
+		});
+		await user.clear(systemPrompt);
+		await user.type(systemPrompt, "Independent prompt");
+		await user.click(
+			screen.getByRole("button", { name: zhCN.currentRolePackage.save, exact: true }),
+		);
+		await waitFor(() => expect(savePackage).toHaveBeenCalledTimes(1));
+		const [yaml, sha256] = savePackage.mock.calls[0] as unknown as [string, string];
+		const next = parse(yaml);
+		expect(sha256).toBe(document.sha256);
+		expect(next.behavior.identity.summary).toBe("Changed identity");
+		expect(next.behavior.examples).toEqual([{ user: "Hello", assistant: "Updated answer" }]);
+		expect(next.prompt.system_prompt).toBe("Independent prompt");
+		expect(next.prompt.description).toBe("Test description");
+		expect(next.media).toEqual([]);
+		expect(parse(document.yaml).behavior.identity.summary).toBe("Canonical package identity");
+	});
+
+	it("shows the package identity separately from supplemental prompt text", () => {
+		renderManager({
+			characterId: document.characterId,
+			active: false,
+			default: false,
+			runtimePresent: true,
+			packagePresent: true,
+		});
+		const introduction = screen.getByRole("group", {
+			name: zhCN.currentRolePackage.promptEditor,
+			exact: true,
+		});
+		expect(
+			within(introduction).getByRole("textbox", {
+				name: zhCN.currentRolePackage.personaFields.summary,
+			}),
+		).toHaveValue("Canonical package identity");
+		expect(
+			within(introduction).queryByRole("textbox", {
+				name: zhCN.currentRolePackage.promptFields.system_prompt,
+			}),
+		).toBeNull();
+		expect(
+			within(
+				screen.getByRole("group", { name: zhCN.currentRolePackage.systemPromptTitle }),
+			).getByRole("textbox", { name: zhCN.currentRolePackage.promptFields.system_prompt }),
+		).toHaveValue("Test system prompt");
+		expect(
+			screen.getByRole("textbox", { name: zhCN.currentRolePackage.promptFields.description }),
+		).toHaveValue("Test description");
+	});
+
 	it("keeps default-package protection separate from runtime deletion", () => {
 		renderManager({
 			characterId: document.characterId,

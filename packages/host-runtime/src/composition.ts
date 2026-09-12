@@ -45,6 +45,7 @@ import {
 } from "./companion/pi-live-events.js";
 import type { PiRuntime } from "./companion/pi-runtime.js";
 import type { SessionCatalog } from "./companion/session-catalog.js";
+import type { CharacterTrace } from "./diagnostics/character-trace.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
 import type { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
@@ -86,6 +87,8 @@ export interface HostCompositionContext {
 	sessions: SessionCatalog;
 	models: ModelRegistry;
 	appSettings: AppSettingsStore;
+	diagnostics: CharacterTrace;
+	diagnosticDirectories: { system: string; character: string; memory: string };
 	localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
 	memoryEmbedding: {
 		validateLocal(options: Parameters<typeof validateLocalEmbedding>[0]): Promise<{ ready: true }>;
@@ -936,6 +939,81 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.settings.get, async () => ({
 		settings: await projectSettings(),
 	}));
+	const diagnosticSettings = () => ({
+		policy: s.appSettings.loadDiagnostics(),
+		health: s.diagnostics.health(),
+		canReveal: Boolean(s.characterPackagePresenter),
+	});
+	dispatcher.registerHandler(RPC.diagnostics.get, async () => diagnosticSettings());
+	dispatcher.registerHandler(RPC.diagnostics.renderer, async ({ records, rendererId, dropped }) => {
+		for (const id of new Set(records.map((record) => record.conversationId)))
+			await requireOwnedConversation(s, id);
+		for (const record of records) {
+			const { error, ...metadata } = record;
+			s.diagnostics.emit(
+				`renderer.${record.event}`,
+				record.event === "fault" ? "error" : "trace",
+				{ ...metadata, rendererId, source: "renderer-reported" },
+				{ conversationId: record.conversationId },
+				error ? { error } : undefined,
+			);
+		}
+		s.diagnostics.emit(
+			"renderer.buffer",
+			dropped ? "warn" : "debug",
+			{ rendererId, dropped, source: "renderer-reported" },
+			{ conversationId: records[0]?.conversationId },
+		);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.diagnostics.pin, async ({ traceId, pinned }) => {
+		await s.diagnostics.pin(traceId, pinned);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.diagnostics.metrics, async () => ({
+		content: JSON.stringify(s.diagnostics.metrics()),
+	}));
+	dispatcher.registerHandler(RPC.diagnostics.set, async ({ policy }) => {
+		if (policy.traceUntil > Date.now() + 60 * 60 * 1000)
+			throw { kind: "invalid_request", reason: "trace_window_max_one_hour" };
+		s.appSettings.saveDiagnostics(policy);
+		return diagnosticSettings();
+	});
+	const diagnosticRead = async <T>(operation: string, read: () => Promise<T>): Promise<T> => {
+		try {
+			return await read();
+		} catch (error) {
+			s.diagnostics.emit("diagnostics.read_failed", "error", { operation, error });
+			throw { kind: "unavailable", reason: "diagnostics_read_failed" };
+		}
+	};
+	dispatcher.registerHandler(RPC.diagnostics.list, async (query) =>
+		diagnosticRead("list", () => s.diagnostics.query(query)),
+	);
+	dispatcher.registerHandler(RPC.diagnostics.read, async ({ traceId, offset }) =>
+		diagnosticRead("read", async () => ({
+			...(await s.diagnostics.page(traceId, offset)),
+			pinned: await s.diagnostics.isPinned(traceId),
+		})),
+	);
+	dispatcher.registerHandler(RPC.diagnostics.payload, async ({ traceId, sha256 }) => ({
+		content: await diagnosticRead("payload", () => s.diagnostics.payload(traceId, sha256)),
+	}));
+	dispatcher.registerHandler(RPC.diagnostics.export, async ({ traceId }) => ({
+		content: await diagnosticRead("export", () => s.diagnostics.exportTrace(traceId)),
+	}));
+	dispatcher.registerHandler(RPC.diagnostics.exportPage, async ({ traceId, offset, end }) =>
+		diagnosticRead("export", () => s.diagnostics.exportPage(traceId, offset, end)),
+	);
+	dispatcher.registerHandler(RPC.diagnostics.reveal, async ({ scope }) => {
+		if (!s.characterPackagePresenter)
+			throw { kind: "unavailable", reason: "native_directory_reveal_unavailable" };
+		await s.diagnostics.flush();
+		await s.characterPackagePresenter.reveal(
+			scope === "latest" ? await s.diagnostics.latestDirectory() : s.diagnosticDirectories[scope],
+		);
+		return {};
+	});
 	dispatcher.registerHandler(RPC.settings.set, async ({ settings }) => {
 		let app = s.appSettings.load();
 		if (settings.networkProxy) {

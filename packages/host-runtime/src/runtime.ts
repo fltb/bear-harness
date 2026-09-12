@@ -54,6 +54,14 @@ export interface RuntimeProductConfig {
 }
 
 export interface HostRuntimeOptions {
+	systemDiagnosticsDirectory?: string;
+	systemLaunchId?: string;
+	systemDiagnostic?: (attributes: {
+		stage: string;
+		outcome: string;
+		durationMs: number;
+		bytes: number;
+	}) => void;
 	dataDir: string;
 	characterSeedRoot: string;
 	productConfig: RuntimeProductConfig;
@@ -108,6 +116,9 @@ export class HostRuntime {
 	private unsubscribeProxyHotReload?: () => void;
 	private started = false;
 	private closed = false;
+	get diagnosticsPolicy() {
+		return this.appSettings.loadDiagnostics();
+	}
 
 	constructor(options: HostRuntimeOptions) {
 		this.options = options;
@@ -121,6 +132,7 @@ export class HostRuntime {
 		this.credentials = new CredentialStore(systemDb, options.credentialVault);
 		this.appSettings = new AppSettingsStore(systemDb);
 		this.localEmbeddingAcquisition = new LocalEmbeddingAcquisitionService({
+			diagnostic: options.systemDiagnostic,
 			layout: this.storage.layout,
 			onStateChange: (state) => {
 				for (const listener of this.livePushListeners)
@@ -207,7 +219,20 @@ export class HostRuntime {
 	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
 		if (this.closed)
 			return Promise.resolve({ ok: false, error: { kind: "unavailable", reason: "host_closed" } });
-		return this.lifecycle.route((resource) => resource.dispatcher.dispatch(channel, params));
+		return this.lifecycle.route((resource) => {
+			if (channel.startsWith("diagnostics.")) return resource.dispatcher.dispatch(channel, params);
+			const span = resource.runtime.diagnostics.span("rpc.request", {}, { channel }, true);
+			return span.run(async () => {
+				try {
+					const response = await resource.dispatcher.dispatch(channel, params);
+					span.end(response.ok ? "ok" : "error", response.ok ? undefined : response.error);
+					return response;
+				} catch (error) {
+					span.end("error", error);
+					throw error;
+				}
+			});
+		});
 	}
 
 	characterDeletionStatus(characterId: string): {
@@ -341,6 +366,12 @@ export class HostRuntime {
 			localEmbeddingAcquisition: this.localEmbeddingAcquisition,
 			memoryScope: this.memoryScope,
 			appSettings: this.appSettings,
+			diagnostics: runtime.diagnostics,
+			diagnosticDirectories: {
+				system: this.options.systemDiagnosticsDirectory ?? this.storage.layout.systemDiagnostics,
+				character: runtime.diagnostics.root,
+				memory: this.storage.layout.companion(runtime.companionId).tdaiMemory,
+			},
 			credentials: this.credentials,
 			externalAgentRuns: runtime.externalAgentRuns,
 			artifacts: runtime.artifacts,
@@ -421,6 +452,7 @@ export class HostRuntime {
 
 	private createCharacterRuntime(companionId: string): CharacterRuntime {
 		return new CharacterRuntime({
+			systemLaunchId: this.options.systemLaunchId,
 			dataRoot: this.options.dataDir,
 			systemProviderDir: this.storage.layout.systemProviders,
 			storage: this.storage.open(companionId),

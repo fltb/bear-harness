@@ -13,13 +13,11 @@ const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
 const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
 const dataScope = `${process.pid}-${randomUUID()}`;
-// The root shim imports the built production Pi ACP worker. The dev supervisor
-// builds host-runtime first; authored provider responses still execute real native
-// filesystem tools. Keep mutable Run roots outside the read-only repository mount
-// so sandbox read/write overlap checks remain intact.
+// Exercise the production entrypoint and its real dependency grants, not a
+// repository-root shim that would accidentally expose the whole checkout.
 const dataDirectory = resolve(realpathSync.native(tmpdir()), `bear-harness-web-dev-${dataScope}`);
-const piWorkerPath = realpathSync.native(
-	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
+const piWorkerPath = fileURLToPath(
+	new URL("../../packages/host-runtime/dist/executors/pi-acp-worker.js", import.meta.url),
 );
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
 const hostedRunnerProfile = process.env.BEAR_E2E_PROFILE === "hosted";

@@ -68,11 +68,14 @@
 	grid-area: thread;
 }
 
-.composer {
+.conversation-dock {
 	/* Keep the bottom inset constant; reserve spacing above, not in a
 	 * bottom margin that would clamp the sticky box at the document end. */
-	@apply sticky bottom-4 z-30 m-0 mt-6;
+	@apply sticky bottom-4 z-30 m-0 mt-6 grid min-w-0 gap-2;
 	grid-area: composer;
+}
+
+.composer {
 	grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
@@ -81,21 +84,21 @@
 	@apply hidden;
 }
 
-/* Allocate available main width once: 40% stage, 60% conversation.
+/* Allocate available main width once: 60% conversation, 40% stage.
  * Narrow mains preserve up to 480px for conversation before shrinking it. */
 .app[data-layout="window"] .main,
 .app[data-layout="fullscreen"] .main {
 	@apply px-6;
 	grid-template-areas:
-		"stage header"
-		"stage thread"
-		"stage composer";
-	grid-template-columns: minmax(0, 2fr) minmax(min(480px, 100%), 3fr);
+		"header stage"
+		"thread stage"
+		"composer stage";
+	grid-template-columns: minmax(min(480px, 100%), 3fr) minmax(0, 2fr);
 }
 
 /* Window template: 1280 x 800 canonical viewport. */
 .app[data-layout="window"] .shell {
-	grid-template-columns: clamp(248px, 22cqw, 288px) minmax(0, 1fr);
+	grid-template-columns: clamp(220px, 19cqw, 260px) minmax(0, 1fr);
 }
 
 .app[data-layout="window"] .main {
@@ -103,17 +106,21 @@
 }
 
 .app[data-layout="window"] .presence-stage {
-	@apply bottom-8 w-3/4;
-	max-block-size: calc(100dvh * 2 / 3);
+	@apply bottom-4 w-full;
+	max-block-size: calc(100dvh * 4 / 5);
 }
 
 .app[data-layout="window"] .thread {
-	@apply mx-0 px-0;
+	@apply mx-0 px-6;
+}
+
+.app[data-layout="window"] .search-trigger kbd {
+	@apply hidden;
 }
 
 /* Fullscreen template: 1920 x 1080 canonical viewport. */
 .app[data-layout="fullscreen"] .shell {
-	grid-template-columns: 320px minmax(0, 1fr);
+	grid-template-columns: 260px minmax(0, 1fr);
 }
 
 .app[data-layout="fullscreen"] .main {
@@ -125,16 +132,16 @@
 }
 
 .app[data-layout="fullscreen"] .thread {
-	@apply mx-0 px-0;
+	@apply mx-0 px-6;
 }
 
-.app[data-layout="fullscreen"] .composer {
+.app[data-layout="fullscreen"] .conversation-dock {
 	@apply bottom-6 m-0 mt-9;
 }
 
 .app[data-layout="fullscreen"] .presence-stage {
-	@apply bottom-10 w-3/4;
-	max-block-size: calc(100dvh * 2 / 3);
+	@apply bottom-4 w-full;
+	max-block-size: calc(100dvh * 5 / 6);
 }
 
 /* Mobile template: phone, tablet portrait, and narrow desktop windows. */
@@ -177,14 +184,27 @@
 
 .app[data-layout="mobile"] .thread-head {
 	@apply pl-14 pr-3;
+	background: var(--surface-glass);
+	backdrop-filter: blur(var(--blur-surface));
+}
+
+.app:not([data-layout="mobile"]) .thread-head .scene-title {
+	@apply hidden;
+}
+
+.app:not([data-layout="mobile"]) .thread-head {
+	@apply justify-end;
 }
 
 .app[data-layout="mobile"] .thread {
-	@apply mx-3 px-0;
+	@apply mx-3 px-4;
+}
+
+.app[data-layout="mobile"] .conversation-dock {
+	@apply bottom-3 mx-3 mb-0 mt-5;
 }
 
 .app[data-layout="mobile"] .composer {
-	@apply bottom-3 mx-3 mb-0 mt-5;
 	max-block-size: 40dvh;
 }
 
@@ -193,7 +213,17 @@
 }
 
 .app[data-layout="mobile"] .presence-stage {
-	@apply fixed bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
+	@apply fixed bottom-24 right-0 z-10 max-h-2/5 w-1/2 opacity-100;
+}
+
+/* Solid local surfaces remain readable when transparency is unavailable or unwanted. */
+@media (prefers-reduced-transparency: reduce) {
+	:root {
+		--surface-reading: var(--sys-surface);
+		--surface-glass: var(--sys-surface);
+		--blur-reading: 0px;
+		--blur-surface: 0px;
+	}
 }
 
 .app[data-layout="mobile"] .msg.user,
@@ -260,7 +290,18 @@
 }
 
 .app[data-layout="mobile"] .msg-inline-action {
-	@apply opacity-100;
+	@apply size-11 opacity-100;
+}
+
+.app[data-layout="mobile"] .msg.user .msg-heading {
+	@apply static mb-1 justify-end opacity-100;
+	background: transparent;
+}
+
+.app[data-layout="mobile"] .message-response-actions button,
+.app[data-layout="mobile"] .msg-text-action,
+.app[data-layout="mobile"] .native-tool-disclosure > summary {
+	@apply min-h-11;
 }
 
 .app[data-layout="mobile"] .thread-head .work-pill,
@@ -309,7 +350,7 @@
 }
 
 .app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) {
-	grid-template-columns: 320px minmax(0, 1fr) minmax(0, 1fr);
+	grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) > .main {

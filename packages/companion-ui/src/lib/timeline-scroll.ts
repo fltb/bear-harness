@@ -52,15 +52,26 @@ export function installTimelineScrollProtection(
 	timeline: HTMLElement,
 	jumpButton: HTMLButtonElement,
 	onFollowingChange?: (following: boolean) => void,
+	onScrollMeasured?: (conversationId: string, distance: number) => void,
 ): TimelineScrollController {
 	const positions = new Map<string, TimelinePosition>();
 	const scrollingElement = document.scrollingElement ?? document.documentElement;
 	const userScrollEvents = ["wheel", "touchmove", "pointerup", "keydown"] as const;
 	let currentConversationId = timeline.dataset.conversationId;
+	let sendFrame: number | undefined;
+	let lastMeasurement = "";
 
 	const maxScrollTop = () =>
 		Math.max(0, scrollingElement.scrollHeight - scrollingElement.clientHeight);
 	const distanceFromBottom = () => Math.max(0, maxScrollTop() - scrollingElement.scrollTop);
+	const reportPosition = () => {
+		if (!currentConversationId) return;
+		const distance = distanceFromBottom();
+		const key = `${currentConversationId}:${distance}`;
+		if (key === lastMeasurement) return;
+		lastMeasurement = key;
+		onScrollMeasured?.(currentConversationId, distance);
+	};
 	const showDetachedState = (following: boolean) => {
 		jumpButton.hidden = following;
 		onFollowingChange?.(following);
@@ -73,6 +84,7 @@ export function installTimelineScrollProtection(
 			following,
 		});
 		showDetachedState(following);
+		reportPosition();
 	};
 	const scrollToLatest = () => {
 		scrollingElement.scrollTop = maxScrollTop();
@@ -82,6 +94,7 @@ export function installTimelineScrollProtection(
 				following: true,
 			});
 		showDetachedState(true);
+		reportPosition();
 	};
 	const preserveReadingPosition = () => {
 		if (currentConversationId)
@@ -91,7 +104,30 @@ export function installTimelineScrollProtection(
 			});
 		showDetachedState(false);
 	};
-	const captureAfterUserScroll = () => queueMicrotask(capturePosition);
+	const captureAfterUserScroll = (event: Event) => {
+		// Editing/sending is not a request to detach from the latest message.
+		// A send can grow the virtual list before its next measured layout.
+		if (event.type === "keydown") {
+			if (
+				!(event instanceof KeyboardEvent) ||
+				!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)
+			)
+				return;
+			if (
+				event.target instanceof Element &&
+				event.target.closest("input, textarea, select, button, [contenteditable]")
+			)
+				return;
+		}
+		if (
+			event.type === "pointerup" &&
+			event.target !== document &&
+			event.target !== document.documentElement &&
+			event.target !== scrollingElement
+		)
+			return;
+		queueMicrotask(capturePosition);
+	};
 	const restorePosition = (position: TimelinePosition) => {
 		scrollingElement.scrollTop = Math.min(position.scrollTop, maxScrollTop());
 		showDetachedState(false);
@@ -114,7 +150,14 @@ export function installTimelineScrollProtection(
 		else restorePosition(saved);
 	};
 	const onUserSent = (event: Event) => {
-		if (event instanceof CustomEvent && event.detail === currentConversationId) scrollToLatest();
+		if (event instanceof CustomEvent && event.detail === currentConversationId) {
+			scrollToLatest();
+			if (sendFrame !== undefined) cancelAnimationFrame(sendFrame);
+			sendFrame = requestAnimationFrame(() => {
+				sendFrame = undefined;
+				synchronize();
+			});
+		}
 	};
 	const observer = new MutationObserver(synchronize);
 	observer.observe(timeline, {
@@ -133,6 +176,7 @@ export function installTimelineScrollProtection(
 		scrollToLatest,
 		preserveReadingPosition,
 		dispose: () => {
+			if (sendFrame !== undefined) cancelAnimationFrame(sendFrame);
 			observer.disconnect();
 			resizeObserver?.disconnect();
 			for (const eventName of userScrollEvents)

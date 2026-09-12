@@ -19,6 +19,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { TracePolicy } from "./character-trace.js";
 import type { AttributeSpec } from "./contracts.js";
 import {
 	type CatalogEntry,
@@ -37,7 +38,6 @@ import {
 	effectiveDiagnosticLevel,
 	parseDiagnosticLevel,
 } from "./levels.js";
-import { redactTraceText } from "./redaction.js";
 import {
 	defaultIsPidAlive,
 	markUncleanExits,
@@ -100,8 +100,23 @@ function normalizePlatform(): string {
 export class Diagnostics {
 	readonly launchId: string;
 	readonly root: string;
-	readonly policy: Readonly<DiagnosticsPolicy>;
-	readonly logLevel: DiagnosticLevel;
+	private readonly initialPolicy: Readonly<DiagnosticsPolicy>;
+	private readonly initialLevel: DiagnosticLevel;
+	private policySource?: () => TracePolicy;
+
+	setPolicySource(source: () => TracePolicy): void {
+		this.policySource = source;
+	}
+	get policy(): Readonly<DiagnosticsPolicy> {
+		const policy = this.policySource?.();
+		return policy
+			? { ...this.initialPolicy, maxAgeDays: policy.maxAgeDays, maxBytes: policy.maxBytes }
+			: this.initialPolicy;
+	}
+	get logLevel(): DiagnosticLevel {
+		const policy = this.policySource?.();
+		return policy ? (policy.traceUntil > Date.now() ? "trace" : policy.level) : this.initialLevel;
+	}
 
 	private readonly clock: () => number;
 	private readonly random: RandomSource;
@@ -117,10 +132,10 @@ export class Diagnostics {
 	constructor(options: DiagnosticsOptions) {
 		this.launchId = options.launchId;
 		this.root = options.root;
-		this.policy = options.policy ?? DIAGNOSTICS_POLICY;
+		this.initialPolicy = options.policy ?? DIAGNOSTICS_POLICY;
 		this.clock = options.clock ?? Date.now;
 		const packaged = options.packaged ?? false;
-		this.logLevel = effectiveDiagnosticLevel(
+		this.initialLevel = effectiveDiagnosticLevel(
 			options.logLevel ?? parseDiagnosticLevel(process.env.BEAR_LOG_LEVEL),
 			packaged,
 		);
@@ -154,6 +169,7 @@ export class Diagnostics {
 			clock: this.clock,
 			stderr: this.stderr,
 			minimumLevel: this.logLevel,
+			minimumLevelSource: () => this.logLevel,
 		});
 
 		this.markerFile = join(stateDir, `run-${this.launchId}.json`);
@@ -260,23 +276,6 @@ export class Diagnostics {
 
 	isLevelEnabled(level: DiagnosticLevel): boolean {
 		return diagnosticLevelEnabled(this.logLevel, level);
-	}
-
-	/** TRACE-only, redacted content evidence. Packaged apps clamp TRACE to DEBUG. */
-	traceContent(
-		conversationId: string,
-		phase: "user" | "host_context" | "assistant" | "tool_arguments" | "tool_result",
-		value: string,
-	): void {
-		if (!this.isLevelEnabled("trace")) return;
-		const redacted = redactTraceText(value);
-		this.emit("trace.content", {
-			conversationId,
-			phase,
-			content: redacted.content,
-			originalBytes: redacted.originalBytes,
-			truncated: redacted.truncated,
-		});
 	}
 
 	/** Emit a catalog event under the current trace context (or a fresh trace). */

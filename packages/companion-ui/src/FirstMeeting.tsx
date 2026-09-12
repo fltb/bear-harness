@@ -1,5 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createMemo, For, Show } from "solid-js";
+import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { ProviderSetup } from "./features/ProviderSetup.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
@@ -8,16 +9,13 @@ import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button, Checkbox, Dialog, Link, TextField } from "./ui/primitives.js";
 
-/** First-run gates: system model setup → system-settings handoff → role onboarding. */
+/** First-run gates: system model setup → embedding configuration → role onboarding. */
 export function FirstMeeting(props: { platform?: string } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const shell = useShellWorkflowStore();
 	const workflow = createFirstMeetingWorkflow(store, props.platform);
 	const hasConfiguredModels = createMemo(() => workflow.configuredModels().length > 0);
-	const openMemorySettings = () => {
-		shell.openBackstage("settings", "memory");
-	};
 	const renderControl = (step: CharacterOnboardingStep) => {
 		if (step.kind === "acknowledge")
 			return (
@@ -263,25 +261,7 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 					<Dialog.Content class="intro model-setup" aria-label={t("settings.memoryVectorSection")}>
 						<article class="intro-card">
 							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
-							<h2>{t("settings.memoryVectorEnabled")}</h2>
-							<p>{t("modelSetup.memorySetupNote")}</p>
-							<div class="intro-actions">
-								<Button
-									type="button"
-									data-variant="primary"
-									disabled={workflow.setupBusy()}
-									onClick={openMemorySettings}
-								>
-									{t("sidebar.systemSettings")}
-								</Button>
-								<Button
-									type="button"
-									disabled={workflow.setupBusy()}
-									onClick={() => void workflow.completeMemorySetup()}
-								>
-									{t("messages.continue")}
-								</Button>
-							</div>
+							<EmbeddingSettings mode="onboarding" />
 							<Show when={workflow.setupError() ?? store.setupLoadError}>
 								<p class="intro-error" role="alert">
 									{workflow.setupError() ?? store.setupLoadError}

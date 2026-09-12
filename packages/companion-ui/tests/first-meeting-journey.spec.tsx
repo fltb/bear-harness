@@ -582,6 +582,9 @@ describe("Host-backed first-run setup", () => {
 		expect(
 			screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).not.toBeInTheDocument();
+		await user.click(
+			within(handoff).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+		);
 		await user.click(within(handoff).getByRole("button", { name: zhCN.messages.continue }));
 		await waitFor(() =>
 			expect(setup.client.systemOnboarding.completeEmbedding).toHaveBeenCalledWith({
@@ -596,7 +599,7 @@ describe("Host-backed first-run setup", () => {
 		expect(setup.client.onboarding.submit).not.toHaveBeenCalled();
 	});
 
-	it("hands embedding setup to Settings without embedding a system form or completing first meeting", async () => {
+	it("requires an explicit embedding choice in the shared settings form before continuing", async () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost({ providers: [addedProvider], models: [replyModel, imageModel] });
 		const { store } = setup.mount();
@@ -605,13 +608,22 @@ describe("Host-backed first-run setup", () => {
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		const handoff = await screen.findByRole("dialog", { name: zhCN.settings.memoryVectorSection });
 		expect(
-			within(handoff).getByRole("button", { name: zhCN.sidebar.systemSettings }),
-		).toBeEnabled();
-		expect(within(handoff).queryByRole("combobox")).not.toBeInTheDocument();
+			within(handoff).queryByRole("button", { name: zhCN.sidebar.systemSettings }),
+		).not.toBeInTheDocument();
+		expect(within(handoff).getByRole("button", { name: zhCN.messages.continue })).toBeDisabled();
+		await user.click(
+			within(handoff).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		);
+		expect(
+			within(handoff).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
+		).toBeVisible();
 		expect(
 			screen.queryByRole("dialog", { name: THEMED_CHARACTER.character.first_meeting.dialog_label }),
 		).not.toBeInTheDocument();
 		expect(setup.client.systemOnboarding.completeEmbedding).not.toHaveBeenCalled();
+		await user.click(
+			within(handoff).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
+		);
 		await user.click(within(handoff).getByRole("button", { name: zhCN.messages.continue }));
 		await waitFor(() => expect(store.settings.data()?.firstRunStage).toBe("role"));
 		expect(setup.client.systemOnboarding.completeEmbedding).toHaveBeenCalledWith({

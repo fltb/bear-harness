@@ -193,6 +193,16 @@ function diagnosticErrorType(
 }
 
 const runtime = createHostRuntime({
+	systemDiagnosticsDirectory: runtimeLayout.systemDiagnostics,
+	systemLaunchId: diagnostics.launchId,
+	systemDiagnostic: (attributes) =>
+		diagnostics.emit(
+			["error", "failed", "interrupted"].includes(attributes.outcome) ||
+				Number(attributes.outcome) >= 400
+				? "embedding.failure"
+				: "embedding.measurement",
+			attributes,
+		),
 	dataDir,
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
@@ -201,6 +211,7 @@ const runtime = createHostRuntime({
 	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
 });
+diagnostics.setPolicySource(() => runtime.diagnosticsPolicy);
 
 async function readBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
 	const chunks: Buffer[] = [];

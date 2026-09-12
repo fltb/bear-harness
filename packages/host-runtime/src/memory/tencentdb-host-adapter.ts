@@ -42,10 +42,12 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
+import type { CharacterTrace } from "../diagnostics/character-trace.js";
 import type { ModelRegistry } from "../models/registry.js";
 import type { ProviderCatalog } from "../providers/catalog.js";
 
 export interface BearHarnessHostAdapterOptions {
+	readonly diagnostics?: CharacterTrace;
 	readonly dataDir: string;
 	readonly workspaceDir?: string;
 	readonly userId: string;
@@ -92,6 +94,11 @@ function modelRoute(
 }
 
 function assistantText(message: AssistantMessage): string {
+	if (message.stopReason === "error" || message.stopReason === "aborted") {
+		const error = new Error(message.errorMessage || `memory_model_${message.stopReason}`);
+		if (message.stopReason === "aborted") error.name = "AbortError";
+		throw error;
+	}
 	return message.content
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
 		.map((part) => part.text)
@@ -223,6 +230,7 @@ class BearHarnessLLMRunner implements LLMRunner {
 		private readonly modelRef?: string,
 		private readonly enableTools = false,
 		private readonly workspaceDir?: string,
+		private readonly diagnostics?: CharacterTrace,
 	) {}
 
 	private async resolveModel(): Promise<{ models: Models; model: Model<Api> }> {
@@ -242,6 +250,12 @@ class BearHarnessLLMRunner implements LLMRunner {
 	}
 
 	async run(params: LLMRunParams): Promise<string> {
+		return this.diagnostics
+			? this.diagnostics.operation("memory.model", {}, params, () => this.runModel(params))
+			: this.runModel(params);
+	}
+
+	private async runModel(params: LLMRunParams): Promise<string> {
 		const { models, model } = await this.resolveModel();
 		this.logger.debug?.(
 			`${TAG} LLM task=${params.taskId} model=${model.provider}/${model.id} tools=${this.enableTools}`,
@@ -307,7 +321,14 @@ class BearHarnessLLMRunner implements LLMRunner {
 				let text: string;
 				let isError = false;
 				try {
-					text = await tool.execute(toolCall.arguments);
+					text = this.diagnostics
+						? await this.diagnostics.operation(
+								"memory.storage_tool",
+								{ toolCallId: toolCall.id },
+								{ tool: toolCall.name, arguments: toolCall.arguments },
+								() => tool.execute(toolCall.arguments),
+							)
+						: await tool.execute(toolCall.arguments);
 				} catch (err) {
 					text = err instanceof Error ? err.message : String(err);
 					isError = true;
@@ -329,6 +350,7 @@ class BearHarnessLLMRunnerFactory implements LLMRunnerFactory {
 		private readonly companionId: string,
 		private readonly logger: Logger,
 		private readonly workspaceDir?: string,
+		private readonly diagnostics?: CharacterTrace,
 	) {}
 
 	createRunner(options?: LLMRunnerCreateOptions): LLMRunner {
@@ -340,17 +362,20 @@ class BearHarnessLLMRunnerFactory implements LLMRunnerFactory {
 			options?.modelRef,
 			options?.enableTools ?? false,
 			this.workspaceDir,
+			this.diagnostics,
 		);
 	}
 }
 
 export class BearHarnessHostAdapter implements HostAdapter {
+	private readonly diagnostics?: CharacterTrace;
 	readonly hostType = "standalone" as const;
 	private readonly context: RuntimeContext;
 	private readonly logger: Logger;
 	private readonly runnerFactory: LLMRunnerFactory;
 
 	constructor(options: BearHarnessHostAdapterOptions) {
+		this.diagnostics = options.diagnostics;
 		this.logger = options.logger ?? defaultLogger();
 		this.context = {
 			userId: options.userId,
@@ -368,6 +393,7 @@ export class BearHarnessHostAdapter implements HostAdapter {
 			options.companionId,
 			this.logger,
 			this.context.workspaceDir,
+			options.diagnostics,
 		);
 	}
 
@@ -377,6 +403,11 @@ export class BearHarnessHostAdapter implements HostAdapter {
 
 	getLogger(): Logger {
 		return this.logger;
+	}
+	observeOperation<T>(event: string, input: unknown, work: () => Promise<T>): Promise<T> {
+		return this.diagnostics
+			? this.diagnostics.operation(`memory.${event}`, {}, input, work)
+			: work();
 	}
 
 	getLLMRunnerFactory(): LLMRunnerFactory {

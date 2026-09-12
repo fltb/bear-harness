@@ -9,7 +9,7 @@
 /* --- user message role (was missing from the static prototype) ------ */
 
 .msg.user {
-	@apply self-end border;
+	@apply relative self-end border;
 	border-color: color-mix(in srgb, var(--sys-accent) 35%, transparent);
 	color: var(--text-on-message);
 	background: var(--surface-message-user);
@@ -113,6 +113,24 @@
 	@apply mb-1;
 }
 
+.msg.user .msg-heading {
+	@apply absolute bottom-full right-0 mb-1 rounded-md opacity-0;
+	background: var(--surface-glass);
+}
+
+.msg.user:hover .msg-heading,
+.msg.user:focus-within .msg-heading {
+	@apply opacity-100;
+}
+
+.msg.user .msg-meta {
+	@apply sr-only;
+}
+
+.msg.user .message-direct-actions {
+	@apply gap-0;
+}
+
 .msg-menu-trigger {
 	@apply hidden h-6 w-8 place-items-center rounded-md border-0 p-0 text-xs leading-none;
 	color: var(--sys-text-muted);
@@ -120,7 +138,7 @@
 }
 
 .msg-inline-action {
-	@apply grid size-11 place-items-center rounded-lg border-0 p-0 text-base leading-none opacity-0;
+	@apply grid size-7 shrink-0 place-items-center rounded-md border-0 p-0 text-xs leading-none opacity-0;
 	color: var(--text-soft);
 	background: transparent;
 	transition:
@@ -142,18 +160,25 @@
 }
 
 .message-direct-actions,
-.message-primary-actions,
 .message-inline-actions {
 	@apply flex items-center gap-1;
 }
 
-.message-primary-actions {
-	@apply mt-2 flex-wrap;
+.message-response-actions {
+	@apply mt-3 flex flex-wrap items-center gap-x-3 gap-y-1;
 }
 
-.message-primary-actions button {
-	@apply inline-flex min-h-11 items-center gap-1.5 rounded-lg border-0 px-3 text-xs;
+.message-response-actions button,
+.msg-text-action {
+	@apply inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border-0 px-1 py-1 text-xs leading-5;
 	color: var(--sys-text-muted);
+	background: transparent;
+}
+
+.message-response-actions button:hover,
+.message-response-actions button:focus-visible,
+.msg-text-action:hover {
+	color: var(--text-strong);
 	background: var(--surface-control);
 }
 

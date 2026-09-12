@@ -262,19 +262,7 @@ describe("Diagnostics orchestrator", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("persists redacted TRACE content only for unpackaged TRACE runs", async () => {
-		const root = mkdtempSync(join(tmpdir(), "bear-diag-trace-"));
-		const { diagnostics } = makeDiagnostics({ root, launchId: "trace-content", logLevel: "trace" });
-		diagnostics.traceContent("conversation-1", "user", "Bearer super-secret /Users/alice/work");
-		await diagnostics.shutdown();
-		const content = readJsonlLines(root).find((record) => record.name === "trace.content");
-		expect(content?.attributes).toMatchObject({
-			conversationId: "conversation-1",
-			phase: "user",
-			content: "[REDACTED_SECRET] [REDACTED_HOME]",
-		});
-		rmSync(root, { recursive: true, force: true });
-
+	it("honors packaged TRACE without exposing a global character-content sink", async () => {
 		const packagedRoot = mkdtempSync(join(tmpdir(), "bear-diag-packaged-trace-"));
 		const packaged = makeDiagnostics({
 			root: packagedRoot,
@@ -282,8 +270,8 @@ describe("Diagnostics orchestrator", () => {
 			logLevel: "trace",
 			packaged: true,
 		}).diagnostics;
-		expect(packaged.logLevel).toBe("debug");
-		packaged.traceContent("conversation-1", "user", "must-not-land");
+		expect(packaged.logLevel).toBe("trace");
+		expect("traceContent" in packaged).toBe(false);
 		await packaged.shutdown();
 		expect(readJsonlLines(packagedRoot).some((record) => record.name === "trace.content")).toBe(
 			false,

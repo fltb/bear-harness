@@ -10,10 +10,18 @@ import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { Button, Select } from "../ui/primitives.js";
 import { ArchivedConversationSettings } from "./ArchivedConversationSettings.js";
+import { DiagnosticsSettings } from "./DiagnosticsSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
 
-export type SettingsPage = "general" | "archived" | "providers" | "agents" | "network" | "memory";
+export type SettingsPage =
+	| "general"
+	| "archived"
+	| "providers"
+	| "agents"
+	| "network"
+	| "memory"
+	| "diagnostics";
 
 export function SettingsSheet(
 	props: { initialPage?: SettingsPage; onPageChange?: (page: SettingsPage) => void } = {},
@@ -37,6 +45,7 @@ export function SettingsSheet(
 		{ id: "providers" as const, label: t("settings.systemModelSettings") },
 		{ id: "network" as const, label: t("settings.networkSection") },
 		{ id: "memory" as const, label: t("settings.memoryVectorSection") },
+		{ id: "diagnostics" as const, label: t("settings.diagnosticsTitle") },
 	];
 
 	const changeLocale = async (locale: ProductLocale): Promise<void> => {
@@ -95,6 +104,9 @@ export function SettingsSheet(
 				</div>
 			</nav>
 			<div class="settings-page" data-settings-page={page()}>
+				<Show when={page() === "diagnostics"}>
+					<DiagnosticsSettings />
+				</Show>
 				<Show when={error()}>
 					{(message) => (
 						<p class="status-line err" role="alert">

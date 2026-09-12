@@ -125,6 +125,94 @@ function configure(
 }
 
 describe("Pi native tool rendering", () => {
+	it("places long-response navigation in the character heading without duplicating it", async () => {
+		const { client } = createTestClient();
+		configure(client, [
+			assistantEntry("long-response", [
+				{ type: "text", text: "Long response paragraph.\n\n".repeat(100) },
+			]),
+		]);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const jump = await screen.findByRole("button", { name: zhCN.messages.jumpToResponseEnd });
+		expect(jump.closest("header")).not.toBeNull();
+		expect(jump.closest("header")).toHaveTextContent(THEMED_CHARACTER.name);
+		expect(screen.getAllByRole("button", { name: zhCN.messages.jumpToResponseEnd })).toHaveLength(
+			1,
+		);
+	});
+
+	it("uses one response heading across native text, reasoning and tools until the next user entry", async () => {
+		const { client } = createTestClient();
+		configure(client, [
+			assistantEntry("opening", [{ type: "text", text: "Opening text" }]),
+			toolEntry("skill", "role_skill"),
+			assistantEntry("reasoning", [{ type: "thinking", thinking: "Thinking between tools" }]),
+			toolEntry("state", "host_state"),
+			assistantEntry("closing", [{ type: "text", text: "Closing text" }]),
+			{
+				type: "message",
+				id: "next-user",
+				parentId: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				message: { role: "user", content: "Continue", timestamp: 2 },
+			},
+			assistantEntry("next-response", [{ type: "text", text: "Next response" }]),
+		]);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await screen.findByText("Next response");
+		const rows = screen.getAllByTestId("virtual-timeline-item");
+		expect(rows.filter((row) => row.dataset.responseStart === "true")).toHaveLength(2);
+		expect(screen.getByText("Closing text").closest("li")).toHaveAttribute(
+			"data-response-start",
+			"false",
+		);
+		expect(screen.getByText("Opening text").closest("li")).toHaveAttribute(
+			"data-response-start",
+			"true",
+		);
+		expect(screen.getByText("Next response").closest("li")).toHaveAttribute(
+			"data-response-start",
+			"true",
+		);
+	});
+
+	it("keeps response actions in one footer and excludes reasoning-only entries", async () => {
+		const { client } = createTestClient();
+		configure(client, [
+			assistantEntry("reasoning", [{ type: "thinking", thinking: "Private reasoning" }]),
+			assistantEntry("response", [{ type: "text", text: "Visible response" }]),
+		]);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const response = (await screen.findByText("Visible response")).closest("article")!;
+		const reasoning = screen.getByText("Private reasoning").closest("article")!;
+		expect(within(reasoning).queryByRole("button")).not.toBeInTheDocument();
+		const correction = within(response).getByRole("button", {
+			name: THEMED_CHARACTER.character.correction.trigger_label,
+		});
+		const copy = within(response).getByRole("button", { name: zhCN.messages.copy });
+		expect(correction.closest("footer")).toBe(copy.closest("footer"));
+		expect(copy.closest("footer")).not.toBeNull();
+	});
+
+	it("does not render an empty timeline node for a tool-only assistant envelope", async () => {
+		const { client } = createTestClient();
+		const user = userEvent.setup();
+		configure(client, [
+			assistantEntry("envelope", [
+				{ type: "toolCall", id: "call-result", name: "read", arguments: { path: "example.txt" } },
+			]),
+			toolEntry("result", "read"),
+		]);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await user.click(await screen.findByText("read", { exact: true }));
+		expect(screen.getAllByTestId("virtual-timeline-item")).toHaveLength(1);
+		expect(screen.getByTestId("virtual-timeline-item")).toHaveAttribute(
+			"data-virtual-item-id",
+			"tool:conversation-1:call-result",
+		);
+		expect(screen.getByText(/"path": "example.txt"/)).toBeVisible();
+	});
+
 	it("renders running, completed, and failed native tool events", async () => {
 		const { client } = createTestClient();
 		const user = userEvent.setup();
@@ -490,6 +578,20 @@ describe("Pi native tool rendering", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		expect(await screen.findByRole("button", { name: zhCN.composer.stopLabel })).toBeEnabled();
 		expect(screen.getByTestId("conversation-activity")).toHaveAttribute("data-activity", "retry");
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: {
+				type: "auto_retry_start",
+				attempt: 2,
+				maxAttempts: 3,
+				delayMs: 5000,
+				errorMessage: "fetch failed",
+			},
+		});
+		expect(await screen.findByText("第 2 次尝试，共 3 次")).toBeVisible();
+		expect(screen.getByText("本次重试等待时间：5 秒")).toBeVisible();
+		expect(screen.getByTestId("conversation-activity")).not.toHaveTextContent("{{");
 		const steering = (await screen.findByText("Use the updated requirement")).closest("article");
 		const followUp = screen.getByText("Then describe the result").closest("article");
 		expect(steering).toHaveTextContent(zhCN.messages.submission.queue.steering);
@@ -530,6 +632,10 @@ describe("Pi native tool rendering", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		await user.click(await screen.findByText("host_choices"));
 		expect(screen.getByText(/"message": "Continue investigating\."/)).toBeVisible();
+		expect(
+			screen.getByRole("article", { name: `host_media ${zhCN.messages.toolActivity.completed}` }),
+		).toHaveAttribute("data-media-message", "true");
+		expect(screen.getByRole("button", { name: zhCN.messages.openMedia })).toBeVisible();
 		await user.click(screen.getByText("host_media"));
 		expect(screen.getByText(/"mediaId": "signal"/)).toBeVisible();
 		await user.click(await screen.findByRole("button", { name: "Investigate" }));

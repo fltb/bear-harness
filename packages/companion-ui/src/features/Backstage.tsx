@@ -233,7 +233,12 @@ function RoleRow(props: {
 	onSwitch: (character: CharacterSummary, opener: HTMLElement) => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const companion = useCompanionStore();
+	const workflow = createBackstageWorkflowStore(companion);
+	const avatar = () =>
+		companion.character?.id === props.character.id
+			? companion.character.visual.avatarUrl
+			: props.character.avatarUrl;
 	const trust = workflow.pluginTrust(props.character.id);
 	const confirming = workflow.confirmingPlugins(props.character.id);
 	const disabled = () => workflow.roleBusyId() !== undefined;
@@ -242,8 +247,12 @@ function RoleRow(props: {
 	return (
 		<div class="role-row">
 			<Show
-				when={props.character.avatarUrl}
-				fallback={<span class="role-row-avatar-fallback" aria-hidden="true" />}
+				when={avatar()}
+				fallback={
+					<span class="role-row-avatar-fallback" aria-hidden="true">
+						{props.character.name.slice(0, 1)}
+					</span>
+				}
 			>
 				{(avatarUrl) => <img src={avatarUrl()} alt="" aria-hidden="true" />}
 			</Show>

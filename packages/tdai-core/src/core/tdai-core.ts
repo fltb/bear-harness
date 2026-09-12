@@ -599,13 +599,29 @@ export class TdaiCore {
 		this.onRecordsChanged?.();
 	}
 
+	private observe<T>(event: string, input: unknown, work: () => Promise<T>): Promise<T> {
+		return this.hostAdapter.observeOperation ? this.hostAdapter.observeOperation(event, input, work) : work();
+	}
 	private async initStores(): Promise<void> {
 		let acquired = false;
 		try {
-			const stores = await initStores(this.cfg, this.dataDir, this.logger);
+			const stores = await this.observe("storage.initialize", {}, () => initStores(this.cfg, this.dataDir, this.logger));
 			acquired = true;
 			this.vectorStore = stores.vectorStore;
 			this.embeddingService = stores.embeddingService;
+			if (stores.embeddingService) {
+				const service = stores.embeddingService as EmbeddingService & { waitForReady?: () => Promise<void> };
+				this.embeddingService = {
+					embed: (text, options) => this.observe("embedding.single", { text, provider: service.getProviderInfo() }, () => service.embed(text, options)),
+					embedBatch: (texts, options) => this.observe("embedding.batch", { texts, provider: service.getProviderInfo() }, () => service.embedBatch(texts, options)),
+					getDimensions: () => service.getDimensions(),
+					getProviderInfo: () => service.getProviderInfo(),
+					isReady: () => service.isReady(),
+					startWarmup: () => service.startWarmup(),
+					close: () => service.close?.(),
+					...(service.waitForReady ? { waitForReady: () => this.observe("embedding.ready", {}, () => service.waitForReady!()) } : {}),
+				};
+			}
 			if (stores.needsReindex) {
 				this.logger.info(`${TAG} Embedding reindex started`);
 				if (!this.vectorStore || !this.embeddingService) {
@@ -724,14 +740,15 @@ export class TdaiCore {
 		});
 		this.scheduler.setL1Runner(async (...args) => {
 			try {
-				return await l1Runner(...args);
+				return await this.observe("batch.l1", args, () => l1Runner(...args));
 			} finally {
 				this.onRecordsChanged?.();
 			}
 		});
 
 		// Persister
-		this.scheduler.setPersister(createPersister(this.dataDir, this.logger));
+		const persist = createPersister(this.dataDir, this.logger);
+		this.scheduler.setPersister((...args) => this.observe("storage.persist", args, () => persist(...args)));
 
 		// L2 runner
 		this.scheduler.setL2Runner(async (sessionKey: string, cursor?: string) => {
@@ -744,7 +761,7 @@ export class TdaiCore {
 				instanceId: this.instanceId,
 				llmRunner: l2l3LlmRunner,
 			});
-			return l2Runner(sessionKey, cursor).finally(() =>
+			return this.observe("batch.l2", { sessionKey, cursor }, () => l2Runner(sessionKey, cursor)).finally(() =>
 				this.onRecordsChanged?.(),
 			);
 		});
@@ -760,7 +777,7 @@ export class TdaiCore {
 				instanceId: this.instanceId,
 				llmRunner: l2l3LlmRunner,
 			});
-			await l3Runner().finally(() => this.onRecordsChanged?.());
+			await this.observe("batch.l3", {}, () => l3Runner()).finally(() => this.onRecordsChanged?.());
 		});
 
 		this.logger.debug?.(`${TAG} Pipeline runners wired`);

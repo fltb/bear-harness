@@ -22,6 +22,27 @@ function strings(value: unknown): string[] {
 }
 
 describe("product locale catalogs", () => {
+	it("uses configured single-brace placeholders throughout every locale", () => {
+		for (const locale of supportedProductLocales) {
+			expect(strings(resources[locale]).filter((text) => /\{\{|\}\}/.test(text))).toEqual([]);
+		}
+	});
+
+	it("interpolates retry counts and delays in every locale", () => {
+		const expected = {
+			"zh-CN": ["第 2 次尝试，共 3 次", "本次重试等待时间：5 秒"],
+			"zh-TW": ["第 2 次嘗試，共 3 次", "本次重試等待時間：5 秒"],
+			en: ["Attempt 2 of 3", "Scheduled retry delay: 5 seconds"],
+		};
+		for (const locale of supportedProductLocales) {
+			const t = i18n.getFixedT(locale);
+			expect(t("messages.activity.retryAttempt", { attempt: 2, maxAttempts: 3 })).toBe(
+				expected[locale][0],
+			);
+			expect(t("messages.activity.retryDelay", { seconds: 5 })).toBe(expected[locale][1]);
+		}
+	});
+
 	it("exports locale catalogs through the package public API", () => {
 		expect(publicZhCN.modelSetup.dialogLabel).toBe(resources["zh-CN"].modelSetup.dialogLabel);
 	});

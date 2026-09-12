@@ -1,6 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import { downloadBlob } from "./lib/browser-download.js";
 import { finishMotionExitImmediately } from "./lib/motion.js";
 import type {
 	ArtifactActionResponse,
@@ -128,18 +129,7 @@ async function downloadArtifactInBrowser(
 		MAX_BROWSER_DOWNLOAD_BYTES,
 		"artifact_browser_download_too_large",
 	);
-	const url = URL.createObjectURL(new Blob(chunks, { type: artifact.mime }));
-	try {
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = artifact.name.split(/[\\/]/).pop() || "artifact";
-		anchor.rel = "noopener";
-		document.body.append(anchor);
-		anchor.click();
-		anchor.remove();
-	} finally {
-		setTimeout(() => URL.revokeObjectURL(url), 0);
-	}
+	downloadBlob(new Blob(chunks, { type: artifact.mime }), artifact.name);
 }
 
 function formatBytes(bytes: number): string {
@@ -309,23 +299,15 @@ export function WorkRunCard(props: { run: RunInfo }) {
 export function DelegatedRunCard(props: { runId: string }) {
 	const workflow = useShellWorkflowStore();
 	const [t] = useTranslation(undefined, { i18n });
-	const run = createMemo(() => workflow.host.runs.find((item) => item.id === props.runId));
 	return (
-		<Show
-			when={run()}
-			fallback={
-				<Button
-					type="button"
-					class="task-inspect"
-					data-run-id={props.runId}
-					onClick={() => workflow.openTask(props.runId)}
-				>
-					{t("work.timeline.revealDetails")} · {props.runId}
-				</Button>
-			}
+		<Button
+			type="button"
+			class="task-inspect"
+			data-run-id={props.runId}
+			onClick={() => workflow.openTask(props.runId)}
 		>
-			{(current) => <WorkRunCard run={current()} />}
-		</Show>
+			{t("work.timeline.revealDetails")}
+		</Button>
 	);
 }
 

@@ -49,7 +49,7 @@ interface SceneSegment {
 	message_ids: string[];
 	memories: Array<{
 		content: string;
-		type: string;
+		type: MemoryType;
 		priority: number;
 		source_message_ids: string[];
 		metadata: Record<string, unknown>;
@@ -224,21 +224,12 @@ export async function extractL1Memories(params: {
 	for (const scene of scenes) {
 		sceneNames.push(scene.scene_name);
 		for (const mem of scene.memories) {
-			const memType = normalizeType(mem.type);
-			if (!memType) {
-				logger?.warn?.(
-					`${TAG} Skipping memory with invalid type "${mem.type}"`,
-				);
-				continue;
-			}
 			allExtracted.push({
 				content: mem.content,
-				type: memType,
-				priority: typeof mem.priority === "number" ? mem.priority : 50,
-				source_message_ids: Array.isArray(mem.source_message_ids)
-					? mem.source_message_ids
-					: [],
-				metadata: mem.metadata ?? {},
+				type: mem.type,
+				priority: mem.priority,
+				source_message_ids: mem.source_message_ids,
+				metadata: mem.metadata,
 				scene_name: scene.scene_name,
 			});
 		}
@@ -404,7 +395,7 @@ async function callLlmExtraction(params: {
  * Parse the LLM's JSON response into SceneSegment array.
  * Expected format: [{scene_name, message_ids, memories: [...]}]
  */
-function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
+export function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 	try {
 		// Strip markdown code block wrappers if present
 		let cleaned = raw.trim();
@@ -423,7 +414,7 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 			logger?.warn?.(
 				`${TAG} [l1-debug] NO_JSON taskId=l1-extraction, rawLen=${raw.length}, cleanedLen=${cleaned.length}, rawFull=${JSON.stringify(rawPreview)}${raw.length > 2048 ? `…(+${raw.length - 2048})` : ""}`,
 			);
-			return [];
+			throw new Error("memory_l1_response_missing_json_array");
 		}
 
 		// Sanitize control characters inside JSON string literals that LLM may produce
@@ -431,43 +422,22 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 		const parsed = JSON.parse(sanitized) as unknown[];
 
 		if (!Array.isArray(parsed)) {
-			logger?.warn?.(`${TAG} Extraction response is not an array`);
-			return [];
+			throw new Error("extraction response is not an array");
 		}
 
+		const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => typeof id === "string" && id.length > 0);
+		const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 		const scenes: SceneSegment[] = [];
 		for (const item of parsed) {
-			if (!item || typeof item !== "object") continue;
+			if (!object(item)) throw new Error("invalid scene object");
 			const s = item as Record<string, unknown>;
-
-			scenes.push({
-				scene_name:
-					typeof s.scene_name === "string" ? s.scene_name : "未知情境",
-				message_ids: Array.isArray(s.message_ids)
-					? s.message_ids.map(String)
-					: [],
-				memories: Array.isArray(s.memories)
-					? (s.memories as Array<Record<string, unknown>>)
-							.filter(
-								(m) =>
-									m &&
-									typeof m === "object" &&
-									typeof m.content === "string" &&
-									(m.content as string).length > 0,
-							)
-							.map((m) => ({
-								content: String(m.content),
-								type: String(m.type ?? "episodic"),
-								priority: typeof m.priority === "number" ? m.priority : 50,
-								source_message_ids: Array.isArray(m.source_message_ids)
-									? m.source_message_ids.map(String)
-									: [],
-								metadata: (m.metadata && typeof m.metadata === "object"
-									? m.metadata
-									: {}) as Record<string, unknown>,
-							}))
-					: [],
-			});
+			if (typeof s.scene_name !== "string" || !s.scene_name.trim() || !strings(s.message_ids) || !Array.isArray(s.memories)) throw new Error("invalid scene fields");
+			const memories: SceneSegment["memories"] = [];
+			for (const m of s.memories) {
+				if (!object(m) || typeof m.content !== "string" || !m.content.trim() || typeof m.type !== "string" || !VALID_TYPES.includes(m.type as MemoryType) || typeof m.priority !== "number" || !Number.isFinite(m.priority) || m.priority < -1 || m.priority > 100 || !strings(m.source_message_ids) || !object(m.metadata)) throw new Error("invalid memory fields");
+				memories.push({ content: m.content, type: m.type as MemoryType, priority: m.priority, source_message_ids: m.source_message_ids, metadata: m.metadata });
+			}
+			scenes.push({ scene_name: s.scene_name, message_ids: s.message_ids, memories });
 		}
 
 		return scenes;
@@ -475,7 +445,7 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 		logger?.warn?.(
 			`${TAG} Failed to parse extraction result: ${err instanceof Error ? err.message : String(err)}`,
 		);
-		return [];
+		throw new Error("memory_l1_response_invalid", { cause: err });
 	}
 }
 
@@ -594,15 +564,3 @@ async function storeAllDirectly(
 // ============================
 
 const VALID_TYPES: MemoryType[] = ["persona", "episodic", "instruction"];
-
-function normalizeType(raw: string): MemoryType | null {
-	const lower = raw.toLowerCase().trim();
-	if (VALID_TYPES.includes(lower as MemoryType)) {
-		return lower as MemoryType;
-	}
-	// Handle legacy type names
-	if (lower === "episode") return "episodic";
-	if (lower === "instruct") return "instruction";
-	if (lower === "preference") return "persona"; // fold preference into persona
-	return null;
-}

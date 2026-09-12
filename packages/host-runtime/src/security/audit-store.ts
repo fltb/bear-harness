@@ -52,6 +52,7 @@ const RPC_PREFIX_KINDS: ReadonlyArray<readonly [string, AuditKind]> = [
 	["externalAgent.", "config"],
 	["systemOnboarding.", "config"],
 	["settings.", "config"],
+	["diagnostics.", "config"],
 	["update.", "config"],
 	["companionState.", "companion_state"],
 	["conversation.", "conversation"],

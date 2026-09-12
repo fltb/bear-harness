@@ -374,6 +374,16 @@ async function initializeHost(): Promise<boolean> {
 	try {
 		const updater = updateService;
 		const createdRuntime = createHostRuntime({
+			systemDiagnosticsDirectory: diagnosticsRoot,
+			systemLaunchId: diagnostics.launchId,
+			systemDiagnostic: (attributes) =>
+				diagnostics.emit(
+					["error", "failed", "interrupted"].includes(attributes.outcome) ||
+						Number(attributes.outcome) >= 400
+						? "embedding.failure"
+						: "embedding.measurement",
+					attributes,
+				),
 			dataDir: userData,
 			characterSeedRoot: characterSeedRoot(),
 			productConfig,
@@ -396,6 +406,7 @@ async function initializeHost(): Promise<boolean> {
 			},
 		});
 		runtime = createdRuntime;
+		diagnostics.setPolicySource(() => createdRuntime.diagnosticsPolicy);
 		const disposeRouter = wireElectronIpcHandlers(createdRuntime.dispatcher, windowRegistry, {
 			subscribeInvalidations: (listener) => createdRuntime.subscribeInvalidations(listener),
 			subscribeLivePush: (listener) => createdRuntime.subscribeLivePush(listener),

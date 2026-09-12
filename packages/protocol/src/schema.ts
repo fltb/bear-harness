@@ -1683,6 +1683,30 @@ export const SettingsData = SettingsDataBase.superRefine((settings, context) => 
 	}
 });
 export const SettingsGetRequest = z.strictObject({});
+export const DiagnosticsPolicy = z.strictObject({
+	level: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]),
+	payload: z.enum(["full", "metadata"]),
+	traceUntil: z.number().int().nonnegative(),
+	maxAgeDays: z.number().int().min(1).max(365),
+	maxBytes: z
+		.number()
+		.int()
+		.min(1024 * 1024)
+		.max(10 * 1024 * 1024 * 1024),
+});
+export const DiagnosticsSettingsResponse = z.strictObject({
+	policy: DiagnosticsPolicy,
+	health: z.strictObject({
+		written: z.number(),
+		dropped: z.number(),
+		writeFailures: z.number(),
+		lastWriteAt: z.string().nullable(),
+		queued: z.number(),
+		queuedBytes: z.number(),
+	}),
+	canReveal: z.boolean(),
+});
+const DiagnosticTraceId = z.string().regex(/^[a-f0-9]{32}$/);
 export const SettingsResponse = z.strictObject({
 	settings: SettingsData,
 });
@@ -2386,6 +2410,117 @@ export const RPC = {
 			SettingsCapabilitiesGetRequest,
 			SettingsCapabilitiesGetResponse,
 			"query",
+		),
+	},
+	diagnostics: {
+		exportPage: endpoint(
+			"diagnostics.exportPage",
+			z.strictObject({
+				traceId: DiagnosticTraceId,
+				offset: z.number().int().nonnegative().optional(),
+				end: z.number().int().nonnegative().optional(),
+			}),
+			z.strictObject({
+				content: z.string(),
+				next: z.number().int().optional(),
+				end: z.number().int(),
+			}),
+			"query",
+		),
+		renderer: endpoint(
+			"diagnostics.renderer",
+			z.strictObject({
+				rendererId: z.string().uuid(),
+				dropped: z.number().int().nonnegative(),
+				records: z
+					.array(
+						z.strictObject({
+							conversationId: z.string().min(1).max(100),
+							event: z.enum(["received", "projected", "scroll", "fault"]),
+							at: z.string().datetime(),
+							durationMs: z.number().finite().nonnegative().optional(),
+							sequence: z.number().int().nonnegative().optional(),
+							distance: z.number().finite().nonnegative().optional(),
+							error: z
+								.strictObject({
+									name: z.string().max(128),
+									message: z.string().max(65536),
+									stack: z.string().max(65536).optional(),
+								})
+								.optional(),
+						}),
+					)
+					.max(128),
+			}),
+			EmptyResponse,
+			"mutation",
+		),
+		pin: endpoint(
+			"diagnostics.pin",
+			z.strictObject({ traceId: DiagnosticTraceId, pinned: z.boolean() }),
+			EmptyResponse,
+			"mutation",
+		),
+		metrics: endpoint(
+			"diagnostics.metrics",
+			z.strictObject({}),
+			z.strictObject({ content: z.string() }),
+			"query",
+		),
+		get: endpoint("diagnostics.get", z.strictObject({}), DiagnosticsSettingsResponse, "query"),
+		set: endpoint(
+			"diagnostics.set",
+			z.strictObject({ policy: DiagnosticsPolicy }),
+			DiagnosticsSettingsResponse,
+			"mutation",
+		),
+		list: endpoint(
+			"diagnostics.list",
+			z.strictObject({
+				incidents: z.boolean().optional(),
+				before: z.string().max(100).optional(),
+				limit: z.number().int().min(1).max(100).optional(),
+				level: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).optional(),
+				event: z.string().max(120).optional(),
+				conversationId: z.string().max(100).optional(),
+				runId: z.string().max(100).optional(),
+			}),
+			z.strictObject({
+				traces: z.array(z.strictObject({ traceId: DiagnosticTraceId, modifiedAt: z.string() })),
+				next: z.string().optional(),
+			}),
+			"query",
+		),
+		read: endpoint(
+			"diagnostics.read",
+			z.strictObject({
+				traceId: DiagnosticTraceId,
+				offset: z.number().int().nonnegative().optional(),
+			}),
+			z.strictObject({
+				content: z.string(),
+				next: z.number().int().optional(),
+				pinned: z.boolean(),
+			}),
+			"query",
+		),
+		payload: endpoint(
+			"diagnostics.payload",
+			z.strictObject({ traceId: DiagnosticTraceId, sha256: z.string().regex(/^[a-f0-9]{64}$/) }),
+			z.strictObject({ content: z.string() }),
+			"query",
+		),
+		export: endpoint(
+			"diagnostics.export",
+			z.strictObject({ traceId: DiagnosticTraceId }),
+			z.strictObject({ content: z.string() }),
+			"query",
+		),
+		reveal: endpoint(
+			"diagnostics.reveal",
+			z.strictObject({ scope: z.enum(["system", "character", "memory", "latest"]) }),
+			EmptyResponse,
+			"mutation",
 		),
 	},
 	update: {

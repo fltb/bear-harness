@@ -1,9 +1,19 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import { redactTraceText } from "../../src/diagnostics/redaction.js";
+import { redactCredentials, redactTraceText } from "../../src/diagnostics/redaction.js";
 
 describe("TRACE content redaction", () => {
+	it("preserves character-local diagnostic context while filtering credential material", () => {
+		const text =
+			"extracted=2 stored=0 query=Float /home/person/role\n" +
+			"-----BEGIN PGP PRIVATE KEY BLOCK-----\nprivate-material\n-----END PGP PRIVATE KEY BLOCK-----\n" +
+			"token=private-token passphrase=private-pass";
+		const result = redactCredentials(text);
+		expect(result).toContain("extracted=2 stored=0 query=Float /home/person/role");
+		expect(result).not.toMatch(/private-material|private-token|private-pass/);
+	});
+
 	it("removes credentials and user-home segments before persistence", () => {
 		const result = redactTraceText(
 			'Authorization: Bearer secret-token api_key=sk-1234567890 {"password":"hidden"} path=/Users/alice/project and C:\\Users\\bob\\repo plus /private/tmp/work/item.txt',
