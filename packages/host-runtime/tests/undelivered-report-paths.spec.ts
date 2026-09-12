@@ -20,6 +20,10 @@ describe("《未送达的回报》natural-language path contract", () => {
 		expect(character).not.toHaveProperty("choice_sets");
 		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
 		expect(skill?.content).toContain("`host_choices`");
+		expect(skill?.triggers.exclude).toContainEqual(
+			expect.stringContaining("另一封信、另一项事件或一段新剧情"),
+		);
+		expect(skill?.content).toContain("不是旧站所有剧情的默认内容");
 	});
 
 	it("selects one chapter resource from a simple number", () => {

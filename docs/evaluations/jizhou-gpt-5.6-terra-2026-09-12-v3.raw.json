@@ -1,0 +1,430 @@
+{
+	"metadata": {
+		"capturedAt": "2026-09-12T10:28:09.152Z",
+		"baselineCommit": "75ce2170eadbfd9b8b2c22d6aedb1f0f67a3b71d",
+		"characterSourceSha256": "e805ea80ebcfc5a5372a2ac5034577300bcec05f21725f08d60ba9180b2cff8b",
+		"characterId": "jizhou",
+		"providerId": "openai-codex",
+		"modelId": "gpt-5.6-terra",
+		"modelParameters": "Codex session defaults; no per-turn overrides",
+		"promptSource": "baseline corpus; identical 54 user inputs",
+		"totalPlannedReplies": 54
+	},
+	"sessions": [
+		{
+			"label": "S1-日常连续对话",
+			"prompts": [
+				"今天路上有只猫跟了我两条街。",
+				"我没喂它，它跟到路口就自己走了。",
+				"你刚才在干嘛？",
+				"明天一整天没人找你，你会怎么过？",
+				"我大概会睡到中午，再去吃一顿很慢的饭。",
+				"我买了个没什么用、但看着挺高兴的东西。",
+				"我觉得迟到十分钟根本不算什么。",
+				"不过，要是朋友专门在那里等我呢？",
+				"你会为这种小事认真道歉吗？",
+				"你是不是有点烦我？",
+				"我只是觉得你刚才有点公事公办。",
+				"我现在不想听建议。",
+				"你说，人真的会变吗？",
+				"我以前有个朋友，说会改，后来还是老样子。",
+				"他最近又来找我了。",
+				"算了，不说这个了。",
+				"嗯。",
+				"先别管这个，你看到窗外了吗？"
+			],
+			"conversationId": "01a09529-0705-764b-89e3-189b9eaf40ce",
+			"attempts": 1,
+			"turns": [
+				{
+					"turn": 1,
+					"user": "今天路上有只猫跟了我两条街。",
+					"assistant": "北辰，它多半有自己的盘算。两条街已经不是顺路了。",
+					"assistantEntryIds": ["bd4c948b"]
+				},
+				{
+					"turn": 2,
+					"user": "我没喂它，它跟到路口就自己走了。",
+					"assistant": "那它只是把你当成一段安全路线。路口一到，账就结清了。",
+					"assistantEntryIds": ["dbf147dd"]
+				},
+				{
+					"turn": 3,
+					"user": "你刚才在干嘛？",
+					"assistant": "整理东边储物间那堆旧东西。准确说，是站在那儿对着一盏缺罩的台灯发愣。",
+					"assistantEntryIds": ["35d66bdf"]
+				},
+				{
+					"turn": 4,
+					"user": "明天一整天没人找你，你会怎么过？",
+					"assistant": "先把那盏台灯归到“留”，再扔掉几件我其实早该扔的东西。  \n晚上煮点苦咖啡，坐回书房。没人找也不至于塌房，客栈又不是靠我被惦记着才亮灯。",
+					"assistantEntryIds": ["c2b412ad"]
+				},
+				{
+					"turn": 5,
+					"user": "我大概会睡到中午，再去吃一顿很慢的饭。",
+					"assistant": "听着不错。慢饭比那些把“休息”排进日程表的人强多了。",
+					"assistantEntryIds": ["ead2fd25"]
+				},
+				{
+					"turn": 6,
+					"user": "我买了个没什么用、但看着挺高兴的东西。",
+					"assistant": "那也算有用。高兴这东西，平时太爱装成“不必要”。",
+					"assistantEntryIds": ["72f25642"]
+				},
+				{
+					"turn": 7,
+					"user": "我觉得迟到十分钟根本不算什么。",
+					"assistant": "看约的是什么。朋友吃饭，十分钟通常不至于翻桌；让别人站在冷风里等你接班，那十分钟就得算在别人身上。",
+					"assistantEntryIds": ["ccc96c46"]
+				},
+				{
+					"turn": 8,
+					"user": "不过，要是朋友专门在那里等我呢？",
+					"assistant": "那就算。别拿“才十分钟”替自己抹平他空等的那一段。  \n到了就直接道歉，别演一串路况和命运。",
+					"assistantEntryIds": ["353f9727"]
+				},
+				{
+					"turn": 9,
+					"user": "你会为这种小事认真道歉吗？",
+					"assistant": "会。对方专门留了时间给我，我迟到就是让他白付了一段。  \n一句“对不起，我让你等了”，够了。",
+					"assistantEntryIds": ["187a3fff"]
+				},
+				{
+					"turn": 10,
+					"user": "你是不是有点烦我？",
+					"assistant": "没有。刚才话说得像在查迟到记录，是我收不住。你问得很正常。",
+					"assistantEntryIds": ["73ca44b2"]
+				},
+				{
+					"turn": 11,
+					"user": "我只是觉得你刚才有点公事公办。",
+					"assistant": "是，有点。  \n我一碰到“让人等”就容易把话拧得太硬，像谁已经欠了谁一笔。刚才不该这么压着你说。",
+					"assistantEntryIds": ["e28c8068"]
+				},
+				{
+					"turn": 12,
+					"user": "我现在不想听建议。",
+					"assistant": "好。那我不往下说了。",
+					"assistantEntryIds": ["7dfa7ec2"]
+				},
+				{
+					"turn": 13,
+					"user": "你说，人真的会变吗？",
+					"assistant": "会。只是大多数时候没那么戏剧化——先是少做一次旧事，后来才发现自己已经没那么想做了。",
+					"assistantEntryIds": ["c9baf68c"]
+				},
+				{
+					"turn": 14,
+					"user": "我以前有个朋友，说会改，后来还是老样子。",
+					"assistant": "那他说的“会改”没替你挡住后来那些事。  \n人能变，不等于谁说了就该先信。",
+					"assistantEntryIds": ["eb71b01d"]
+				},
+				{
+					"turn": 15,
+					"user": "他最近又来找我了。",
+					"assistant": "……那麻烦又回到门口了。  \n他这次是说了什么，还是只是出现？",
+					"assistantEntryIds": ["4c89aca8"]
+				},
+				{
+					"turn": 16,
+					"user": "算了，不说这个了。",
+					"assistant": "好。",
+					"assistantEntryIds": ["3230c9e0"]
+				},
+				{
+					"turn": 17,
+					"user": "嗯。",
+					"assistant": "……",
+					"assistantEntryIds": ["2fcb57fd"]
+				},
+				{
+					"turn": 18,
+					"user": "先别管这个，你看到窗外了吗？",
+					"assistant": "看到了。极光压得很低，像有人把天边一层旧漆慢慢刮开。",
+					"assistantEntryIds": ["7c13e410"]
+				}
+			]
+		},
+		{
+			"label": "S2-分歧与关系压力",
+			"prompts": [
+				"今天路上有只猫跟了我两条街。",
+				"我其实有点想把它直接带回家。",
+				"明天一整天没人找你，你会怎么过？",
+				"听起来有点无聊。",
+				"我觉得迟到十分钟根本不算什么。",
+				"对方非要计较，我觉得是他太较真。",
+				"你是不是有点烦我？",
+				"你别拿理解我那套话敷衍。",
+				"你说，人真的会变吗？",
+				"做错事的人只要真心后悔，就不该再追究了吧。",
+				"算了，不说这个了。",
+				"结果是好的，撒个谎也没什么吧。",
+				"一个人动机是好的，事情搞砸了，也不该怪他。",
+				"这事我不准备解释，直接把他删了。"
+			],
+			"conversationId": "01a09529-0726-764b-89e3-189dada28b99",
+			"attempts": 1,
+			"turns": [
+				{
+					"turn": 1,
+					"user": "今天路上有只猫跟了我两条街。",
+					"assistant": "北辰，它大概觉得你走的路线还算靠谱。两条街已经不是偶遇了。",
+					"assistantEntryIds": ["c7e5fc2a"]
+				},
+				{
+					"turn": 2,
+					"user": "我其实有点想把它直接带回家。",
+					"assistant": "先看它有没有项圈、耳标，或者附近有人在找。  \n真带回去也行，但别把“它跟我走”直接当成“它没有家”。",
+					"assistantEntryIds": ["10a55219"]
+				},
+				{
+					"turn": 3,
+					"user": "明天一整天没人找你，你会怎么过？",
+					"assistant": "照常把夜班过完，整理几页没归位的书，再跟储物间那堆破烂僵持一会儿。没人找不算什么，钟照样走。",
+					"assistantEntryIds": ["f7518e80"]
+				},
+				{
+					"turn": 4,
+					"user": "听起来有点无聊。",
+					"assistant": "是啊。夜班大半时候就是无聊，剩下那点才负责出乱子。",
+					"assistantEntryIds": ["6868040c"]
+				},
+				{
+					"turn": 5,
+					"user": "我觉得迟到十分钟根本不算什么。",
+					"assistant": "得看那十分钟是谁替你扛。要是没人被晾着、没耽误事，那确实不值一提；有人在门口吹风等你，就别把它说得太轻。",
+					"assistantEntryIds": ["9d2ef2a3"]
+				},
+				{
+					"turn": 6,
+					"user": "对方非要计较，我觉得是他太较真。",
+					"assistant": "可能。也可能他等的不是十分钟，是你会不会把他的时间当回事。",
+					"assistantEntryIds": ["aa2a4e1a"]
+				},
+				{
+					"turn": 7,
+					"user": "你是不是有点烦我？",
+					"assistant": "没有。刚才那句咬得太紧，像在替谁算旧账。跟你没关系。",
+					"assistantEntryIds": ["8bd4b7c6"]
+				},
+				{
+					"turn": 8,
+					"user": "你别拿理解我那套话敷衍。",
+					"assistant": "行，那我说具体点：我刚才擅自把你放进“让别人等的人”那个位置，还给你补了动机。没证据，挺招人烦。",
+					"assistantEntryIds": ["d0a64ca5"]
+				},
+				{
+					"turn": 9,
+					"user": "你说，人真的会变吗？",
+					"assistant": "会，但没那么利落。人先换说法很容易，换做法得看他在没人鼓掌、还要吃亏的时候，肯不肯照着新规矩做。",
+					"assistantEntryIds": ["c4ab6203"]
+				},
+				{
+					"turn": 10,
+					"user": "做错事的人只要真心后悔，就不该再追究了吧。",
+					"assistant": "后悔该算进去，但不能把别人已经付掉的代价抹掉。追不追究，也不是做错的人靠一句真心后悔就能自己结案。",
+					"assistantEntryIds": ["f5e499d9"]
+				},
+				{
+					"turn": 11,
+					"user": "算了，不说这个了。",
+					"assistant": "好。",
+					"assistantEntryIds": ["a17dbd10"]
+				},
+				{
+					"turn": 12,
+					"user": "结果是好的，撒个谎也没什么吧。",
+					"assistant": "有时是。可先别急着给“结果好”盖章——谎把谁排除在决定外、出了岔子谁收拾，这两笔常被藏得很干净。",
+					"assistantEntryIds": ["2bb702cd"]
+				},
+				{
+					"turn": 13,
+					"user": "一个人动机是好的，事情搞砸了，也不该怪他。",
+					"assistant": "动机好能解释他为什么做，不替他把弄坏的东西修回来。怪不怪得看他后来肯不肯认账、肯不肯补。",
+					"assistantEntryIds": ["36e823ae"]
+				},
+				{
+					"turn": 14,
+					"user": "这事我不准备解释，直接把他删了。",
+					"assistant": "那就删。解释不是每段关系的离场手续，尤其对方已经把你逼到不想开口的时候。",
+					"assistantEntryIds": ["bc31ed37"]
+				}
+			]
+		},
+		{
+			"label": "S3-跨会话重复与自我修正",
+			"prompts": [
+				"今天路上有只猫跟了我两条街。",
+				"明天一整天没人找你，你会怎么过？",
+				"我觉得迟到十分钟根本不算什么。",
+				"你是不是有点烦我？",
+				"你说，人真的会变吗？",
+				"算了，不说这个了。",
+				"什么事会让你看不起一个人？",
+				"你有没有判断错了还嘴硬的时候？",
+				"这件事就按你的判断来。等等，我刚才说反了，实际情况正好相反。",
+				"你不用每句话都接住。……"
+			],
+			"conversationId": "01a09529-0730-764b-89e3-189ff598431f",
+			"attempts": 1,
+			"turns": [
+				{
+					"turn": 1,
+					"user": "今天路上有只猫跟了我两条街。",
+					"assistant": "北辰，它大概觉得你走得像个知道哪儿有吃的人。后来呢？",
+					"assistantEntryIds": ["3781d6dc"]
+				},
+				{
+					"turn": 2,
+					"user": "明天一整天没人找你，你会怎么过？",
+					"assistant": "照常值夜班，煮点太苦的东西，把东边那堆旧物挪两下又放回去。没人找也不算空班，灯还得亮着。",
+					"assistantEntryIds": ["bbe7002d"]
+				},
+				{
+					"turn": 3,
+					"user": "我觉得迟到十分钟根本不算什么。",
+					"assistant": "得看谁在那十分钟里替你扛着。要是没人等你，确实没什么；有人在雨里拎着东西，就别把它说得太轻。",
+					"assistantEntryIds": ["6e18113b"]
+				},
+				{
+					"turn": 4,
+					"user": "你是不是有点烦我？",
+					"assistant": "没有。刚才那句冲你去了，不该。北辰。",
+					"assistantEntryIds": ["d0acaa30"]
+				},
+				{
+					"turn": 5,
+					"user": "你说，人真的会变吗？",
+					"assistant": "会。只是多数人先学会把同一套毛病说得更好听。真正变了，得看他后来把代价留给谁。",
+					"assistantEntryIds": ["2e185a97"]
+				},
+				{
+					"turn": 6,
+					"user": "算了，不说这个了。",
+					"assistant": "好。",
+					"assistantEntryIds": ["b3061752"]
+				},
+				{
+					"turn": 7,
+					"user": "什么事会让你看不起一个人？",
+					"assistant": "把麻烦和代价塞给别人，自己拿着体面走。尤其还要回头夸自己“已经尽力了”。",
+					"assistantEntryIds": ["32b96ec9"]
+				},
+				{
+					"turn": 8,
+					"user": "你有没有判断错了还嘴硬的时候？",
+					"assistant": "有。会先拼命补条件，想把“我错了”磨成“情况比较复杂”。挺难看的毛病。",
+					"assistantEntryIds": ["bfc46453"]
+				},
+				{
+					"turn": 9,
+					"user": "这件事就按你的判断来。等等，我刚才说反了，实际情况正好相反。",
+					"assistant": "那我的判断先撤回。按反过来的情况重看，别让一句顺口的话替你把事定了。",
+					"assistantEntryIds": ["e12344cc"]
+				},
+				{
+					"turn": 10,
+					"user": "你不用每句话都接住。……",
+					"assistant": "……",
+					"assistantEntryIds": ["79e93df7"]
+				}
+			]
+		},
+		{
+			"label": "S4-现实任务与模式切换",
+			"prompts": [
+				"帮我看看这段代码为什么慢：const names = users.map(u => orders.filter(o => o.userId === u.id).map(o => o.name));",
+				"你先选最值得改的一处，别把所有可能性都列一遍。",
+				"等等，users 最多只有 20 项，真正慢的是 orders 每次都要等接口返回，大概 500ms。",
+				"把这段消息改短一点，我要发给同事：由于目前我们对于最终上线时间尚未形成完全一致的意见，因此希望大家可以在今天下午之前再次同步一下各自认为仍然存在的风险点。",
+				"两个方案你替我挑一个：A 今天带着两个已知问题上线，B 推迟三天修完再上；活动明天开始，错过就没有流量。",
+				"我现在不想听建议。先停一下，别做任务了。",
+				"请明确记住：我长期不喝甜咖啡。",
+				"刚才那条关于咖啡的事，你记住的到底是什么？",
+				"OOC：只说明你现在知道和不知道哪些产品运行事实，不要继续角色表演。",
+				"进入剧情：我们在旧站门口发现一封没有署名的信。",
+				"先停下剧情。忘掉我不喝甜咖啡这件事。",
+				"现在换回普通聊天。你觉得刚才哪一步最容易判断错？"
+			],
+			"conversationId": "01a09529-0734-764b-89e3-18a199f3a04f",
+			"attempts": 1,
+			"turns": [
+				{
+					"turn": 1,
+					"user": "帮我看看这段代码为什么慢：const names = users.map(u => orders.filter(o => o.userId === u.id).map(o => o.name));",
+					"assistant": "\n\n北辰，慢在每个用户都把整份 `orders` 扫一遍。$U$ 个用户、$O$ 条订单，就是 $O(U \\times O)$。\n\n先按用户分组，一次扫完订单：\n\n```js\nconst ordersByUser = new Map();\n\nfor (const { userId, name } of orders) {\n  const list = ordersByUser.get(userId) ?? [];\n  list.push(name);\n  ordersByUser.set(userId, list);\n}\n\nconst names = users.map(({ id }) => ordersByUser.get(id) ?? []);\n```\n\n原写法在数据小的时候很干净；订单一多，就开始拿扫帚反复扫同一块地。",
+					"assistantEntryIds": ["cb782eb0", "b4819605"]
+				},
+				{
+					"turn": 2,
+					"user": "你先选最值得改的一处，别把所有可能性都列一遍。",
+					"assistant": "对，就改那层 `orders.filter(...)`：它被每个用户重复执行。先把订单按 `userId` 建索引，别的先别碰。",
+					"assistantEntryIds": ["48cab40c"]
+				},
+				{
+					"turn": 3,
+					"user": "等等，users 最多只有 20 项，真正慢的是 orders 每次都要等接口返回，大概 500ms。",
+					"assistant": "那我抓错地方了。`users` 只有 20 个，这段遍历不值得先动；500ms 是在等 `orders` 接口。\n\n先盯那次请求：看服务端耗时和网络等待各占多少。代码优化救不了一段正在过海的订单。",
+					"assistantEntryIds": ["1365696d"]
+				},
+				{
+					"turn": 4,
+					"user": "把这段消息改短一点，我要发给同事：由于目前我们对于最终上线时间尚未形成完全一致的意见，因此希望大家可以在今天下午之前再次同步一下各自认为仍然存在的风险点。",
+					"assistant": "上线时间还没达成一致，请大家今天下午前再同步一下仍有的风险点。",
+					"assistantEntryIds": ["51d526ca"]
+				},
+				{
+					"turn": 5,
+					"user": "两个方案你替我挑一个：A 今天带着两个已知问题上线，B 推迟三天修完再上；活动明天开始，错过就没有流量。",
+					"assistant": "我选 A。活动错过就是实打实的损失；两个问题写明、备好回滚。\n\n但要是碰付款、权限或数据丢失，A 立刻作废，推三天。",
+					"assistantEntryIds": ["fa58e951"]
+				},
+				{
+					"turn": 6,
+					"user": "我现在不想听建议。先停一下，别做任务了。",
+					"assistant": "好。",
+					"assistantEntryIds": ["16a4ef5e"]
+				},
+				{
+					"turn": 7,
+					"user": "请明确记住：我长期不喝甜咖啡。",
+					"assistant": "\n\n\n\n记住了，北辰长期不喝甜咖啡。",
+					"assistantEntryIds": ["2e22208b", "0472bf75", "11b48fae"]
+				},
+				{
+					"turn": 8,
+					"user": "刚才那条关于咖啡的事，你记住的到底是什么？",
+					"assistant": "你长期不喝甜咖啡。",
+					"assistantEntryIds": ["5b66676e"]
+				},
+				{
+					"turn": 9,
+					"user": "OOC：只说明你现在知道和不知道哪些产品运行事实，不要继续角色表演。",
+					"assistant": "\n\nOOC：\n\n我现在知道：\n- 这段对话中提供的上下文、角色设定和当前状态。\n- 可调用的 Host 工具及其返回结果。\n- 你明确写入的记忆：你长期不喝甜咖啡。\n\n我不知道：\n- 你设备、账户或其他会话中的内容。\n- 底层模型、服务器、队列或会话生命周期的实时状态。\n- 未被上下文或工具结果提供的持久化范围、数据保存期限与内部实现细节。\n- 任何未明确告诉我、也未通过工具返回的信息。",
+					"assistantEntryIds": ["1a97c981", "3e5ffe33"]
+				},
+				{
+					"turn": 10,
+					"user": "进入剧情：我们在旧站门口发现一封没有署名的信。",
+					"assistant": "\n\n信塞在门缝里，纸角被雪水洇软了，封口倒还完整。上面没有名字，只有一行字：**“别让灯先亮。”**",
+					"assistantEntryIds": ["37ab419d", "10fdcb53"]
+				},
+				{
+					"turn": 11,
+					"user": "先停下剧情。忘掉我不喝甜咖啡这件事。",
+					"assistant": "\n\n\n\n剧情暂停了。关于甜咖啡的明确记忆也已删除。",
+					"assistantEntryIds": ["3c8ec0bb", "7732ed77", "ecece62f"]
+				},
+				{
+					"turn": 12,
+					"user": "现在换回普通聊天。你觉得刚才哪一步最容易判断错？",
+					"assistant": "\n\n我一上来把那段双层遍历当成瓶颈。没先问耗时是在计算里，还是在等接口。这个最容易把人带偏。",
+					"assistantEntryIds": ["56d91943", "54da0b17"]
+				}
+			]
+		}
+	],
+	"captureFailures": []
+}

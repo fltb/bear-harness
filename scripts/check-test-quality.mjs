@@ -72,6 +72,8 @@ for (const file of files) {
 		sourceType: "module",
 		plugins: extname(file) === ".tsx" ? ["typescript", "jsx"] : ["typescript"],
 	});
+	const isOptionalLiveModelTest =
+		file.endsWith("live-model.spec.ts") || file.endsWith("jizhou-character-quality-live.spec.ts");
 	const visit = (node, ancestors = []) => {
 		const isUiTest = file.includes("packages/companion-ui/") || file.includes("/e2e/");
 		const copyContract = ancestors.some(
@@ -115,7 +117,7 @@ for (const file of files) {
 
 			if (
 				(method === "skip" || method === "only" || method === "fixme") &&
-				!file.endsWith("live-model.spec.ts")
+				!isOptionalLiveModelTest
 			) {
 				report(file, node.callee.property, `${method} is forbidden in required tests`);
 			}

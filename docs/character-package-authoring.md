@@ -17,6 +17,8 @@ skills/
 
 开发仓库中的默认包入口是 [`config/characters/jizhou/character.yaml`](../config/characters/jizhou/character.yaml)。
 
+角色的 prompt、behavior 和 examples 必须通过[角色对话“像人说话”质量检查表](character-conversation-quality-checklist.md)。这份量表检查口语节奏、临场互动、角色声口、判断方式、模板痕迹和多轮稳定性；它是所有角色包共用的创作与真实模型验收规范，不只适用于默认角色极昼。
+
 ## `character.yaml`
 
 最小包至少定义稳定的 ASCII kebab-case `id`、显示名称、semver、语言、角色文案、prompt/behavior 和可验证的 state schema。所有资源引用必须是包内相对路径，不能使用 `..`、绝对路径或 symlink 逃逸。
@@ -74,6 +76,7 @@ Skill 是声明性角色能力和上下文资源；Plugin 是可执行边界，�
 - state direct-child scope 完整且后代无覆盖；
 - first meeting 只包含角色设置；
 - user agency、知识边界和失败表达有明确 behavior；
+- 按角色对话质量检查表保存真实模型原文、逐项证据和 `PASS` 结论；
 - 素材 provenance、license、MIME、尺寸与字幕完整；
 - 新角色 runtime 建立在独立 `companions/<id>/`；
 - 至少跑角色包、media schema、loader、onboarding 和 WebDev first-use 测试。

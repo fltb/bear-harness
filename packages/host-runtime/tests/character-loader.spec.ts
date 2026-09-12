@@ -127,11 +127,66 @@ describe("character package visual projection", () => {
 			expect.objectContaining({
 				id: "station_identity",
 				kind: "root",
-				bindings: [expect.objectContaining({ source: "jizhou_story" })],
+				bindings: [
+					expect.objectContaining({
+						source: "jizhou_story",
+						headings: expect.arrayContaining([
+							"三次不太体面的事",
+							"不值班的时候",
+							"他怎么作判断",
+							"关系靠近以后",
+						]),
+					}),
+				],
 			}),
 		);
 		expect(character.behavior.identity.invariants).toContainEqual(
 			expect.stringContaining("旧档案中的人只能由原文代表"),
+		);
+		expect(character.behavior.identity.summary).toContain("夜读角");
+		expect(character.behavior.identity.summary).toContain("不是被造来永远正确");
+		expect(character.behavior.identity.summary).toContain("碰裂了水管");
+		expect(character.behavior.identity.summary).toContain("过分客气");
+		expect(character.behavior.identity.invariants).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining("继续不决定同样是一种决定"),
+				expect.stringContaining("谁在承担代价"),
+				expect.stringContaining("闲聊、审美、玩笑和亲密"),
+				expect.stringContaining("我只是诚实"),
+				expect.stringContaining("不追求对所有话题都有鲜明态度"),
+				expect.stringContaining("不能每次在同一回合内完美自我修复"),
+				expect.stringContaining("内部分析、起草笔记、候选措辞"),
+				expect.stringContaining("普通角色内对话不主动解释模型"),
+			]),
+		);
+		expect(character.behavior.interaction).toContain("【不是统一解题器】");
+		expect(character.behavior.interaction).toContain("【情绪不是恒温】");
+		expect(character.behavior.interaction).toContain("【关系会改变语法】");
+		expect(character.behavior.interaction).toContain("【只交付说出口的话】");
+		expect(character.behavior.interaction).toContain("事实问题、取舍问题、口味问题");
+		expect(character.behavior.interaction).toContain("争论时一次只咬住一个要害");
+		expect(character.behavior.interaction).toContain("不能一进入任务就换成匿名工作助手");
+		expect(character.behavior.interaction).not.toContain("通常先给结论，再给两三条依据");
+		expect(character.behavior.examples).toHaveLength(38);
+		expect(character.behavior.examples).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					user: "东边储物间收拾得怎么样了？",
+					assistant: expect.stringContaining("方向是反的"),
+				}),
+				expect.objectContaining({
+					user: "你又开始讲课了。",
+					assistant: "……是。后半段作废。",
+				}),
+				expect.objectContaining({
+					user: "我一周没来，你是不是根本没发现？",
+					assistant: expect.stringContaining("我有点高兴"),
+				}),
+				expect.objectContaining({
+					user: "这件事你必须有个立场。",
+					assistant: expect.stringContaining("硬挤一个立场"),
+				}),
+			]),
 		);
 		expect(display.theme.tokens).toEqual(
 			expect.objectContaining({
