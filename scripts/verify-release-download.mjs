@@ -5,9 +5,10 @@ import {
 	lstatSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const TARGETS = ["mac-x64", "mac-arm64", "win-x64", "linux-x64"];
@@ -115,10 +116,20 @@ export async function verifyReleaseDownload(options) {
 		}
 	}
 
-	const names = new Set();
+	const names = new Map();
 	for (const asset of assets) {
-		if (names.has(asset.name)) throw new Error(`duplicate release asset name: ${asset.name}`);
-		names.add(asset.name);
+		const name = asset.name.replace(/[^A-Za-z0-9._-]/g, ".").replace(/^\.+|\.+$/g, "");
+		if (!name) throw new Error("empty release asset name after normalization");
+		if (names.has(name)) throw new Error(`duplicate release asset name: ${name}`);
+		names.set(name, asset);
+	}
+	// Verify original CI names and bytes first; publish only stable GitHub filenames.
+	for (const [name, asset] of names) {
+		if (name === asset.name) continue;
+		const path = join(dirname(asset.path), name);
+		renameSync(asset.path, path);
+		asset.name = name;
+		asset.path = path;
 	}
 	assets.sort((left, right) => left.name.localeCompare(right.name));
 	const manifestPath = join(downloadRoot, "SHA256SUMS.txt");

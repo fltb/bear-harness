@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test from "node:test";
+import { basename, join } from "node:path";
+import test, { after } from "node:test";
 import { validateReleaseTag, verifyReleaseDownload } from "./verify-release-download.mjs";
 
 const COMMIT = "a".repeat(40);
@@ -26,14 +26,27 @@ test("download verification binds all four packages to the final green attestati
 		commit: COMMIT,
 	});
 	assert.equal(result.assets.length, 4);
-	const manifest = readFileSync(result.manifestPath, "utf8");
-	for (const target of TARGETS) assert.ok(manifest.includes(`Bear-Harness-${target}.bin`));
+	const checksums = new Map(
+		readFileSync(result.manifestPath, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => {
+				const [hash, name] = line.split("  ");
+				return [name, hash];
+			}),
+	);
+	assert.equal(checksums.size, TARGETS.length);
+	for (const asset of result.assets) {
+		const name = basename(asset.path);
+		assert.match(name, /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/);
+		assert.equal(checksums.get(name), digest(asset.path).sha256);
+	}
 });
 
 test("download verification rejects a package whose bytes differ from CI evidence", async () => {
 	const fixture = createFixture();
 	writeFileSync(
-		join(fixture.downloadRoot, "bear-harness-win-x64", "Bear-Harness-win-x64.bin"),
+		join(fixture.downloadRoot, "bear-harness-win-x64", "Bear Harness-win-x64.bin"),
 		"tampered",
 	);
 	await assertRejectsMessage(
@@ -62,8 +75,33 @@ test("download verification rejects an incomplete final validation set", async (
 	);
 });
 
+test("publication rejects filename normalization collisions before moving verified packages", async () => {
+	const fixture = createFixture({
+		assetName: (target) =>
+			target === "mac-x64"
+				? "Shared name.bin"
+				: target === "mac-arm64"
+					? "Shared.name.bin"
+					: `Bear Harness-${target}.bin`,
+	});
+	await assert.rejects(
+		verifyReleaseDownload({
+			repoRoot: fixture.root,
+			downloadRoot: fixture.downloadRoot,
+			tag: "v1.0.0-rc.33",
+			commit: COMMIT,
+		}),
+		/duplicate release asset name/,
+	);
+	assert.equal(
+		readFileSync(join(fixture.downloadRoot, "bear-harness-mac-x64", "Shared name.bin"), "utf8"),
+		"package-mac-x64",
+	);
+});
+
 function createFixture(options = {}) {
 	const root = mkdtempSync(join(tmpdir(), "bear-release-download-"));
+	after(() => rmSync(root, { recursive: true, force: true }));
 	const downloadRoot = join(root, "downloads");
 	mkdirSync(downloadRoot);
 	writeFileSync(join(root, "package.json"), `${JSON.stringify({ version: "1.0.0" })}\n`);
@@ -79,7 +117,7 @@ function createFixture(options = {}) {
 	});
 
 	const packageReferences = TARGETS.map((target) => {
-		const assetName = `Bear-Harness-${target}.bin`;
+		const assetName = options.assetName?.(target) ?? `Bear Harness-${target}.bin`;
 		const assetPath = writeArtifact(
 			downloadRoot,
 			`bear-harness-${target}`,
