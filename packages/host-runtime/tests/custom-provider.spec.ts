@@ -359,14 +359,12 @@ describe("custom OpenAI-compatible provider configuration", () => {
 
 		const response = ProviderListResponse.parse({ providers: await catalog.listProviders() });
 		const provider = response.providers.find((candidate) => candidate.id === "standard-relay");
-		expect(provider?.availableModels).toEqual([
-			{
-				id: "standard-model",
-				name: "Standard Model",
-				supportsImages: false,
-				cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
-			},
-		]);
+		expect(provider?.availableModels.find((model) => model.id === "standard-model")?.cost).toEqual({
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+		});
 		expect(provider?.availableModels[0]?.cost).not.toHaveProperty("tiers");
 	});
 

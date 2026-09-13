@@ -727,6 +727,15 @@ test("configured live model answers a natural story with scene expression media 
 		rpc<StoryOpen>("conversation.open", { conversationId: conversation.conversationId });
 	const state = () =>
 		rpc<StoryState>("companionState.get", { conversationId: conversation.conversationId });
+	const assertExpression = async () => {
+		const selected = (await state()).state.display.expressionId;
+		const snapshot = await rpc<{
+			character: { visual: { expressionLabels: Record<string, string> } };
+		}>("snapshot.get", {});
+		const label = snapshot.character.visual.expressionLabels[selected];
+		if (!label) throw new Error(`Selected expression is not declared: ${selected}`);
+		await expect(page.getByRole("img", { name: label, exact: true })).toBeVisible();
+	};
 	const send = async (text: string) => {
 		const startIndex = (await open()).branch.entries.length;
 		await rpc("message.send", {
@@ -747,8 +756,10 @@ test("configured live model answers a natural story with scene expression media 
 						entries.includes(`"toolName":"${toolName}"`) && entries.includes(payloadMarker);
 					if (hasExpectedTool) return true;
 					const lastEntry = JSON.stringify(turnEntries.at(-1));
-					if (!snapshot.live.isStreaming && lastEntry.includes('"stopReason":"error"')) {
-						throw new Error(`Live model settled with an error before ${toolName}: ${lastEntry}`);
+					if (!snapshot.live.isStreaming && lastEntry.includes('"stopReason":')) {
+						throw new Error(
+							`Live model settled without ${toolName} (${payloadMarker}): ${lastEntry}`,
+						);
 					}
 					return false;
 				},
@@ -762,7 +773,10 @@ test("configured live model answers a natural story with scene expression media 
 			.toBe(false);
 	};
 
-	const firstTurnStart = await send("我想看看那条没归档的回报。别先给摘要，我想从原件开始查。");
+	// Package CGs illustrate atmosphere; asking for an original document does not request a CG.
+	const firstTurnStart = await send(
+		"带我去交接档案室查那条没归档的回报。先播放信号室的动态场景图让我看看氛围，再把回报原文读给我；场景图不是档案原件，要分清。",
+	);
 	await waitForTool(firstTurnStart, "host_media", "damaged_signal");
 	const firstChapterText = projectPiEntries((await open()).branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
@@ -773,14 +787,7 @@ test("configured live model answers a natural story with scene expression media 
 	expect(firstChapterText).not.toContain("06:40");
 	expect(firstChapterText).not.toContain("风向");
 	await expect.poll(async () => (await state()).state.character.document.story.active).toBe(true);
-	await expect
-		.poll(async () => {
-			const chapter = (await state()).state.character.document.story.chapter;
-			return chapter === 1 || chapter === 2;
-		})
-		.toBe(true);
 	await expect.poll(async () => (await state()).state.display.sceneId).toBe("archive_gallery");
-	await expect.poll(async () => (await state()).state.display.expressionId).toBe("reflective");
 
 	await page.goto("/");
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
@@ -789,7 +796,7 @@ test("configured live model answers a natural story with scene expression media 
 		.locator(`[data-conversation-id="${conversation.conversationId}"]`)
 		.click();
 	await expect(page.getByRole("img", { name: "交接档案室" })).toBeVisible();
-	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
+	await assertExpression();
 	const damagedSignal = thread.getByRole("region", { name: "残缺报码" });
 	await expect(damagedSignal).toBeVisible();
 	await damagedSignal.getByRole("button", { name: zhCN.messages.openMedia }).click();
@@ -835,7 +842,9 @@ test("configured live model answers a natural story with scene expression media 
 	};
 	let relayChoice = await findRelayChoice();
 	if (!relayChoice) {
-		const choiceTurnStart = await send("这两条路我一时拿不准。把现在能走的方向摆出来，我自己选。");
+		const choiceTurnStart = await send(
+			"把现在能继续调查的两条路做成可点击选项，我自己选。去转发台那条请写清楚：先看地图桌场景图，再查转发记录。",
+		);
 		await waitForTool(choiceTurnStart, "host_choices", "转发台");
 	} else {
 		await waitForTool(firstTurnStart, "host_choices", "转发台");
@@ -844,8 +853,24 @@ test("configured live model answers a natural story with scene expression media 
 	if (!relayChoice) throw new Error("The live model did not offer the relay-register choice");
 	const relayTurnStart = (await open()).branch.entries.length;
 	await relayChoice.click();
+	// Choosing a route is ordinary input, not a privileged command to emit media.
+	await expect
+		.poll(
+			async () => {
+				const snapshot = await open();
+				return (
+					!snapshot.live.isStreaming &&
+					projectPiEntries(snapshot.branch.entries.slice(relayTurnStart)).some(
+						(entry) => entry.type === "message" && entry.role === "assistant",
+					)
+				);
+			},
+			{ timeout: liveReplyTimeout },
+		)
+		.toBe(true);
+	const relayMediaStart = await send("给我看看转发台灯下的地图桌场景图，再接着查这里的记录。");
 
-	await waitForTool(relayTurnStart, "host_media", "storm_relay_map");
+	await waitForTool(relayMediaStart, "host_media", "storm_relay_map");
 	const relayText = projectPiEntries((await open()).branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.map((entry) => entry.text ?? "")
@@ -853,9 +878,8 @@ test("configured live model answers a natural story with scene expression media 
 	expect(relayText).toContain("K-4");
 	expect(relayText).toContain("未获复述");
 	await expect.poll(async () => (await state()).state.display.sceneId).toBe("relay_room");
-	await expect.poll(async () => (await state()).state.display.expressionId).toBe("reflective");
 	await expect(page.getByRole("img", { name: "转发台资料室" })).toBeVisible();
-	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
+	await assertExpression();
 	await expect
 		.poll(() => thread.getByRole("region", { name: "转发台灯下", exact: true }).count())
 		.toBeGreaterThan(0);

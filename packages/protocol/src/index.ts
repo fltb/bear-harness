@@ -303,6 +303,7 @@ export type ProviderOverrideBaseUrlResponse = z.infer<typeof schema.EmptyRespons
 // ---------------------------------------------------------------------------
 
 export type ModelRoute = z.infer<typeof schema.ModelRoute>;
+export type ModelThinkingLevel = z.infer<typeof schema.ModelThinkingLevel>;
 export type ConfiguredModel = z.infer<typeof schema.ConfiguredModel>;
 export type ModelReadiness = z.infer<typeof schema.ModelReadiness>;
 export type ModelPoolGetRequest = z.infer<typeof schema.ModelPoolGetRequest>;

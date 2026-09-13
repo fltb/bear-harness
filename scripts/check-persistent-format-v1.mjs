@@ -47,9 +47,21 @@ const contracts = [
 ];
 for (const [path, expected] of contracts) requireText(path, expected);
 
-for (const forbidden of ["upgradeSystemSchema", "upgradeCompanionSchema", "ALTER TABLE"]) {
+for (const forbidden of ["upgradeSystemSchema", "upgradeCompanionSchema"]) {
 	forbidText("packages/host-runtime/src/storage/database.ts", forbidden);
 }
+// The nullable thinking preference is the sole approved additive extension of existing v1 data.
+const thinkingColumn = source("packages/host-runtime/src/storage/schema-sql.ts").match(
+	/\n\t(text_thinking_level TEXT CHECK \([^\n]+\)),\n/,
+)?.[1];
+if (!thinkingColumn || /\b(?:NOT NULL|DEFAULT)\b/.test(thinkingColumn))
+	throw new Error("the v1 thinking preference must remain nullable without an explicit default");
+const databaseSource = source("packages/host-runtime/src/storage/database.ts");
+const thinkingExtension = `ALTER TABLE model_route_settings ADD COLUMN ${thinkingColumn}`;
+if (!databaseSource.includes(thinkingExtension))
+	throw new Error("existing v1 characters must receive the current nullable thinking preference");
+if (databaseSource.replaceAll(thinkingExtension, "").includes("ALTER TABLE"))
+	throw new Error("unapproved database schema changes are forbidden");
 for (const forbidden of [
 	"session_states",
 	"migrateFtsTablesIfNeeded",

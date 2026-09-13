@@ -32,6 +32,7 @@ export function CurrentRolePackageManager(props: {
 	characters: () => Array<{ id: string; name: string; active: boolean }>;
 	selectedId: () => string | undefined;
 	memory?: JSX.Element;
+	modelSettings?: JSX.Element;
 	document: () => CharacterPackageDocument | undefined;
 	loading: () => boolean;
 	error: () => string | undefined;
@@ -246,6 +247,7 @@ export function CurrentRolePackageManager(props: {
 				</For>
 			</section>
 			{props.memory}
+			{props.modelSettings}
 			<Show when={props.loading()}>
 				<p class="status-line" role="status">
 					{t("currentRolePackage.loading")}

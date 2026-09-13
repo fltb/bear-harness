@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
-import type { LivePush, PiProjectionVersion } from "@bear-harness/protocol";
+import type { LivePush, ModelThinkingLevel, PiProjectionVersion } from "@bear-harness/protocol";
 import { MAX_PI_LIVE_ITEMS, MAX_PI_QUEUE_CHARACTERS } from "@bear-harness/protocol/schema";
 import type { RecallResult } from "@bear-harness/tdai-core";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type AgentSessionEvent,
@@ -71,6 +72,7 @@ export interface PiRuntimeOptions {
 		};
 	};
 	defaultModel(companionId: string): ModelRoute | undefined;
+	defaultThinkingLevel?(companionId: string): ModelThinkingLevel | undefined;
 	multimodalFallback(companionId: string): ModelRoute | undefined;
 	context?(sessionId: string, message: string): string | Promise<string>;
 	sessionContext?(sessionId: string): string | Promise<string>;
@@ -288,13 +290,56 @@ export class PiRuntime {
 		});
 	}
 
-	async setModel(sessionId: string, providerId: string, modelId: string): Promise<ModelRoute> {
+	async setModel(
+		sessionId: string,
+		providerId: string,
+		modelId: string,
+		thinkingLevel?: ModelThinkingLevel | null,
+	): Promise<ModelRoute> {
 		return this.inSessionSequence(sessionId, async () => {
 			const model = (await this.options.models.getModels()).getModel(providerId, modelId);
 			if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
-			await (await this.requireSessionNow(sessionId)).setModel(model);
+			if (thinkingLevel && !getSupportedThinkingLevels(model).includes(thinkingLevel))
+				throw { kind: "invalid_request", reason: "model_thinking_level_unsupported" };
+			const session = await this.requireSessionNow(sessionId);
+			if (
+				thinkingLevel === undefined ||
+				session.model?.provider !== providerId ||
+				session.model.id !== modelId
+			)
+				await session.setModel(model);
+			if (thinkingLevel !== undefined)
+				session.setThinkingLevel(thinkingLevel ?? this.defaultThinkingLevel(session));
 			return { providerId: model.provider, modelId: model.id };
 		});
+	}
+
+	async modelSettingsFor(sessionId: string) {
+		return this.inSessionSequence(sessionId, async () => {
+			const session = await this.requireSessionNow(sessionId);
+			return {
+				...(session.model
+					? { selected: { providerId: session.model.provider, modelId: session.model.id } }
+					: {}),
+				thinking: {
+					level: session.thinkingLevel,
+					defaultLevel: this.defaultThinkingLevel(session),
+					levels: session.getAvailableThinkingLevels(),
+				},
+			};
+		});
+	}
+
+	private defaultThinkingLevel(session: AgentSession): ModelThinkingLevel {
+		// Match the pinned Pi SDK's default only when neither product nor native settings override it.
+		const requested =
+			this.options.defaultThinkingLevel?.(this.options.character().id) ??
+			(session.model
+				? session.settingsManager.getModelThinkingLevel(session.model.provider, session.model.id)
+				: undefined) ??
+			session.settingsManager.getDefaultThinkingLevel() ??
+			"medium";
+		return session.model ? clampThinkingLevel(session.model, requested) : "off";
 	}
 
 	async modelFor(sessionId: string): Promise<ModelRoute | undefined> {
@@ -739,11 +784,22 @@ export class PiRuntime {
 				throw new Error(`role plugin tool conflicts with Host tool: ${tool.name}`);
 		}
 		const allTools = [...Object.values(tools), ...pluginTools];
+		const thinkingLevel = manager
+			.getEntries()
+			.some(
+				(entry) =>
+					entry.type === "thinking_level_change" ||
+					entry.type === "model_change" ||
+					entry.type === "message",
+			)
+			? undefined
+			: this.options.defaultThinkingLevel?.(companionId);
 		const created = await createAgentSession({
 			cwd: this.cwd,
 			agentDir: this.cwd,
 			modelRuntime: models,
 			model,
+			...(thinkingLevel ? { thinkingLevel } : {}),
 			sessionManager: manager,
 			settingsManager: settings,
 			resourceLoader: loader,

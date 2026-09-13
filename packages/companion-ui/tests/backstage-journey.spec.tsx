@@ -88,6 +88,10 @@ describe("ordinary-user backstage journey", () => {
 		const activate = vi.fn(() => Promise.resolve());
 		const store = {
 			embedding: createEmbeddingBinding() as never,
+			model: {
+				models: () => [],
+				data: () => ({ defaults: { vision: { mode: "auto" }, onboardingComplete: true } }),
+			},
 			activePiLiveState: {
 				isStreaming: true,
 				isRetrying: false,

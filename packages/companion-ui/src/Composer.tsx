@@ -7,7 +7,7 @@ import {
 	faStop,
 } from "@fortawesome/free-solid-svg-icons";
 import { createSignal, Show } from "solid-js";
-import { ModelSelector } from "./features/ModelSelector.js";
+import { ModelSelector, ThinkingSelector } from "./features/ModelSelector.js";
 import { Icon } from "./Icon.js";
 import { fitTextareaToContent } from "./lib/textarea-sizing.js";
 import { notifyTimelineUserSent } from "./lib/timeline-scroll.js";
@@ -125,29 +125,44 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			onDragLeave={() => setDragging(false)}
 			onDrop={drop}
 		>
-			<ModelSelector
-				models={workflow.models()}
-				value={workflow.selectedModel()}
-				class="composer-model"
-				label={t("composer.modelLabel")}
-				placeholder={t("composer.chooseModel")}
-				labelClass="sr-only"
-				disabled={
-					store.conversationMutationBusy ||
-					workflow.modelBusy() ||
-					!store.activeConversationId ||
-					workflow.models().length === 0
-				}
-				triggerClass="composer-model-trigger"
-				contentClass="composer-model-content"
-				listClass="composer-model-list"
-				itemClass="composer-model-item"
-				placement="top-start"
-				gutter={8}
-				onModelChange={(model) => {
-					if (!store.conversationMutationBusy) void workflow.selectModel(model);
-				}}
-			/>
+			<div class="composer-model">
+				<ModelSelector
+					models={workflow.models()}
+					value={workflow.selectedModel()}
+					class="composer-model-picker"
+					label={t("composer.modelLabel")}
+					placeholder={t("composer.chooseModel")}
+					labelClass="sr-only"
+					disabled={
+						store.conversationMutationBusy ||
+						workflow.modelBusy() ||
+						!store.activeConversationId ||
+						workflow.models().length === 0
+					}
+					triggerClass="composer-model-trigger"
+					contentClass="composer-model-content"
+					listClass="composer-model-list"
+					itemClass="composer-model-item"
+					placement="top-start"
+					gutter={8}
+					onModelChange={(model) => {
+						if (!store.conversationMutationBusy) void workflow.selectModel(model);
+					}}
+				/>
+				<ThinkingSelector
+					compact
+					value={
+						store.model.data().thinking?.level === store.model.data().thinking?.defaultLevel
+							? null
+							: (store.model.data().thinking?.level ?? null)
+					}
+					levels={store.model.data().thinking?.levels ?? []}
+					disabled={
+						store.conversationMutationBusy || workflow.modelBusy() || !store.activeConversationId
+					}
+					onChange={(level) => void workflow.selectModel(workflow.selectedModel(), level)}
+				/>
+			</div>
 			<div class="composer-attach-menu">
 				<Button
 					ref={(element) => {

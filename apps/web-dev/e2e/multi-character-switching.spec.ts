@@ -112,12 +112,27 @@ async function switchCharacter(page: Page, name: string): Promise<void> {
 	);
 	await target.click();
 	expect((await activated).ok()).toBe(true);
-	await expect(page.getByRole("complementary").getByText(name, { exact: true })).toBeVisible({
-		timeout: 15_000,
-	});
 	await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
 	await expect(dialog).toBeHidden();
+	await expect(
+		page.getByRole("complementary").getByRole("strong").getByText(name, { exact: true }),
+	).toBeVisible({
+		timeout: 15_000,
+	});
 }
+
+test.afterEach(async ({ page }) => {
+	const { token } = await (await page.request.get("/bootstrap")).json();
+	await rpc(page, token, "character.activate", { characterId: "jizhou" });
+	for (const character of testCharacters) {
+		await rpc(page, token, "character.runtimeDelete", { characterId: character.id }).catch(
+			() => undefined,
+		);
+		await rpc(page, token, "character.packageDelete", { characterId: character.id }).catch(
+			() => undefined,
+		);
+	}
+});
 
 test("two characters isolate conversations and warn before an active-reply switch", async ({
 	page,
@@ -129,146 +144,139 @@ test("two characters isolate conversations and warn before an active-reply switc
 	const token = bootstrap.token as string;
 	const conversationIds = new Map<string, string>();
 
-	try {
-		for (const character of testCharacters) {
-			await rpc(page, token, "character.import", {
-				files: packageFiles(character.id, character.name, character.accent),
-			});
-			await rpc(page, token, "character.activate", { characterId: character.id });
-			await completeCharacterSetup(page, token);
-			await page.reload();
-			await expect(
-				page.getByRole("complementary").getByText(character.name, { exact: true }),
-			).toBeVisible({
-				timeout: 15_000,
-			});
-			await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
-			const conversationId = await activeConversationId(page);
-			conversationIds.set(character.id, conversationId);
-			await rpc(page, token, "model.route.set", {
-				conversationId,
-				selected: { providerId: "e2e-rule", modelId: "rule-model" },
-			});
-			await page.reload();
-			await expect(
-				page.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
-			).toBeEnabled({
-				timeout: 15_000,
-			});
-			await sendMessage(page, `角色${character.name}初始化`);
-			await expect(
-				page
-					.getByRole("region", { name: zhCN.messages.conversation })
-					.getByRole("article", { name: character.name, exact: true })
-					.getByText("RULE_OK", { exact: true }),
-			).toBeVisible();
-		}
-
-		await rpc(page, token, "character.activate", { characterId: testCharacters[0].id });
+	for (const character of testCharacters) {
+		await rpc(page, token, "character.import", {
+			files: packageFiles(character.id, character.name, character.accent),
+		});
+		await rpc(page, token, "character.activate", { characterId: character.id });
+		await completeCharacterSetup(page, token);
 		await page.reload();
 		await expect(
-			page.getByRole("complementary").getByText(testCharacters[0].name, { exact: true }),
-		).toBeVisible({ timeout: 15_000 });
-		await expect
-			.poll(() => activeConversationId(page))
-			.toBe(conversationIds.get(testCharacters[0].id));
-		await expect(page.getByText("角色岚初始化", { exact: true })).toBeVisible();
-		await expect(page.getByText("角色青初始化", { exact: true })).toHaveCount(0);
-		await sendMessage(page, "E2E_OK 岚仍可独立回复");
+			page
+				.getByRole("complementary")
+				.getByRole("strong")
+				.getByText(character.name, { exact: true }),
+		).toBeVisible({
+			timeout: 15_000,
+		});
+		await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
+		const conversationId = await activeConversationId(page);
+		conversationIds.set(character.id, conversationId);
+		await rpc(page, token, "model.route.set", {
+			conversationId,
+			selected: { providerId: "e2e-rule", modelId: "rule-model" },
+		});
+		await page.reload();
+		await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled({
+			timeout: 15_000,
+		});
+		await sendMessage(page, `角色${character.name}初始化`);
 		await expect(
 			page
 				.getByRole("region", { name: zhCN.messages.conversation })
-				.getByRole("article", { name: testCharacters[0].name, exact: true })
-				.getByText("E2E_OK", { exact: true }),
+				.getByRole("article", { name: character.name, exact: true })
+				.getByText("RULE_OK", { exact: true }),
 		).toBeVisible();
-
-		await switchCharacter(page, testCharacters[1].name);
-		await expect
-			.poll(() => activeConversationId(page))
-			.toBe(conversationIds.get(testCharacters[1].id));
-		await expect(page.getByTestId("conversation-activity")).toBeHidden();
-		await expect(page.getByText("角色青初始化", { exact: true })).toBeVisible();
-		await expect(page.getByText("角色岚初始化", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toHaveCount(0);
-
-		await sendMessage(page, "E2E_OK 青仍可独立回复");
-		const qingThread = page.getByRole("region", { name: zhCN.messages.conversation });
-		await expect(
-			qingThread
-				.getByRole("article", { name: testCharacters[1].name, exact: true })
-				.getByText("E2E_OK", { exact: true }),
-		).toBeVisible();
-
-		await switchCharacter(page, testCharacters[0].name);
-		await expect
-			.poll(() => activeConversationId(page))
-			.toBe(conversationIds.get(testCharacters[0].id));
-		await expect(page.getByText("角色岚初始化", { exact: true })).toBeVisible();
-		await expect(page.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toBeVisible();
-		await expect(page.getByText("E2E_OK 青仍可独立回复", { exact: true })).toHaveCount(0);
-
-		await switchCharacter(page, testCharacters[1].name);
-		await expect(qingThread.getByText("E2E_OK", { exact: true })).toBeVisible();
-		await expect(qingThread.getByText("E2E_OK 青仍可独立回复", { exact: true })).toBeVisible();
-		await expect(qingThread.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toHaveCount(0);
-
-		const hold = providerHold(page);
-		try {
-			await sendMessage(page, `E2E_WAIT_TEXT_${hold.id}`);
-			await hold.entered();
-			await expect(page.getByTestId("conversation-activity")).toBeVisible();
-			const { dialog, target } = await openCharacterSwitch(page, testCharacters[0].name);
-			await target.click();
-			const warning = page.getByRole("dialog", {
-				name: zhCN.backstage.roleSwitchBusyTitle,
-			});
-			await expect(warning).toBeVisible();
-			await expect(warning).toContainText(testCharacters[0].name);
-			await expect(
-				page.getByRole("complementary").getByText(testCharacters[1].name, { exact: true }),
-			).toBeVisible();
-
-			await warning
-				.getByRole("button", { name: zhCN.backstage.roleSwitchBusyCancel, exact: true })
-				.click();
-			await expect(warning).toBeHidden();
-			await expect(page.getByTestId("conversation-activity")).toBeVisible();
-
-			await target.click();
-			await expect(warning).toBeVisible();
-			const activated = page.waitForResponse(
-				(response) =>
-					response.request().method() === "POST" &&
-					response.url().includes("/rpc/character.activate"),
-			);
-			await warning
-				.getByRole("button", { name: zhCN.backstage.roleSwitchBusyConfirm, exact: true })
-				.click();
-			expect((await activated).ok()).toBe(true);
-			await expect(
-				page.getByRole("complementary").getByText(testCharacters[0].name, { exact: true }),
-			).toBeVisible({ timeout: 15_000 });
-			await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
-			await hold.cancelled();
-
-			await switchCharacter(page, testCharacters[1].name);
-			await expect(page.getByText(`E2E_WAIT_TEXT_${hold.id}`, { exact: true })).toBeVisible();
-			await expect(
-				page.getByRole("alert").filter({ hasText: zhCN.messages.responseStopped }),
-			).toBeVisible();
-		} finally {
-			await hold.release();
-		}
-		expect(pageErrors).toEqual([]);
-	} finally {
-		await rpc(page, token, "character.activate", { characterId: "jizhou" }).catch(() => undefined);
-		for (const character of testCharacters) {
-			await rpc(page, token, "character.runtimeDelete", { characterId: character.id }).catch(
-				() => undefined,
-			);
-			await rpc(page, token, "character.packageDelete", { characterId: character.id }).catch(
-				() => undefined,
-			);
-		}
 	}
+
+	await rpc(page, token, "character.activate", { characterId: testCharacters[0].id });
+	await page.reload();
+	await expect(
+		page
+			.getByRole("complementary")
+			.getByRole("strong")
+			.getByText(testCharacters[0].name, { exact: true }),
+	).toBeVisible({ timeout: 15_000 });
+	await expect
+		.poll(() => activeConversationId(page))
+		.toBe(conversationIds.get(testCharacters[0].id));
+	await expect(page.getByText("角色岚初始化", { exact: true })).toBeVisible();
+	await expect(page.getByText("角色青初始化", { exact: true })).toHaveCount(0);
+	await sendMessage(page, "E2E_OK 岚仍可独立回复");
+	await expect(
+		page
+			.getByRole("region", { name: zhCN.messages.conversation })
+			.getByRole("article", { name: testCharacters[0].name, exact: true })
+			.getByText("E2E_OK", { exact: true }),
+	).toBeVisible();
+
+	await switchCharacter(page, testCharacters[1].name);
+	await expect
+		.poll(() => activeConversationId(page))
+		.toBe(conversationIds.get(testCharacters[1].id));
+	await expect(page.getByTestId("conversation-activity")).toBeHidden();
+	await expect(page.getByText("角色青初始化", { exact: true })).toBeVisible();
+	await expect(page.getByText("角色岚初始化", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toHaveCount(0);
+
+	await sendMessage(page, "E2E_OK 青仍可独立回复");
+	const qingThread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await expect(
+		qingThread
+			.getByRole("article", { name: testCharacters[1].name, exact: true })
+			.getByText("E2E_OK", { exact: true }),
+	).toBeVisible();
+
+	await switchCharacter(page, testCharacters[0].name);
+	await expect
+		.poll(() => activeConversationId(page))
+		.toBe(conversationIds.get(testCharacters[0].id));
+	await expect(page.getByText("角色岚初始化", { exact: true })).toBeVisible();
+	await expect(page.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toBeVisible();
+	await expect(page.getByText("E2E_OK 青仍可独立回复", { exact: true })).toHaveCount(0);
+
+	await switchCharacter(page, testCharacters[1].name);
+	await expect(qingThread.getByText("E2E_OK", { exact: true })).toBeVisible();
+	await expect(qingThread.getByText("E2E_OK 青仍可独立回复", { exact: true })).toBeVisible();
+	await expect(qingThread.getByText("E2E_OK 岚仍可独立回复", { exact: true })).toHaveCount(0);
+
+	const hold = providerHold(page);
+	try {
+		await sendMessage(page, `E2E_WAIT_TEXT_${hold.id}`);
+		await hold.entered();
+		await expect(page.getByTestId("conversation-activity")).toBeVisible();
+		const { dialog, target } = await openCharacterSwitch(page, testCharacters[0].name);
+		await target.click();
+		const warning = page.getByRole("dialog", {
+			name: zhCN.backstage.roleSwitchBusyTitle,
+		});
+		await expect(warning).toBeVisible();
+		await expect(warning).toContainText(testCharacters[0].name);
+		expect(await activeConversationId(page)).toBe(conversationIds.get(testCharacters[1].id));
+
+		await warning
+			.getByRole("button", { name: zhCN.backstage.roleSwitchBusyCancel, exact: true })
+			.click();
+		await expect(warning).toBeHidden();
+		await expect(page.getByTestId("conversation-activity")).toBeVisible();
+
+		await target.click();
+		await expect(warning).toBeVisible();
+		const activated = page.waitForResponse(
+			(response) =>
+				response.request().method() === "POST" &&
+				response.url().includes("/rpc/character.activate"),
+		);
+		await warning
+			.getByRole("button", { name: zhCN.backstage.roleSwitchBusyConfirm, exact: true })
+			.click();
+		expect((await activated).ok()).toBe(true);
+		await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+		await expect(
+			page
+				.getByRole("complementary")
+				.getByRole("strong")
+				.getByText(testCharacters[0].name, { exact: true }),
+		).toBeVisible({ timeout: 15_000 });
+		await hold.cancelled();
+
+		await switchCharacter(page, testCharacters[1].name);
+		await expect(page.getByText(`E2E_WAIT_TEXT_${hold.id}`, { exact: true })).toBeVisible();
+		await expect(
+			page.getByRole("alert").filter({ hasText: zhCN.messages.responseStopped }),
+		).toBeVisible();
+	} finally {
+		await hold.release();
+	}
+	expect(pageErrors).toEqual([]);
 });

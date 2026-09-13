@@ -1,3 +1,4 @@
+import type { ModelThinkingLevel } from "@bear-harness/protocol";
 import type { Namespace, TFunction } from "i18next";
 import { createMemo, createSignal } from "solid-js";
 import type {
@@ -42,6 +43,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 		providerId: string;
 		modelId: string;
 	} | null>();
+	const [systemThinkingDraft, setSystemThinkingDraft] = createSignal<ModelThinkingLevel | null>();
 	let submittedStepId: string | null = null;
 
 	const flow = createMemo(() => store.character?.character.first_meeting);
@@ -142,13 +144,39 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 			setSetupBusy(false);
 		}
 	};
+	const selectedThinkingLevel = createMemo(() => {
+		const draft = systemThinkingDraft();
+		return modelRequired()
+			? draft === undefined
+				? (systemModelDefaults()?.thinkingLevel ?? null)
+				: draft
+			: (modelDefaults()?.thinkingLevel ?? null);
+	});
+	const selectThinkingLevel = (level: ModelThinkingLevel | null): Promise<boolean> => {
+		if (modelRequired()) {
+			setSystemThinkingDraft(level);
+			return Promise.resolve(true);
+		}
+		const model = selectedReplyModel();
+		return model
+			? saveModelDefault(() =>
+					store.model.setDefaultReply(model.providerId, model.modelId, level ?? undefined),
+				)
+			: Promise.resolve(false);
+	};
 	const selectReplyModel = (model: ConfiguredModel): Promise<boolean> => {
+		const currentLevel = selectedThinkingLevel();
+		const level =
+			currentLevel && model.thinkingLevels?.includes(currentLevel) ? currentLevel : null;
 		if (modelRequired()) {
 			setSystemReplyDraft({ providerId: model.providerId, modelId: model.modelId });
+			setSystemThinkingDraft(level);
 			if (model.supportsImages) setSystemVisionDraft(null);
 			return Promise.resolve(true);
 		}
-		return saveModelDefault(() => store.model.setDefaultReply(model.providerId, model.modelId));
+		return saveModelDefault(() =>
+			store.model.setDefaultReply(model.providerId, model.modelId, level ?? undefined),
+		);
 	};
 	const selectVisionModel = (model: ConfiguredModel | null): Promise<boolean> => {
 		if (modelRequired()) {
@@ -181,10 +209,15 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 									modelId: selectedVision.modelId,
 								},
 							} as const);
-				await store.model.completeSystemOnboarding(reply, vision, {
-					bear: "GPL-3.0-only",
-					...(platform === "win32" ? { gitForWindows: "GPL-2.0-only" as const } : {}),
-				});
+				await store.model.completeSystemOnboarding(
+					reply,
+					vision,
+					{
+						bear: "GPL-3.0-only",
+						...(platform === "win32" ? { gitForWindows: "GPL-2.0-only" as const } : {}),
+					},
+					selectedThinkingLevel() ?? undefined,
+				);
 				return;
 			}
 			await store.model.completeDefaultsOnboarding();
@@ -232,6 +265,8 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 		conversationVisible,
 		onboardingError,
 		selectReplyModel,
+		selectedThinkingLevel,
+		selectThinkingLevel,
 		selectVisionModel,
 		completeModelSetup,
 		submit,

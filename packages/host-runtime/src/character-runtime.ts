@@ -220,6 +220,9 @@ export class CharacterRuntime {
 			},
 			defaultModel: () =>
 				this.models.defaults(this.companionId, options.providers.modelProjectionFacts()).reply,
+			defaultThinkingLevel: () =>
+				this.models.defaults(this.companionId, options.providers.modelProjectionFacts())
+					.thinkingLevel,
 			multimodalFallback: () =>
 				this.models.multimodalFallback(options.providers.modelProjectionFacts()),
 			sessionDiscarded: (sessionId) =>

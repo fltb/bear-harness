@@ -123,6 +123,7 @@ CREATE TABLE model_route_settings (
 	companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id),
 	text_provider_id TEXT,
 	text_model_id TEXT,
+	text_thinking_level TEXT CHECK (text_thinking_level IN ('off','minimal','low','medium','high','xhigh','max')),
 	vision_mode TEXT NOT NULL DEFAULT 'auto' CHECK (vision_mode IN ('auto','manual')),
 	multimodal_provider_id TEXT,
 	multimodal_model_id TEXT,

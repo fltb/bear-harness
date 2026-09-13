@@ -498,6 +498,22 @@ export const en = {
 		systemDefaultReplyModel: "Default reply model for new characters",
 		systemDefaultReplyModelHint:
 			"Copied once when a character is created; later changes do not affect existing characters.",
+		characterDefaultReplyModel: "Default reply model for this character",
+		characterDefaultReplyModelHint:
+			"Applies only to new conversations; existing models and thinking levels stay unchanged.",
+		thinkingLevel: "Thinking level",
+		thinkingLevelHint:
+			"Default leaves Pi's native settings unchanged. Available levels come from the model.",
+		thinkingLevels: {
+			default: "Default",
+			off: "Off",
+			minimal: "Minimal",
+			low: "Low",
+			medium: "Medium",
+			high: "High",
+			xhigh: "Extra high",
+			max: "Maximum",
+		},
 		systemDefaultVisionModel: "Default image model for new characters",
 		systemDefaultVisionModelHint:
 			"Installation-wide image reader used directly when the reply model cannot read images.",

@@ -1087,6 +1087,15 @@ export const CanonUpsertModuleResponse = z.strictObject({
 // Provider
 // ---------------------------------------------------------------------------
 
+export const ModelThinkingLevel = z.enum([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+]);
 const ProviderModelCost: z.ZodType<{
 	input: number;
 	output: number;
@@ -1149,6 +1158,7 @@ export const ProviderInfo = z.strictObject({
 				id: z.string().min(1).max(128),
 				name: z.string().max(MAX_STRING_LENGTH),
 				supportsImages: z.boolean(),
+				thinkingLevels: z.array(ModelThinkingLevel).max(7).optional(),
 				cost: ProviderModelCost,
 			}),
 		)
@@ -1279,6 +1289,7 @@ export const ConfiguredModel = z.strictObject({
 	label: z.string().max(MAX_STRING_LENGTH),
 	providerName: z.string().max(MAX_STRING_LENGTH).optional(),
 	supportsImages: z.boolean(),
+	thinkingLevels: z.array(ModelThinkingLevel).max(7).optional(),
 	createdAt: WireTimestamp,
 	enabled: z.boolean(),
 	readiness: ModelReadiness,
@@ -1302,10 +1313,12 @@ export const ModelDefaultsGetRequest = z.strictObject({});
 export const ModelDefaultsGetResponse = z.strictObject({
 	reply: ModelRoute.optional(),
 	vision: VisionModelDefault,
+	thinkingLevel: ModelThinkingLevel.optional(),
 	onboardingComplete: z.boolean(),
 });
 export const ModelDefaultsSetReplyRequest = z.strictObject({
 	reply: ModelRoute.nullable(),
+	thinkingLevel: ModelThinkingLevel.optional(),
 });
 export const ModelDefaultsSetReplyResponse = ModelDefaultsGetResponse;
 export const ModelDefaultsSetVisionRequest = VisionModelDefault;
@@ -1314,10 +1327,12 @@ export const SystemModelDefaultsGetRequest = z.strictObject({});
 export const SystemModelDefaultsGetResponse = z.strictObject({
 	reply: ModelRoute.optional(),
 	vision: VisionModelDefault,
+	thinkingLevel: ModelThinkingLevel.optional(),
 });
 export const SystemModelDefaultsSetRequest = z.strictObject({
 	reply: ModelRoute,
 	vision: VisionModelDefault,
+	thinkingLevel: ModelThinkingLevel.optional(),
 });
 export const SystemModelDefaultsSetResponse = SystemModelDefaultsGetResponse;
 export const ModelDefaultsInitializeRequest = z.strictObject({});
@@ -1330,10 +1345,18 @@ export const ModelRouteGetRequest = z.strictObject({
 export const ModelRouteGetResponse = z.strictObject({
 	conversationId: ConversationId,
 	selected: ModelRoute.optional(),
+	thinking: z
+		.strictObject({
+			level: ModelThinkingLevel,
+			defaultLevel: ModelThinkingLevel,
+			levels: z.array(ModelThinkingLevel).max(7),
+		})
+		.optional(),
 });
 export const ModelRouteSetRequest = z.strictObject({
 	conversationId: ConversationId,
 	selected: ModelRoute,
+	thinkingLevel: ModelThinkingLevel.nullable().optional(),
 });
 export const ModelRouteSetResponse = ModelRouteGetResponse;
 export const ModelSnapshot = z.strictObject({
@@ -1750,6 +1773,7 @@ export const SettingsSetRequest = z.strictObject({
 export const SystemOnboardingCompleteModelRequest = z.strictObject({
 	reply: ModelRoute,
 	vision: VisionModelDefault,
+	thinkingLevel: ModelThinkingLevel.optional(),
 	licensesAcknowledged: z.strictObject({
 		bear: z.literal("GPL-3.0-only"),
 		gitForWindows: z.literal("GPL-2.0-only").optional(),

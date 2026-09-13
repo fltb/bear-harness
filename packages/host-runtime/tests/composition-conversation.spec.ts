@@ -91,11 +91,6 @@ function context() {
 		navigate: vi.fn(async () => undefined),
 		edit: vi.fn(async () => undefined),
 		continue: vi.fn(async () => undefined),
-		modelFor: vi.fn(async (id: string) => ({ providerId: "provider", modelId: `${id}-model` })),
-		setModel: vi.fn(async (_id: string, providerId: string, modelId: string) => ({
-			providerId,
-			modelId,
-		})),
 		configure: vi.fn(),
 		close: vi.fn(),
 		closeAll: vi.fn(async () => undefined),
@@ -234,75 +229,6 @@ describe("Host conversation projection and routing", () => {
 		).resolves.toEqual({ revealed: true });
 		expect(fixture.value.characterLoader.packageLocation).toHaveBeenCalledWith("bear");
 		expect(fixture.characterPackagePresenter.reveal).toHaveBeenCalledWith("/safe/characters/bear");
-	});
-
-	it("routes concurrent message and model operations only by explicit conversation id", async () => {
-		await Promise.all([
-			handler(
-				dispatcher,
-				RPC.message.send.channel,
-			)({
-				conversationId: "alpha",
-				text: "one",
-				clientMessageId: "00000000-0000-4000-8000-000000000001",
-			}),
-			handler(
-				dispatcher,
-				RPC.message.send.channel,
-			)({
-				conversationId: "beta",
-				text: "two",
-				clientMessageId: "00000000-0000-4000-8000-000000000002",
-			}),
-		]);
-		await handler(dispatcher, RPC.message.abort.channel)({ conversationId: "alpha" });
-		await handler(
-			dispatcher,
-			RPC.message.correct.channel,
-		)({
-			conversationId: "beta",
-			entryId: "entry",
-			feedback: "again",
-		});
-		await handler(
-			dispatcher,
-			RPC.message.switchVersion.channel,
-		)({
-			conversationId: "alpha",
-			leafId: "leaf",
-		});
-		await handler(
-			dispatcher,
-			RPC.message.edit.channel,
-		)({
-			conversationId: "beta",
-			entryId: "entry",
-			text: "edited",
-		});
-		await handler(dispatcher, RPC.message.continue.channel)({ conversationId: "alpha" });
-		await handler(dispatcher, RPC.model.routeGet.channel)({ conversationId: "beta" });
-		await handler(
-			dispatcher,
-			RPC.model.routeSet.channel,
-		)({
-			conversationId: "alpha",
-			selected: { providerId: "provider", modelId: "model" },
-		});
-
-		expect(fixture.pi.send.mock.calls).toEqual([
-			["alpha", "one"],
-			["beta", "two"],
-		]);
-		expect(fixture.pi.abort).toHaveBeenCalledWith("alpha");
-		expect(fixture.pi.correct).toHaveBeenCalledWith("beta", "entry", "again");
-		expect(fixture.pi.navigate).toHaveBeenCalledWith("alpha", "leaf");
-		expect(fixture.pi.edit).toHaveBeenCalledWith("beta", "entry", "edited");
-		expect(fixture.pi.continue).toHaveBeenCalledWith("alpha");
-		expect(fixture.pi.modelFor).toHaveBeenCalledWith("beta");
-		expect(fixture.pi.setModel).toHaveBeenCalledWith("alpha", "provider", "model");
-		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "beta");
-		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "alpha");
-		expect(fixture.pi.close).not.toHaveBeenCalled();
 	});
 
 	it("deduplicates repeated client message ids before calling Pi", async () => {

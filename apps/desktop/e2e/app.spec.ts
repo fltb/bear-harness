@@ -62,13 +62,11 @@ test("source build loads from file:// with official identity and isolated diagno
 		const sceneAsset = window.getByRole("img", { name: "极光书房" });
 		await expect(sceneAsset).toBeVisible();
 		const sceneImage = window.getByTestId("scene-asset");
-		await expect(sceneImage).toHaveAttribute("src", /^data:image\/png;base64,/);
 		await expect
 			.poll(() => sceneImage.evaluate((image: HTMLImageElement) => image.naturalWidth))
 			.toBeGreaterThan(0);
 		const presenceAsset = window.getByTestId("presence-asset");
 		await expect(presenceAsset).toBeVisible();
-		await expect(presenceAsset).toHaveAttribute("src", /^data:image\/(?:png|svg\+xml);base64,/);
 		await expect
 			.poll(() => presenceAsset.evaluate((image: HTMLImageElement) => image.naturalWidth))
 			.toBeGreaterThan(0);

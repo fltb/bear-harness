@@ -1,3 +1,4 @@
+import type { ModelThinkingLevel } from "@bear-harness/protocol";
 import { CacheKey } from "@bear-harness/protocol/schema";
 import { and, asc, eq, sql } from "drizzle-orm";
 import type {
@@ -26,7 +27,11 @@ export interface ModelProjectionFacts {
 		providerName: string;
 		authenticated: boolean;
 	}[];
-	catalogModels: readonly { providerId: string; modelId: string }[];
+	catalogModels: readonly {
+		providerId: string;
+		modelId: string;
+		thinkingLevels?: readonly ModelThinkingLevel[];
+	}[];
 	removingProviderIds: readonly string[];
 }
 
@@ -36,6 +41,7 @@ export interface ModelRecord {
 	modelId: string;
 	label: string;
 	supportsImages: boolean;
+	thinkingLevels?: ModelThinkingLevel[];
 	enabled: boolean;
 	readiness: ModelReadiness;
 	createdAt: string;
@@ -47,6 +53,7 @@ export interface ModelDefaults {
 	reply?: ModelRecord;
 	vision: { mode: "auto" } | { mode: "manual"; route: ModelRecord };
 	onboardingComplete: boolean;
+	thinkingLevel?: ModelThinkingLevel;
 }
 
 export type SystemModelDefaults = Omit<ModelDefaults, "onboardingComplete">;
@@ -247,12 +254,14 @@ export class ModelRegistry {
 		return {
 			...(reply ? { reply } : {}),
 			vision: vision?.supportsImages ? { mode: "manual", route: vision } : { mode: "auto" },
+			...(stored.thinkingLevel ? { thinkingLevel: stored.thinkingLevel } : {}),
 		};
 	}
 
 	setSystemDefaults(
 		value: {
 			reply: { providerId: string; modelId: string };
+			thinkingLevel?: ModelThinkingLevel;
 			vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
 		},
 		facts: ModelProjectionFacts,
@@ -266,6 +275,7 @@ export class ModelRegistry {
 	completeSystemModelOnboarding(
 		value: {
 			reply: { providerId: string; modelId: string };
+			thinkingLevel?: ModelThinkingLevel;
 			vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
 		},
 		facts: ModelProjectionFacts,
@@ -298,6 +308,7 @@ export class ModelRegistry {
 				companionId,
 				textProviderId: defaults.reply.providerId,
 				textModelId: defaults.reply.modelId,
+				textThinkingLevel: defaults.thinkingLevel ?? null,
 				visionMode: vision.mode,
 				multimodalProviderId: vision.mode === "manual" ? vision.route.providerId : null,
 				multimodalModelId: vision.mode === "manual" ? vision.route.modelId : null,
@@ -332,6 +343,7 @@ export class ModelRegistry {
 					? { mode: "manual", route: manualVision }
 					: { mode: "auto" },
 			onboardingComplete: row?.onboardingComplete === 1 && reply?.readiness === "ready",
+			...(row?.textThinkingLevel ? { thinkingLevel: row.textThinkingLevel } : {}),
 		};
 	}
 
@@ -339,16 +351,20 @@ export class ModelRegistry {
 		companionId: string,
 		route: { providerId: string; modelId: string } | null,
 		facts: ModelProjectionFacts,
+		thinkingLevel?: ModelThinkingLevel,
 	): ModelDefaults {
 		const model = route
 			? this.requireReady(this.get(route.providerId, route.modelId, facts))
 			: undefined;
+		if (thinkingLevel && !model?.thinkingLevels?.includes(thinkingLevel))
+			throw { kind: "invalid_request", reason: "model_thinking_level_unsupported" };
 		this.companionDb
 			.insert(modelRouteSettings)
 			.values({
 				companionId,
 				textProviderId: model?.providerId ?? null,
 				textModelId: model?.modelId ?? null,
+				textThinkingLevel: model ? (thinkingLevel ?? null) : null,
 				...(model ? {} : { onboardingComplete: 0 }),
 			})
 			.onConflictDoUpdate({
@@ -356,6 +372,7 @@ export class ModelRegistry {
 				set: {
 					textProviderId: model?.providerId ?? null,
 					textModelId: model?.modelId ?? null,
+					textThinkingLevel: model ? (thinkingLevel ?? null) : null,
 					...(model ? {} : { onboardingComplete: 0 }),
 					updatedAt: sql`datetime('now')`,
 				},
@@ -440,8 +457,8 @@ export class ModelRegistry {
 
 	private projector(facts: ModelProjectionFacts): (model: StoredModelRecord) => ModelRecord {
 		const providers = new Map(facts.providers.map((provider) => [provider.providerId, provider]));
-		const catalogModels = new Set(
-			facts.catalogModels.map(({ providerId, modelId }) => modelKey(providerId, modelId)),
+		const catalogModels = new Map(
+			facts.catalogModels.map((model) => [modelKey(model.providerId, model.modelId), model]),
 		);
 		const removingProviders = new Set([
 			...facts.removingProviderIds,
@@ -449,11 +466,12 @@ export class ModelRegistry {
 		]);
 		return (model) => {
 			const provider = providers.get(model.providerId);
+			const catalogModel = catalogModels.get(modelKey(model.providerId, model.modelId));
 			const readiness: ModelReadiness = removingProviders.has(model.providerId)
 				? "provider_removing"
 				: !model.enabled
 					? "disabled"
-					: !catalogModels.has(modelKey(model.providerId, model.modelId))
+					: !catalogModel
 						? "catalog_missing"
 						: !provider?.authenticated
 							? "provider_auth_required"
@@ -461,6 +479,9 @@ export class ModelRegistry {
 			return {
 				...model,
 				...(provider ? { providerName: provider.providerName } : {}),
+				...(catalogModel?.thinkingLevels
+					? { thinkingLevels: [...catalogModel.thinkingLevels] }
+					: {}),
 				readiness,
 			};
 		};
@@ -469,11 +490,14 @@ export class ModelRegistry {
 	private validateSystemDefaults(
 		value: {
 			reply: { providerId: string; modelId: string };
+			thinkingLevel?: ModelThinkingLevel;
 			vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
 		},
 		facts: ModelProjectionFacts,
 	): void {
 		const reply = this.requireReady(this.get(value.reply.providerId, value.reply.modelId, facts));
+		if (value.thinkingLevel && !reply.thinkingLevels?.includes(value.thinkingLevel))
+			throw { kind: "invalid_request", reason: "model_thinking_level_unsupported" };
 		const vision =
 			value.vision.mode === "manual"
 				? this.requireReady(
@@ -511,6 +535,7 @@ export class ModelRegistry {
 					.set({
 						textProviderId: null,
 						textModelId: null,
+						textThinkingLevel: null,
 						onboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})
@@ -552,6 +577,7 @@ export class ModelRegistry {
 					.set({
 						textProviderId: null,
 						textModelId: null,
+						textThinkingLevel: null,
 						onboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})

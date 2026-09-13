@@ -340,5 +340,20 @@ export class CompanionDatabase extends Database {
 				.values({ id: 1, companionId: this.companionId })
 				.run();
 		}
+		// Extend existing v1 character databases without rewriting any character or Pi data.
+		this.connection.exec("BEGIN IMMEDIATE");
+		try {
+			const columns = this.connection
+				.prepare("PRAGMA table_info(model_route_settings)")
+				.all() as Array<{ name: string }>;
+			if (!columns.some((column) => column.name === "text_thinking_level"))
+				this.connection.exec(
+					"ALTER TABLE model_route_settings ADD COLUMN text_thinking_level TEXT CHECK (text_thinking_level IN ('off','minimal','low','medium','high','xhigh','max'))",
+				);
+			this.connection.exec("COMMIT");
+		} catch (error) {
+			this.connection.exec("ROLLBACK");
+			throw error;
+		}
 	}
 }

@@ -80,7 +80,7 @@ export function chooseRecoveryAction(
 			}
 		});
 		window.once("closed", () => finish(null));
-		window.once("ready-to-show", () => window.show());
+		window.webContents.once("did-finish-load", () => window.show());
 		void window.loadURL(
 			`data:text/html;charset=utf-8,${encodeURIComponent(recoveryHtml(productName, prompt))}`,
 		);

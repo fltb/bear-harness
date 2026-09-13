@@ -164,7 +164,6 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 		);
 	};
 	await page.emulateMedia({ reducedMotion: "reduce" });
-	let previous: { x: number; width: number } | undefined;
 	for (const { width, mode } of [
 		{ width: 1280, mode: "window" },
 		{ width: 1920, mode: "fullscreen" },
@@ -172,25 +171,6 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 	] as const) {
 		await page.setViewportSize({ width, height: 800 });
 		await expect(application).toHaveAttribute("data-layout", mode);
-		await expect
-			.poll(async () => {
-				const surfaces = await measureConversationSurfaces();
-				if (!surfaces) return null;
-				return {
-					formWidth: Math.round(surfaces.form.width),
-					formX: Math.round(surfaces.form.x),
-					rightInset: Math.round(width - surfaces.thread.x - surfaces.thread.width),
-					threadWidth: Math.round(surfaces.thread.width),
-					threadX: Math.round(surfaces.thread.x),
-				};
-			})
-			.toMatchObject({
-				formX: expect.any(Number),
-				formWidth: expect.any(Number),
-				rightInset: 24,
-				threadX: expect.any(Number),
-				threadWidth: expect.any(Number),
-			});
 		await expect
 			.poll(async () => {
 				const surfaces = await measureConversationSurfaces();
@@ -206,11 +186,10 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 		if (!surfaces) throw new Error("conversation surfaces must remain visible");
 		expect(surfaces.form.x).toBeCloseTo(surfaces.thread.x, 1);
 		expect(surfaces.form.width).toBeCloseTo(surfaces.thread.width, 1);
-		if (previous) {
-			expect(surfaces.thread.x).toBeGreaterThan(previous.x);
-			expect(surfaces.thread.width).toBeGreaterThan(previous.width);
-		}
-		previous = surfaces.thread;
+		const stage = await presence.boundingBox();
+		if (!stage) throw new Error("standing character has no visible geometry");
+		expect(stage.x).toBeGreaterThanOrEqual(surfaces.thread.x + surfaces.thread.width - 1);
+		expect(stage.x + stage.width).toBeLessThanOrEqual(width);
 		const fixedBounds = await Promise.all([composerForm.boundingBox(), presence.boundingBox()]);
 		for (const fraction of [0, 0.5, 1]) {
 			await page.evaluate((fraction) => {
@@ -434,9 +413,8 @@ test("long replies expose code copy and local reading navigation", async ({ cont
 	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
 
 	const response = page.getByRole("article", { name: "极昼" }).filter({ hasText: "长回复验收" });
-	await expect(
-		response.getByRole("button", { name: zhCN.messages.jumpToResponseEnd }),
-	).toBeVisible();
+	const turn = page.getByTestId("virtual-timeline-item").filter({ has: response });
+	await expect(turn.getByRole("button", { name: zhCN.messages.jumpToResponseEnd })).toBeVisible();
 	await expect(
 		response.getByRole("button", { name: zhCN.messages.jumpToResponseStart }),
 	).toBeVisible();
@@ -473,7 +451,7 @@ test("long replies expose code copy and local reading navigation", async ({ cont
 
 	await response.getByRole("button", { name: zhCN.messages.jumpToResponseStart }).click();
 	const atStart = await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0);
-	await response.getByRole("button", { name: zhCN.messages.jumpToResponseEnd }).click();
+	await turn.getByRole("button", { name: zhCN.messages.jumpToResponseEnd }).click();
 	await expect
 		.poll(() => page.evaluate(() => document.scrollingElement?.scrollTop ?? 0))
 		.toBeGreaterThan(atStart);

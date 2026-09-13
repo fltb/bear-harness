@@ -19,9 +19,13 @@ test("fatal settings corruption opens isolated recovery and rebuilds on explicit
 		await expect(
 			recovery.getByRole("heading", { name: `${productConfig.productName} 无法安全启动` }),
 		).toBeVisible();
-		const closed = first.waitForEvent("close", { timeout: 30_000 });
-		await recovery.getByRole("link", { name: "修复数据库并重启" }).click();
-		await closed;
+		const nativeRecovery = await first.browserWindow(recovery);
+		await expect.poll(() => nativeRecovery.evaluate((window) => window.isVisible())).toBe(true);
+		await nativeRecovery.dispose();
+		await Promise.all([
+			first.waitForEvent("close", { timeout: 30_000 }),
+			recovery.getByRole("link", { name: "修复数据库并重启" }).click(),
+		]);
 		first = undefined;
 
 		({ app: restarted } = await launchSourceAppAt(appDataRoot));

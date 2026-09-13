@@ -1,6 +1,13 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import type { QueryClient } from "@tanstack/solid-query";
-import type { ConfiguredModel, ModelRouteData, ProviderLoginResult, SettingsData } from "./ipc.js";
+import type {
+	ConfiguredModel,
+	ModelDefaultsData,
+	ModelRouteData,
+	ProviderLoginResult,
+	SettingsData,
+	SystemModelDefaultsData,
+} from "./ipc.js";
 import { invoke } from "./ipc.js";
 import { listAllModels, listAllProviders } from "./paged-rpc.js";
 import { hydrateRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
@@ -13,15 +20,8 @@ export function createModelProviderApis(c: {
 	settings(): { settings: SettingsData } | undefined;
 	providers(): ProviderApi["providers"] extends () => infer T ? T : never;
 	models(): ConfiguredModel[];
-	defaults(): {
-		reply?: { providerId: string; modelId: string };
-		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
-		onboardingComplete: boolean;
-	};
-	systemDefaults(): {
-		reply?: { providerId: string; modelId: string };
-		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
-	};
+	defaults(): ModelDefaultsData;
+	systemDefaults(): SystemModelDefaultsData;
 	currentRoute(): ModelRouteData | undefined;
 	activeConversationId(): string | null;
 	onRefreshError(error: unknown): void;
@@ -141,18 +141,14 @@ export function createModelProviderApis(c: {
 		},
 	};
 	const data = () => {
-		const raw = c.defaults();
-		const defaults = {
-			vision: raw.vision,
-			onboardingComplete: raw.onboardingComplete,
-			...(raw.reply ? { reply: raw.reply } : {}),
-		};
-		const selected = c.currentRoute()?.selected;
+		const defaults = c.defaults();
+		const route = c.currentRoute();
 		return {
 			models: c.models(),
 			defaults,
 			systemDefaults: c.systemDefaults(),
-			...(selected ? { selected } : {}),
+			...(route?.selected ? { selected: route.selected } : {}),
+			...(route?.thinking ? { thinking: route.thinking } : {}),
 			...(defaults.vision.mode === "manual" ? { multimodalFallback: defaults.vision.route } : {}),
 		};
 	};
@@ -185,9 +181,13 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.model.disable({ providerId, modelId }));
 			await Promise.all([refreshPool(), refreshDefaults(), refreshSystemDefaults()]);
 		},
-		select: async (conversationId, providerId, modelId) => {
+		select: async (conversationId, providerId, modelId, thinkingLevel) => {
 			await invoke(client, () =>
-				client.model.routeSet({ conversationId, selected: { providerId, modelId } }),
+				client.model.routeSet({
+					conversationId,
+					selected: { providerId, modelId },
+					...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+				}),
 			);
 			await refreshRoute(conversationId);
 		},
@@ -197,8 +197,13 @@ export function createModelProviderApis(c: {
 			);
 			await refreshDefaults();
 		},
-		setDefaultReply: async (providerId, modelId) => {
-			await invoke(client, () => client.model.defaultsSetReply({ reply: { providerId, modelId } }));
+		setDefaultReply: async (providerId, modelId, thinkingLevel) => {
+			await invoke(client, () =>
+				client.model.defaultsSetReply({
+					reply: { providerId, modelId },
+					...(thinkingLevel ? { thinkingLevel } : {}),
+				}),
+			);
 			await refreshDefaults();
 		},
 		clearDefaultReply: async () => {
@@ -209,8 +214,14 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.model.defaultsSetVision({ mode: "auto" }));
 			await refreshDefaults();
 		},
-		setSystemDefaults: async (reply, vision) => {
-			await invoke(client, () => client.model.systemDefaultsSet({ reply, vision }));
+		setSystemDefaults: async (reply, vision, thinkingLevel) => {
+			await invoke(client, () =>
+				client.model.systemDefaultsSet({
+					reply,
+					vision,
+					...(thinkingLevel ? { thinkingLevel } : {}),
+				}),
+			);
 			await refreshSystemDefaults();
 		},
 		initializeDefaults: async () => {
@@ -221,9 +232,14 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.model.defaultsCompleteOnboarding());
 			await refreshDefaults();
 		},
-		completeSystemOnboarding: async (reply, vision, licensesAcknowledged) => {
+		completeSystemOnboarding: async (reply, vision, licensesAcknowledged, thinkingLevel) => {
 			const result = await invoke(client, () =>
-				client.systemOnboarding.completeModel({ reply, vision, licensesAcknowledged }),
+				client.systemOnboarding.completeModel({
+					reply,
+					vision,
+					licensesAcknowledged,
+					...(thinkingLevel ? { thinkingLevel } : {}),
+				}),
 			);
 			hydrateRpcQuery(queryClient, queryKeys.settings, { settings: result.settings });
 			hydrateRpcQuery(queryClient, queryKeys.systemModelDefaults, result.defaults);

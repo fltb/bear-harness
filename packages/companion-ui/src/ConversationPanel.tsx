@@ -11,6 +11,7 @@ import {
 	faMusic,
 	faPen,
 	faPlay,
+	faRotateRight,
 } from "@fortawesome/free-solid-svg-icons";
 import {
 	createWindowVirtualizer,
@@ -471,6 +472,7 @@ function PiTimelineEntryView(props: {
 										setCorrecting(true);
 									}}
 								>
+									<Icon icon={faRotateRight} />
 									{store.character?.character.correction.trigger_label}
 								</Button>
 							</Show>

@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthEvent, AuthInteraction, AuthPrompt, Provider } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ModelProjectionFacts } from "../models/registry.js";
@@ -65,6 +66,7 @@ export interface ProviderModelInfo {
 	id: string;
 	name: string;
 	supportsImages: boolean;
+	thinkingLevels?: ModelThinkingLevel[];
 	cost: ProviderModelCost;
 }
 
@@ -252,7 +254,11 @@ function projectModelFacts(providers: readonly ProviderInfo[]): ModelProjectionF
 		catalogModels: Object.freeze(
 			providers.flatMap((provider) =>
 				provider.availableModels.map((model) =>
-					Object.freeze({ providerId: provider.id, modelId: model.id }),
+					Object.freeze({
+						providerId: provider.id,
+						modelId: model.id,
+						thinkingLevels: model.thinkingLevels,
+					}),
 				),
 			),
 		),
@@ -672,6 +678,7 @@ export class ProviderCatalog {
 					id: model.id,
 					name: model.name,
 					supportsImages: model.input.includes("image"),
+					thinkingLevels: getSupportedThinkingLevels(model),
 					cost: model.cost,
 				})),
 				unavailable: errored.has(provider.id) ? [provider.id] : [],

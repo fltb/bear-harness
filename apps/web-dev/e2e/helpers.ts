@@ -48,13 +48,17 @@ export async function getBootstrap(page: Page): Promise<WebDevBootstrap> {
 }
 
 export async function activeConversationId(page: Page, expectedId?: string): Promise<string> {
-	const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const navigation = page.getByRole("navigation", {
+		name: zhCN.sidebar.conversations,
+		includeHidden: true,
+	});
 	let id: string | undefined;
 	// Selection and the conversation list are authoritative projections that can
 	// settle separately after create or reload. Read only their joined UI state.
+	// A modal hides navigation from accessibility, not from the local selection.
 	await expect
 		.poll(async () => {
-			id = await navigation.getByRole("button").evaluateAll((buttons) => {
+			id = await navigation.getByRole("button", { includeHidden: true }).evaluateAll((buttons) => {
 				const selected = buttons.filter((button) => button.getAttribute("aria-current") === "page");
 				return selected.length === 1
 					? selected[0]?.getAttribute("data-conversation-id") || undefined
@@ -296,7 +300,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled({
 		timeout: 15_000,
 	});
-	const model = page.locator(".composer-model-trigger");
+	const model = page.getByRole("button", { name: new RegExp(`^${zhCN.composer.modelLabel}`) });
 	await expect(model).toContainText("E2E Rule Provider", { timeout: 15_000 });
 }
 

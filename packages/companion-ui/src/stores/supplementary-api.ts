@@ -2,6 +2,7 @@ import type {
 	LocalEmbeddingAcquisitionState,
 	MemoryInspectRequest,
 	MemoryInspectResponse,
+	ModelThinkingLevel,
 } from "@bear-harness/protocol";
 import type { CreateQueryResult } from "@tanstack/solid-query";
 import type { Accessor } from "solid-js";
@@ -147,14 +148,24 @@ export interface ModelApi {
 	list(conversationId?: string): Promise<ModelListData>;
 	enable(providerId: string, modelId: string, label?: string): Promise<void>;
 	disable(providerId: string, modelId: string): Promise<void>;
-	select(conversationId: string, providerId: string, modelId: string): Promise<void>;
+	select(
+		conversationId: string,
+		providerId: string,
+		modelId: string,
+		thinkingLevel?: ModelThinkingLevel | null,
+	): Promise<void>;
 	setMultimodalFallback(providerId: string, modelId: string): Promise<void>;
-	setDefaultReply(providerId: string, modelId: string): Promise<void>;
+	setDefaultReply(
+		providerId: string,
+		modelId: string,
+		thinkingLevel?: ModelThinkingLevel,
+	): Promise<void>;
 	clearDefaultReply(): Promise<void>;
 	setVisionAuto(): Promise<void>;
 	setSystemDefaults(
 		reply: { providerId: string; modelId: string },
 		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+		thinkingLevel?: ModelThinkingLevel,
 	): Promise<void>;
 	initializeDefaults(): Promise<void>;
 	completeDefaultsOnboarding(): Promise<void>;
@@ -165,6 +176,7 @@ export interface ModelApi {
 			bear: "GPL-3.0-only";
 			gitForWindows?: "GPL-2.0-only";
 		},
+		thinkingLevel?: ModelThinkingLevel,
 	): Promise<void>;
 }
 

@@ -1,4 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import type { ModelThinkingLevel } from "@bear-harness/protocol";
 import { createMemo, createSignal, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
@@ -144,6 +145,61 @@ export function ModelSelector(props: {
 						</TextField>
 					</Show>
 					<Select.Listbox class={props.listClass ?? "select-listbox"} />
+				</Select.Content>
+			</Select.Portal>
+		</Select>
+	);
+}
+
+/** The default option never invents a provider capability or an explicit thinking override. */
+export function ThinkingSelector(props: {
+	value: ModelThinkingLevel | null;
+	levels: readonly ModelThinkingLevel[];
+	disabled?: boolean;
+	compact?: boolean;
+	onChange: (level: ModelThinkingLevel | null) => void;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	type Option = ModelThinkingLevel | "default";
+	const options = createStableSnapshot<Option[]>(() => ["default", ...props.levels]);
+	const label = (level: Option) => t(`settings.thinkingLevels.${level}`);
+	return (
+		<Select<Option>
+			options={options()}
+			value={props.value ?? "default"}
+			optionValue={(level) => level}
+			optionTextValue={label}
+			disabled={props.disabled || (props.levels.length <= 1 && props.value === null)}
+			class={props.compact ? "composer-thinking" : "field"}
+			placement={props.compact ? "top-start" : "bottom-start"}
+			onChange={(level) => {
+				if (!level) return;
+				const selected = level === "default" ? null : level;
+				if (selected !== props.value) props.onChange(selected);
+			}}
+			itemComponent={(item) => (
+				<Select.Item item={item.item} class="select-item">
+					<Select.ItemLabel>{label(item.item.rawValue)}</Select.ItemLabel>
+				</Select.Item>
+			)}
+		>
+			<Select.Label class={props.compact ? "sr-only" : "field-label"}>
+				{t("settings.thinkingLevel")}
+			</Select.Label>
+			<Select.Trigger
+				class={props.compact ? "composer-model-trigger" : "select-trigger"}
+				aria-label={t("settings.thinkingLevel")}
+			>
+				<Select.Value<Option> class="select-value">
+					{(state) => label(state.selectedOption() ?? "default")}
+				</Select.Value>
+				<Select.Icon class="select-icon" aria-hidden="true">
+					v
+				</Select.Icon>
+			</Select.Trigger>
+			<Select.Portal ref={markSelectPortalTopLayer}>
+				<Select.Content class="select-content">
+					<Select.Listbox class="select-listbox" />
 				</Select.Content>
 			</Select.Portal>
 		</Select>

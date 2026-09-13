@@ -62,6 +62,8 @@ fnm exec --using=.nvmrc npm run dev --workspace @bear-harness/desktop
 
 On first setup, configure your provider credentials and reply model. Optionally configure a local or remote embedding service to enable relationship memory, then complete the character's first meeting and start a conversation.
 
+Reply-model settings include a thinking-level selector in System Settings, Character Settings, onboarding, and the conversation composer. Choosing Default for system or character preferences does not supply an explicit Pi override; choosing Default in the composer restores the conversation's current default. System defaults initialize new characters; character defaults initialize new conversations, including named conversations. Existing conversations restore their own native Pi thinking history. Existing v1 character databases receive only a nullable thinking-preference field; conversation and memory data are not rewritten.
+
 **Local-first is not an offline guarantee.** Bear stores application data locally, but remote model providers receive the conversation and tool context sent to them; remote embedding services receive text submitted for embedding. Choose and configure those services accordingly.
 
 WebDev binds to loopback and protects Host calls with a process-level token. This is a development boundary, **not internet-facing user authentication**: do not expose the WebDev Host to a network.
@@ -96,6 +98,18 @@ fnm exec --using=.nvmrc npm run test:unit
 fnm exec --using=.nvmrc npm run test:coverage
 fnm exec --using=.nvmrc npm run build
 ```
+
+Run the checks from the online `ci.yml` workflow locally:
+
+```sh
+fnm exec --using=.nvmrc npm run test:ci
+fnm exec --using=.nvmrc npm run test:ci -- --list
+fnm exec --using=.nvmrc npm run test:ci -- quality web-e2e
+```
+
+The default runs `quality`, `upstream-brand`, `security`, `recovery`, `e2e`, `web-e2e`, and the **current machine's** `package` matrix target. It includes the same coverage suites, hosted Web E2E profile, Electron checks, package hashes/SBOM, native bindings, platform artifact checks, and packaged smoke. Web checks default to isolated ports **33200/33201/33211**; the `BEAR_E2E_*_PORT` variables override them. Jobs execute sequentially and stop on failure.
+
+Install dependencies with the pinned toolchain before running. Linux also needs the CI runtime prerequisites: working Bubblewrap confinement, Electron system libraries, and `xvfb-run`/`xauth` on `PATH`. The command does not install OS packages or change AppArmor policy. GitHub runner provisioning, artifact transfer, the other platform matrix targets, and clean-commit release attestations remain in Actions; a local pass is not an all-platform release attestation. Live-model acceptance and the two-hour soak are not jobs in `ci.yml` and are not added to this command.
 
 <details>
 <summary>Acceptance, recovery, and packaging commands</summary>

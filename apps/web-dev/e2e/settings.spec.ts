@@ -129,13 +129,13 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	});
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "true");
-	const taskWorkspace = page.getByRole("region", { name: zhCN.threadHead.runningWork });
+	const taskWorkspace = page.getByRole("dialog", { name: zhCN.work.activity.workspace });
 	await expect(taskWorkspace).toBeVisible();
 	await expect(
 		taskWorkspace.getByRole("heading", { name: zhCN.work.task.unfinished, exact: true }),
 	).toBeVisible();
 	await expect(taskWorkspace.getByRole("button", { name: zhCN.work.task.history })).toBeVisible();
-	await queue.click();
+	await taskWorkspace.getByRole("button", { name: zhCN.work.task.close, exact: true }).click();
 	await expect(queue).toHaveAttribute("aria-expanded", "false");
 	await expect(taskWorkspace).toBeHidden();
 

@@ -1,3 +1,4 @@
+import type { ModelThinkingLevel } from "@bear-harness/protocol";
 import { eq, sql } from "drizzle-orm";
 import { DEFAULT_TRACE_POLICY, type TracePolicy } from "../diagnostics/character-trace.js";
 import type { AppDatabase } from "./database.js";
@@ -11,6 +12,7 @@ export interface ModelRouteSetting {
 export interface SystemModelDefaults {
 	reply?: ModelRouteSetting;
 	vision: { mode: "auto" } | { mode: "manual"; route: ModelRouteSetting };
+	thinkingLevel?: ModelThinkingLevel;
 }
 
 export type FirstRunStage = "model" | "embedding" | "role";

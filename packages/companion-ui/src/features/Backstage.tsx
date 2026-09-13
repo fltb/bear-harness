@@ -7,6 +7,7 @@ import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { RelationshipMemory } from "./RelationshipMemory.js";
 import type { SettingsPage } from "./SettingsSheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
+import { CharacterModelSettings } from "./SystemModelSettings.js";
 
 /**
  * 幕后 — the backstage right-side sheet.
@@ -174,6 +175,13 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 						load={(request) => companion.characters.inspectMemory(request)}
 						onSystemSettings={props.onOpenMemorySettings}
 					/>
+				}
+				modelSettings={
+					<Show
+						when={companion.character && workflow.selectedPackageId() === companion.character.id}
+					>
+						<CharacterModelSettings />
+					</Show>
 				}
 				document={workflow.selectedPackage}
 				loading={workflow.selectedPackageLoading}

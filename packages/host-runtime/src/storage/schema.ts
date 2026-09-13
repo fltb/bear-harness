@@ -276,6 +276,9 @@ export const modelRouteSettings = sqliteTable("model_route_settings", {
 		.references(() => companionRuntimeIdentity.companionId),
 	textProviderId: text("text_provider_id"),
 	textModelId: text("text_model_id"),
+	textThinkingLevel: text("text_thinking_level", {
+		enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+	}),
 	visionMode: text("vision_mode").default("auto").notNull(),
 	multimodalProviderId: text("multimodal_provider_id"),
 	multimodalModelId: text("multimodal_model_id"),

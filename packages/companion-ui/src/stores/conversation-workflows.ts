@@ -1,3 +1,4 @@
+import type { ModelThinkingLevel } from "@bear-harness/protocol";
 import { createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
@@ -126,12 +127,15 @@ function createWorkflow(store: CompanionStore) {
 		selectedModel,
 		modelSelected: () => selectedModel() !== null,
 		refreshModels: (id: string) => void store.model.list(id),
-		selectModel: async (model: ConfiguredModel | null) => {
+		selectModel: async (
+			model: ConfiguredModel | null,
+			thinkingLevel?: ModelThinkingLevel | null,
+		) => {
 			const id = store.activeConversationId;
 			if (!model || !id || modelBusySessions().has(id)) return;
 			setModelBusySessions((current) => new Set(current).add(id));
 			try {
-				await store.model.select(id, model.providerId, model.modelId);
+				await store.model.select(id, model.providerId, model.modelId, thinkingLevel);
 			} catch {
 				// The store exposes the failed operation once; the composer must not mirror it.
 			} finally {

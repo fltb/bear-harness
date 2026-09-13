@@ -798,10 +798,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 		if (detail) {
 			hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
-			if (detail.selectedModel)
-				hydrateRpcQuery(queryClient, queryKeys.modelRoute(detail.conversationId), {
-					selected: detail.selectedModel,
-				});
+			void queryClient.invalidateQueries({
+				queryKey: queryKeys.modelRoute(detail.conversationId),
+				exact: true,
+			});
 			reconcileMessages(detail);
 			setPiLiveBySession((current) => new Map(current).set(detail.conversationId, detail.live));
 			replaceToolExecutions(detail);
@@ -823,10 +823,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		detail: ConversationDetail,
 	) => {
 		hydrateRpcQuery(queryClient, queryKeys.conversation(conversationId), detail);
-		if (detail.selectedModel)
-			hydrateRpcQuery(queryClient, queryKeys.modelRoute(conversationId), {
-				selected: detail.selectedModel,
-			});
+		void queryClient.invalidateQueries({
+			queryKey: queryKeys.modelRoute(conversationId),
+			exact: true,
+		});
 		if (activeConversationId() === conversationId)
 			applyActiveProjection({ activeConversation: detail });
 		else {
@@ -1199,6 +1199,8 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					});
 				if (options.capture) scheduleConversationRefresh(conversationId);
 			}
+			if (event.type === "thinking_level_changed" && options.capture)
+				scheduleConversationRefresh(conversationId);
 			if (
 				event.type === "tool_execution_start" ||
 				event.type === "tool_execution_update" ||
@@ -1747,14 +1749,13 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			setCompletedConversationIds(new Set<string>());
 			piEventCaptures.clear();
 			deletedConversationIds.clear();
-			await refreshActiveConversation();
-			await Promise.resolve();
 			queryClient.removeQueries({
 				predicate: (query) =>
 					query.queryKey[0] === "conversation" && query.queryKey[1] !== "active",
 			});
 			queryClient.removeQueries({ queryKey: ["companionState"] });
 			queryClient.removeQueries({ queryKey: ["models", "route"] });
+			await refreshActiveConversation();
 			await Promise.all([refreshConversations(), refreshArchived()]);
 		},
 		invalidateConversations: refreshConversations,

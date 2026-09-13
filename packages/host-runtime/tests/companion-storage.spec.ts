@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,6 +49,54 @@ describe("companion storage registry", () => {
 			).toEqual({ companion_id: "role-b" });
 		} finally {
 			registry.close();
+		}
+	});
+
+	it("preserves existing v1 data when adding and reopening a character thinking preference", () => {
+		const dataRoot = root();
+		const original = new CompanionStorageRegistry(dataRoot);
+		const otherPath = original.open("role-b").database.path;
+		try {
+			const connection = original.open("role-a").database.connection;
+			connection.exec(`
+				INSERT INTO model_route_settings (companion_id, text_provider_id, text_model_id, onboarding_complete)
+					VALUES ('role-a', 'provider', 'reply-model', 1);
+				INSERT INTO conversations (id, companion_id) VALUES ('existing-session', 'role-a');
+				ALTER TABLE model_route_settings DROP COLUMN text_thinking_level;
+			`);
+		} finally {
+			original.close();
+		}
+		const otherBytes = readFileSync(otherPath);
+		const reopened = new CompanionStorageRegistry(dataRoot);
+		try {
+			const connection = reopened.open("role-a").database.connection;
+			expect(
+				connection
+					.prepare(
+						"SELECT text_provider_id, text_model_id, onboarding_complete, text_thinking_level FROM model_route_settings",
+					)
+					.get(),
+			).toEqual({
+				text_provider_id: "provider",
+				text_model_id: "reply-model",
+				onboarding_complete: 1,
+				text_thinking_level: null,
+			});
+			expect(connection.prepare("SELECT id, companion_id FROM conversations").all()).toEqual([
+				{ id: "existing-session", companion_id: "role-a" },
+			]);
+			connection.exec("UPDATE model_route_settings SET text_thinking_level = 'max'");
+			reopened.closeCompanion("role-a");
+			expect(
+				reopened
+					.open("role-a")
+					.database.connection.prepare("SELECT text_thinking_level FROM model_route_settings")
+					.get(),
+			).toEqual({ text_thinking_level: "max" });
+			expect(readFileSync(otherPath)).toEqual(otherBytes);
+		} finally {
+			reopened.close();
 		}
 	});
 

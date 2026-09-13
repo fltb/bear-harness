@@ -324,7 +324,15 @@
 
 .composer-model {
 	grid-area: model;
-	@apply flex min-w-0 items-center;
+	@apply flex min-w-0 items-center gap-1;
+}
+
+.composer-model-picker {
+	@apply min-w-0;
+}
+
+.composer-thinking {
+	@apply shrink-0;
 }
 
 .composer-model-trigger {

@@ -1,7 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createMemo, For, Show } from "solid-js";
 import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
-import { ModelSelector } from "./features/ModelSelector.js";
+import { ModelSelector, ThinkingSelector } from "./features/ModelSelector.js";
 import { ProviderSetup } from "./features/ProviderSetup.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -208,6 +208,13 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 										if (model) void workflow.selectReplyModel(model);
 									}}
 								/>
+								<ThinkingSelector
+									value={workflow.selectedThinkingLevel()}
+									levels={workflow.selectedReplyModel()?.thinkingLevels ?? []}
+									disabled={workflow.setupBusy() || !workflow.selectedReplyModel()}
+									onChange={(level) => void workflow.selectThinkingLevel(level)}
+								/>
+								<p class="field-hint">{t("settings.thinkingLevelHint")}</p>
 								<Show
 									when={
 										workflow.selectedReplyModel() &&

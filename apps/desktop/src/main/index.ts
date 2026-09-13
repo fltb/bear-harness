@@ -444,6 +444,7 @@ function createMainWindow(): void {
 		minHeight: 680,
 		backgroundColor: "#07171c",
 		show: false,
+		focusable: !isSourceE2E && !isPackagedE2E,
 		title: productConfig.productName,
 		autoHideMenuBar: process.platform !== "darwin",
 		webPreferences: {
@@ -494,6 +495,14 @@ function createMainWindow(): void {
 	const loadSpan = diagnostics.startSpan("window.load", {});
 	window.webContents.once("did-finish-load", () => {
 		loadSpan.end("ok", { webContentsId, ok: true });
+		const presentation = windowPresentation({
+			sourceE2E: isSourceE2E,
+			packagedE2E: isPackagedE2E,
+		});
+		// A hidden window can defer its first compositor frame indefinitely.
+		// Present after successful document load, without stealing E2E focus.
+		if (presentation === "inactive") window.showInactive();
+		if (presentation === "active") window.show();
 	});
 	window.webContents.on(
 		"did-fail-load",
@@ -506,16 +515,6 @@ function createMainWindow(): void {
 			requestShutdown(1);
 		},
 	);
-	window.once("ready-to-show", () => {
-		// CI drives source and packaged windows through Playwright while keeping them
-		// fully hidden. Local E2E remains visible without taking focus.
-		const presentation = windowPresentation({
-			sourceE2E: isSourceE2E,
-			packagedE2E: isPackagedE2E,
-		});
-		if (presentation === "inactive") window.showInactive();
-		if (presentation === "active") window.show();
-	});
 	if (loadFromHtml) void window.loadFile(rendererHtmlPath);
 	else void window.loadURL(DEV_RENDERER_URL);
 }

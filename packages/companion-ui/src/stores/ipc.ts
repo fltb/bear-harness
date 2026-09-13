@@ -82,6 +82,7 @@ export type SystemModelDefaultsData = Wire.SystemModelDefaultsGetResponse;
 export type ModelRouteData = Wire.ModelRouteGetResponse;
 export type ModelListData = ModelPoolData & {
 	selected?: ModelRoute;
+	thinking?: ModelRouteData["thinking"];
 	multimodalFallback?: ModelRoute;
 	defaults: ModelDefaultsData;
 	systemDefaults: SystemModelDefaultsData;

@@ -55,7 +55,12 @@ import type {
 	validateLocalEmbedding,
 	validateRemoteEmbedding,
 } from "./memory/tencentdb-runtime.js";
-import type { ModelRecord, ModelRegistry } from "./models/registry.js";
+import type {
+	ModelDefaults,
+	ModelRecord,
+	ModelRegistry,
+	SystemModelDefaults,
+} from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
 import {
 	type CredentialStore,
@@ -792,10 +797,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const companionId = getCompanionId(s);
 		return modelDefaultsWire(s.models.defaults(companionId, s.providers.modelProjectionFacts()));
 	});
-	dispatcher.registerHandler(RPC.model.defaultsSetReply, async ({ reply }) => {
+	dispatcher.registerHandler(RPC.model.defaultsSetReply, async ({ reply, thinkingLevel }) => {
 		const companionId = getCompanionId(s);
 		return modelDefaultsWire(
-			s.models.setDefaultReply(companionId, reply, s.providers.modelProjectionFacts()),
+			s.models.setDefaultReply(
+				companionId,
+				reply,
+				s.providers.modelProjectionFacts(),
+				thinkingLevel,
+			),
 		);
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetVision, async (vision) => {
@@ -847,18 +857,17 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.model.routeGet, async ({ conversationId }) => {
 		await requireOwnedConversation(s, conversationId);
-		const selected = await s.pi.modelFor(conversationId);
-		return {
-			conversationId,
-			...(selected ? { selected } : {}),
-		};
+		return { conversationId, ...(await s.pi.modelSettingsFor(conversationId)) };
 	});
-	dispatcher.registerHandler(RPC.model.routeSet, async ({ conversationId, selected }) => {
-		await requireOwnedConversation(s, conversationId);
-		const model = await s.pi.setModel(conversationId, selected.providerId, selected.modelId);
-		s.invalidations.invalidate(CacheKey.modelRoute(conversationId));
-		return { conversationId, selected: model };
-	});
+	dispatcher.registerHandler(
+		RPC.model.routeSet,
+		async ({ conversationId, selected, thinkingLevel }) => {
+			await requireOwnedConversation(s, conversationId);
+			await s.pi.setModel(conversationId, selected.providerId, selected.modelId, thinkingLevel);
+			s.invalidations.invalidate(CacheKey.modelRoute(conversationId));
+			return { conversationId, ...(await s.pi.modelSettingsFor(conversationId)) };
+		},
+	);
 
 	// --- direct Pi runs ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.run.list, async (request) => {
@@ -1193,11 +1202,7 @@ function sessionWire(session: SessionInfo, isStreaming: boolean) {
 	};
 }
 
-function modelDefaultsWire(defaults: {
-	reply?: { providerId: string; modelId: string };
-	vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
-	onboardingComplete: boolean;
-}) {
+function modelDefaultsWire(defaults: ModelDefaults) {
 	return {
 		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
 		vision:
@@ -1208,19 +1213,18 @@ function modelDefaultsWire(defaults: {
 					}
 				: { mode: "auto" as const },
 		onboardingComplete: defaults.onboardingComplete,
+		...(defaults.thinkingLevel ? { thinkingLevel: defaults.thinkingLevel } : {}),
 	};
 }
 
-function systemModelDefaultsWire(defaults: {
-	reply?: { providerId: string; modelId: string };
-	vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
-}) {
+function systemModelDefaultsWire(defaults: SystemModelDefaults) {
 	return {
 		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
 		vision:
 			defaults.vision.mode === "manual"
 				? { mode: "manual" as const, route: modelRouteWire(defaults.vision.route) }
 				: { mode: "auto" as const },
+		...(defaults.thinkingLevel ? { thinkingLevel: defaults.thinkingLevel } : {}),
 	};
 }
 
