@@ -1,0 +1,25 @@
+{
+	"name": "@bear-harness/promo",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"export": "node scripts/export.mjs"
+	},
+	"dependencies": {
+		"@bear-harness/companion-client": "file:../../packages/companion-client",
+		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
+		"@bear-harness/product-config": "file:../../packages/product-config",
+		"@bear-harness/protocol": "file:../../packages/protocol",
+		"solid-js": "1.9.14"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "4.3.3",
+		"playwright": "1.62.1",
+		"typescript": "7.0.2",
+		"vite": "8.2.1",
+		"vite-plugin-solid": "2.11.14"
+	}
+}

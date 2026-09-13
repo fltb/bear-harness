@@ -1,0 +1,192 @@
+[
+	{
+		"id": 0,
+		"title": "白熊客栈是做什么的",
+		"user": "",
+		"assistant": "",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": ["展示极昼真实应用界面，不发送消息"],
+		"readingSeconds": 0
+	},
+	{
+		"id": 1,
+		"title": "和角色聊天",
+		"user": "你那个夜读角，收拾得怎么样了？",
+		"assistant": "椅子擦干净了。剩下那些东西……我还在考虑该扔什么。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"进入极昼真实对话界面，显示夜间场景与立绘",
+			"点击输入框，逐字输入并发送用户消息",
+			"等待角色回复完成，保留完整对白阅读时间"
+		],
+		"readingSeconds": 10
+	},
+	{
+		"id": 2,
+		"title": "和角色聊天",
+		"user": "那先给我留个靠窗的位置吧。",
+		"assistant": "行。窗边那堆书归我搬，你别一来就替我干活。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": ["在极昼对话中输入并发送用户消息", "等待角色回复完成并停留在角色和回复上"],
+		"readingSeconds": 9
+	},
+	{
+		"id": 3,
+		"title": "背景、立绘和角色图片",
+		"user": "给我看看你想把那里弄成什么样。",
+		"assistant": "大概这样。灯留一盏，桌子别摆得太挤。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"在对话位置显示真实 native media 工具结果",
+			"点击缩略图，打开真实媒体模态并完整显示包内已有 CG",
+			"关闭真实媒体模态，回到原对话"
+		],
+		"readingSeconds": 9
+	},
+	{
+		"id": 4,
+		"title": "导入和切换角色",
+		"user": "这箱书太沉了，我刚才没搬动。",
+		"assistant": "“就这箱？让开点，我来。”\n\n他把箱子抱起来，又往你这边看了一眼。\n\n“放哪儿？”",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"回到真实角色入口并选择 RJ",
+			"显示 RJ 独立对话、背景和立绘",
+			"显示外部角色包导入示例标记",
+			"给 RJ 名字及外部角色包导入示例清楚的阅读位置",
+			"将会话标题设为搬书，不出现夜读角标题",
+			"动作描写：他把箱子抱起来，又往你这边看了一眼。"
+		],
+		"readingSeconds": 13
+	},
+	{
+		"id": 5,
+		"title": "导入和切换角色",
+		"user": "风这么大，还往前走？",
+		"assistant": "“风还没停，你就要回头了？”\n\n他迎着风站住，回身看你。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"从真实角色入口切换沃利贝尔",
+			"保留莲华温泉外观与独立场景",
+			"动作描写：他迎着风站住，回身看你",
+			"显示外部角色包导入示例标记，不加入雷电特效"
+		],
+		"readingSeconds": 12
+	},
+	{
+		"id": 6,
+		"title": "保存和查看记忆",
+		"user": "",
+		"assistant": "",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"切回极昼并打开先前的夜读角对话",
+			"保持原消息在原位置",
+			"镜头短暂停在靠窗的位置",
+			"不显示 RJ 或沃利贝尔的消息"
+		],
+		"readingSeconds": 4
+	},
+	{
+		"id": 7,
+		"title": "保存和查看记忆",
+		"user": "我喜欢靠窗坐，也不喜欢活动里轮流自我介绍。帮我记住这两点。",
+		"assistant": "记住了。靠窗的位置给你留着，自我介绍那一圈就免了。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"在极昼对话中输入并发送两条偏好",
+			"等待真实显式记忆工具成功",
+			"工具成功后显示确认回复",
+			"打开真实显式记忆入口并读到靠窗坐与不轮流自我介绍两条演示记录",
+			"不展示完整角色私有文件"
+		],
+		"readingSeconds": 13
+	},
+	{
+		"id": 8,
+		"title": "在新对话里使用已保存的记忆",
+		"user": "夜读角的活动说明，怎么写？",
+		"assistant": "就写自由来坐，带本书。想分享再开口，不安排轮流自我介绍。窗边的位置，我另外给你留。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"用真实按钮新建极昼会话",
+			"让标题区或会话列表清楚区分新旧会话",
+			"保留旧会话，不把另一个角色的消息带入",
+			"新快照只携带极昼已保存的两条偏好",
+			"在新会话中输入并发送用户消息，等待角色回复"
+		],
+		"readingSeconds": 14
+	},
+	{
+		"id": 9,
+		"title": "从聊天中发起任务",
+		"user": "那帮我做成一份 Markdown 活动说明吧。日期和报名方式先写待定。",
+		"assistant": "好。我先把说明整理出来。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"在当前极昼会话中输入并发送 Markdown 请求",
+			"真实当前工作入口出现",
+			"短暂显示任务状态，不灌满工具日志或虚构百分比进度",
+			"将任务产物命名为 night-reading.md"
+		],
+		"readingSeconds": 11
+	},
+	{
+		"id": 10,
+		"title": "从聊天中发起任务",
+		"user": "那把椅子可别又堆上书。",
+		"assistant": "……你来之前，我搬走。",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"工作未完成时用真实入口切回上一段极昼对话",
+			"保持角色不被任务窗口替换",
+			"在切换后的对话中输入并发送用户消息",
+			"等待角色回复并保持工作进行",
+			"工作完成时只出现真实结果可用提示，不自动打开工作区"
+		],
+		"readingSeconds": 8
+	},
+	{
+		"id": 11,
+		"title": "查看和保存任务结果",
+		"user": "",
+		"assistant": "",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"用户主动点击对应工作的结果",
+			"展开真实结果工作区，立绘按真实响应布局让位",
+			"放大 Markdown 预览并显示完整文件正文：\n# 夜读角\n带一本想读的书，来坐一会儿。\n\n- 自由参加，不安排轮流自我介绍。\n- 想分享的时候再开口，也可以自己安静读书。\n- 日期：待定。\n- 报名方式：待定。",
+			"执行 Web 平台真实下载动作呈现保存，不伪造 Electron 原生系统对话框"
+		],
+		"readingSeconds": 16
+	},
+	{
+		"id": 12,
+		"title": "安装和使用说明",
+		"user": "",
+		"assistant": "",
+		"narration": "",
+		"narrationPlacement": "none",
+		"actions": [
+			"关闭真实结果并回到极昼和夜读角对话",
+			"让真实界面退到背景",
+			"显示产品名：白熊客栈",
+			"显示地址：github.com/fltb/bear-harness",
+			"显示结尾标记：极昼随应用提供；RJ、沃利贝尔仅为外部导入示例。",
+			"保留预设情景说明，不叠加夸张保证、比较竞品或未发布功能"
+		],
+		"readingSeconds": 8
+	}
+]
