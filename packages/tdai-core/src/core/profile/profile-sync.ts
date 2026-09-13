@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { IMemoryStore, ProfileRecord, ProfileSyncRecord } from "../store/types.js";
@@ -35,19 +36,6 @@ function md5(text: string): string {
 	return createHash("md5").update(text).digest("hex");
 }
 
-async function statTimes(filePath: string): Promise<{ createdAtMs: number; updatedAtMs: number }> {
-	try {
-		const stat = await fs.stat(filePath);
-		return {
-			createdAtMs: Math.floor(stat.birthtimeMs || stat.ctimeMs || Date.now()),
-			updatedAtMs: Math.floor(stat.mtimeMs || Date.now()),
-		};
-	} catch {
-		const now = Date.now();
-		return { createdAtMs: now, updatedAtMs: now };
-	}
-}
-
 async function refreshPersonaNavigation(dataDir: string): Promise<void> {
 	const personaPath = path.join(dataDir, "persona.md");
 	let body: string;
@@ -65,53 +53,56 @@ async function refreshPersonaNavigation(dataDir: string): Promise<void> {
 	await fs.writeFile(personaPath, finalContent, "utf-8");
 }
 
-export async function listLocalProfiles(dataDir: string): Promise<ProfileRecord[]> {
-	const profiles: ProfileRecord[] = [];
-	const blocksDir = path.join(dataDir, "scene_blocks");
-
+export async function listLocalProfiles(
+	dataDir: string,
+	page?: { offset: number; limit: number },
+): Promise<{ profiles: ProfileRecord[]; nextOffset?: number }> {
+	const root = await fs.realpath(dataDir);
+	const files: Array<{ filename: string; type: "l2" | "l3"; filePath: string }> = [];
+	const blocksDir = path.join(root, "scene_blocks");
 	try {
-		const files = (await fs.readdir(blocksDir)).filter((file) => file.endsWith(".md")).sort();
-		for (const filename of files) {
-			const filePath = path.join(blocksDir, filename);
-			const content = await fs.readFile(filePath, "utf-8");
-			const { createdAtMs, updatedAtMs } = await statTimes(filePath);
+		if ((await fs.lstat(blocksDir)).isSymbolicLink()) throw new Error("Unsafe memory profile directory");
+		for (const filename of (await fs.readdir(blocksDir)).filter((file) => file.endsWith(".md")).sort()) {
+			files.push({ filename, type: "l2", filePath: path.join(blocksDir, filename) });
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const personaPath = path.join(root, "persona.md");
+	try {
+		await fs.lstat(personaPath);
+		files.push({ filename: "persona.md", type: "l3", filePath: personaPath });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const offset = page?.offset ?? 0;
+	const selected = files.slice(offset, page ? offset + page.limit : undefined);
+	const profiles: ProfileRecord[] = [];
+	for (const { filename, type, filePath } of selected) {
+		if (!(await fs.lstat(filePath)).isFile()) throw new Error("Unsafe memory profile file");
+		const handle = await fs.open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+		try {
+			const stat = await handle.stat();
+			if (!stat.isFile() || stat.size > 262_144) throw new Error("Memory profile exceeds read limit");
+			const raw = await handle.readFile("utf-8");
+			const content = type === "l3" ? stripSceneNavigation(raw).trim() : raw;
+			if (type === "l3" && !content) continue;
 			profiles.push({
-				id: buildProfileStableId(PROFILE_SCOPE, "l2", filename),
-				type: "l2",
+				id: buildProfileStableId(PROFILE_SCOPE, type, filename),
+				type,
 				filename,
 				content,
 				contentMd5: md5(content),
 				version: 0,
-				createdAtMs,
-				updatedAtMs,
+				createdAtMs: Math.floor(stat.birthtimeMs || stat.ctimeMs),
+				updatedAtMs: Math.floor(stat.mtimeMs),
 			});
+		} finally {
+			await handle.close();
 		}
-	} catch {
-		// ignore missing scene_blocks directory
 	}
-
-	const personaPath = path.join(dataDir, "persona.md");
-	try {
-		const rawPersona = await fs.readFile(personaPath, "utf-8");
-		const body = stripSceneNavigation(rawPersona).trim();
-		if (body) {
-			const { createdAtMs, updatedAtMs } = await statTimes(personaPath);
-			profiles.push({
-				id: buildProfileStableId(PROFILE_SCOPE, "l3", "persona.md"),
-				type: "l3",
-				filename: "persona.md",
-				content: body,
-				contentMd5: md5(body),
-				version: 0,
-				createdAtMs,
-				updatedAtMs,
-			});
-		}
-	} catch {
-		// ignore missing persona file
-	}
-
-	return profiles;
+	const nextOffset = offset + selected.length;
+	return { profiles, ...(nextOffset < files.length ? { nextOffset } : {}) };
 }
 
 export async function pullProfilesToLocal(
@@ -213,7 +204,7 @@ export async function syncLocalProfilesToStore(
 	baselineMap: Map<string, ProfileBaseline>,
 	logger: Logger,
 ): Promise<void> {
-	const localProfiles = await listLocalProfiles(dataDir);
+	const { profiles: localProfiles } = await listLocalProfiles(dataDir);
 	const localIds = new Set(localProfiles.map((profile) => profile.id));
 
 	const syncRecords: ProfileSyncRecord[] = localProfiles

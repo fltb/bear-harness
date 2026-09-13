@@ -1,6 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, For, Match, Show, Switch } from "solid-js";
-import { MessageContent } from "./MessageContent.js";
+import { MessageContent, type MessageContentProps } from "./MessageContent.js";
 
 export function nativeRecord(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -47,6 +47,7 @@ function NativePart(props: {
 	codeCopiedLabel?: string;
 	copiedCode?: CopiedCode;
 	onCopyCode?(code: string, partIndex: number, codeIndex: number): void;
+	artifactLinks?: MessageContentProps["artifactLinks"];
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [imageFailed, setImageFailed] = createSignal(false);
@@ -80,6 +81,7 @@ function NativePart(props: {
 					text={part()?.text as string}
 					format={props.format}
 					streaming={props.streaming}
+					artifactLinks={props.artifactLinks}
 					codeCopyLabel={props.codeCopyLabel}
 					codeCopiedLabel={props.codeCopiedLabel}
 					copiedCodeIndex={
@@ -143,6 +145,7 @@ export function NativeMessageContent(props: {
 	codeCopiedLabel?: string;
 	copiedCode?: CopiedCode;
 	onCopyCode?(code: string, partIndex: number, codeIndex: number): void;
+	artifactLinks?: MessageContentProps["artifactLinks"];
 }) {
 	return (
 		<Show
@@ -152,6 +155,7 @@ export function NativeMessageContent(props: {
 					text={props.content as string}
 					format={props.format ?? "markdown"}
 					streaming={props.streaming}
+					artifactLinks={props.artifactLinks}
 					codeCopyLabel={props.codeCopyLabel}
 					codeCopiedLabel={props.codeCopiedLabel}
 					copiedCodeIndex={
@@ -174,6 +178,7 @@ export function NativeMessageContent(props: {
 							partIndex={0}
 							format={props.format ?? "markdown"}
 							streaming={props.streaming}
+							artifactLinks={props.artifactLinks}
 							codeCopyLabel={props.codeCopyLabel}
 							codeCopiedLabel={props.codeCopiedLabel}
 							copiedCode={props.copiedCode}
@@ -189,6 +194,7 @@ export function NativeMessageContent(props: {
 							partIndex={partIndex()}
 							format={props.format ?? "markdown"}
 							streaming={props.streaming}
+							artifactLinks={props.artifactLinks}
 							codeCopyLabel={props.codeCopyLabel}
 							codeCopiedLabel={props.codeCopiedLabel}
 							copiedCode={props.copiedCode}

@@ -56,7 +56,9 @@ function handle(message) {
 	if (message.method === "session/prompt") {
 		promptId = message.id;
 		if (process.env.FIXTURE_STDERR_EXIT_CODE) {
-			process.stderr.write(`worker failed: ${process.env.BEAR_PI_API_KEY ?? "missing-key"}\n`);
+			process.stderr.write(
+				`worker failed: ${process.env.BEAR_PI_CREDENTIAL ?? "missing-credential"}\n`,
+			);
 			process.exit(Number(process.env.FIXTURE_STDERR_EXIT_CODE));
 		}
 		send({

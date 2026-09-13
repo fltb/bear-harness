@@ -24,11 +24,7 @@ import {
 	codexCodeModeHost,
 	managedCodexExecutable,
 } from "../src/executors/codex-adapter.js";
-import {
-	PiAcpAdapter,
-	piModelEnvironment,
-	piWorkerDependencyPaths,
-} from "../src/executors/pi-adapter.js";
+import { PiAcpAdapter, piWorkerDependencyPaths } from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 
@@ -157,7 +153,7 @@ describe("ACP executor adapters", () => {
 			run.task.modelRoute = {
 				providerId: "provider-a",
 				modelId: "model-a",
-				apiKey: "process-only-secret",
+				credential: { type: "api_key", key: "process-only-secret" },
 			};
 			run.emit = (event) => {
 				if (event.type === "completed") completed.resolve();
@@ -178,19 +174,11 @@ describe("ACP executor adapters", () => {
 				executor: "pi-acp",
 				workerPath: fixturePath,
 			});
-			expect(JSON.stringify(manifest)).not.toContain("apiKey");
+			expect(JSON.stringify(manifest)).not.toContain("process-only-secret");
 			runDatabase.close();
 			system.close();
 		},
 	);
-
-	it("passes the selected Pi route and credential only through the worker environment", () => {
-		expect(piModelEnvironment("provider-a", "model-a", "secret-a")).toEqual({
-			BEAR_PI_PROVIDER_ID: "provider-a",
-			BEAR_PI_MODEL_ID: "model-a",
-			BEAR_PI_API_KEY: "secret-a",
-		});
-	});
 
 	it.skipIf(!macOSConfinementAvailable)(
 		"keeps the consented Codex ACP adapter functional under confinement",

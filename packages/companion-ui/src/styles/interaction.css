@@ -441,44 +441,6 @@
 	box-shadow: 0 0 0 5px var(--surface-success);
 }
 
-.queue-pop {
-	@apply absolute right-0 top-full z-70 mt-2 grid w-80 gap-2 rounded-xl p-3;
-	border: 1px solid var(--sys-border);
-	background: var(--surface-panel);
-	box-shadow: var(--shadow-app);
-}
-
-.queue-pop h3 {
-	@apply m-0 mb-2.5 text-xs;
-	color: var(--text-strong);
-}
-
-.queue-pop .action-proposal {
-	@apply grid w-full max-w-none gap-1 rounded-xl border p-3;
-	border-color: var(--line-soft);
-	background: var(--surface-success);
-}
-
-.queue-pop .action-proposal h3 {
-	@apply m-0 text-xs;
-}
-
-.queue-pop .run-controls > button,
-.queue-pop .work-actions button {
-	@apply min-h-9 w-full rounded-lg border px-2 text-xs;
-	border-color: var(--line-soft);
-	background: var(--surface-panel);
-}
-
-.queue-pop .steer-row {
-	@apply mt-2 grid gap-2;
-}
-
-.queue-pop .empty {
-	@apply grid place-items-center px-2 py-5 text-xs;
-	color: var(--sys-text-muted);
-}
-
 .conversation-state-trigger {
 	@apply ml-auto flex min-h-9 items-center gap-2 rounded-lg border border-line px-3 text-xs;
 	color: var(--text-soft);

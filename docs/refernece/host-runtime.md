@@ -77,6 +77,10 @@ Character 顶层 child 恰好一个 `x-scope: global | conversation`，后代不
 
 `ExplicitMemory` 只响应用户明确的 remember/change/forget 意图，使用角色目录中的 `MEMORY.md`。TDAI runtime 使用系统 embedding 配置，但其 records/vector/index/checkpoint 全部在当前角色目录。切换 embedding 后每个角色独立重建。
 
+角色设置通过 `memory.inspect({ characterId, kind, offset?, limit? })` 只读浏览真实本地记忆，`kind` 为 `records`、`profiles` 或 `explicit`。自动记忆条目读取角色 TDAI SQLite，情景与画像读取其 L2/L3 文件，显式记忆独立读取 `MEMORY.md`。默认每页 20 项、最多 25 项；各领域独立读取，权限、损坏或不安全文件错误不伪装成空集合。
+
+查看非当前角色先验证安装包与 runtime 目录归属，不激活角色、不创建其 runtime，也不启动模型、embedding 或记忆抽取。目录和文件拒绝符号链接，文件须为普通文件且读取有界。Renderer 以角色、分区及页码隔离查询，提供手动刷新；服务关闭不隐藏已有记忆，启用入口跳转安装级系统设置。
+
 打开真实 Pi `AgentSession` 时，Host 读取一次角色包稳定 Prompt、用户称呼和显式 `MEMORY.md`，组成该 Session 的稳定 system context。当前 Character/Display、按当前输入检索的 Canon 与 TDAI recall 通过 Pi `before_agent_start` 作为当轮临时 system context 注入，不写成 transcript message。Host 不做统一字符截断，也不实现第二套长对话摘要/压缩流水线；上下文窗口与 compaction 继续由 Pi 原生机制负责。
 
 真实阶段通过 [`LivePush`](../../packages/protocol/src/schema.ts) 的 `conversationActivity` 临时通道报告：`memory_recall`、`context`、`memory_capture` 各次调用生成独立 `operationId`，发出 `started` 与 `completed` / `failed`，失败可附 `errorMessage`。每次通知都重新读取该 Session 的原生 `live` snapshot；这些标识只关联阶段调用，不是 Pi turn id。关闭关系记忆时不调用、不发送假的 recall/capture；context 只报告实际执行的上下文编译。
@@ -101,11 +105,17 @@ Host tool wrapper 提供真实 `conversationId`、`triggerEntryId` 和原生 `to
 
 receipt 返回后，由 Run 拥有并跟踪的异步 launch 启动 executor；启动失败保留同一 Run ID，写失败证据与 `failed`。取消、删除会话和关闭会 drain/停止真实 admission、launch、control 与 delivery 资源，不能在已取消或删除后再启动。Pi 继续独占对话 transcript/streaming/history/native state；Host 独占 Run 生命周期、权限、workspace、证据与 Artifact 安全。
 
+Worker 接收 Host 为当前模型解析的原生凭据快照（API Key 或 OAuth），只在进程内存中使用；初始化后移除凭据环境变量，不写入 Run manifest、数据库或工具子进程环境。供应商配置目录保持只读；Pi 的 `models-store.json` 缓存写入该 Run 的 `pi-session` 目录，不能回写安装级配置目录。
+
 ### 查询、证据与控制
 
 `run.list` 默认返回当前角色全部未完成任务（`enqueued`、`running`、`needs_user`、可恢复的 `interrupted`）和一页最近完成历史；可按已验证归属的 `conversationId` 过滤。`scope: "unfinished"` 只返回未完成任务；`scope: "history"` 按 cursor 分页。新完成项不能挤掉未完成任务。`limit` 为 1–100，响应至多 200 项。`run.get` 按 Run ID 返回权威 Run、instruction、输入文件名及独立分页的有界脱敏 evidence；不返回内部 workspace/CAS 路径。
 
 Pi Worker 的公共 assistant text 与原生 tool start/update/end、args/result/error 转为有界 ACP evidence，工具输出不改写为 worker 叙述，也不把进程 stderr 当任务成果。Run 的 compact evidence 至多 20 项，详细证据通过 `run.get` 按需读取。
+
+原生 `turn_start` 与 `auto_retry_start/end` 同样经过 ACP 进入 Run 证据；中间工具失败、模型错误或自动重试不提前结算整个任务。证据按 SQLite 插入顺序分页，同秒事件不按随机 UUID 排序。连续 assistant 文本在同一证据项内合并，保留空白和最近接收时间；达到单项字节上限或遇到其他事件后另起记录。
+
+会话中的任务卡显示实时步骤、更新时间及可用的停止操作；完成后保留状态和 Artifact 入口。点击进入宽版任务 Dialog，手机宽度下全屏显示。工具 start/update/end 合并成带时间戳的可读步骤，命令、输出、错误与原生重试分层呈现，原始 JSON 和任务元数据默认折叠。查看旧证据页时明确提示并提供返回最新进展的入口。控制按钮仅使用真实 `actions`，补充指令不冒充执行完成；打开 Artifact 关闭任务 Dialog，进入独立结果工作区。
 
 `Run.controller` 为 `attached | unknown | confirmed_lost`；`actions` 来自真实 controller 能力与持久生命周期交集，而不是仅按 status 猜测按钮。`steer` 返回真实 `{ outcome: "injected" | "startedNewTurn" | "sent" }`，不代表指令完成。`interrupt` 等待原生暂停确认，`resume` 仅继续已确认暂停的同一任务，可附 instruction；`cancel` 必须停止/释放真实资源，不支持时失败。终态竞态不能被后到的控制结果覆盖。
 
@@ -120,6 +130,10 @@ Renderer 的 list/get/control 在当前角色内验证 Run 归属，不要求任
 原生 subscriber 在 append 前触发，entry 查找延后到 microtask。去重依据是已持久化 entry 或真实 Session/Run 的在途 delivery promise/subscription；bounded timeout 不清掉仍在途的操作，也不再排一个副本。会话 disposal 负责清理该 Session 的操作。终态未确认投递时可用 `run.retryDelivery` 重试同一结果；仍 pending 则返回错误，不伪造 `resultReportedAt`。重试投递不会重跑任务，新执行仍必须走新的原生 delegation。
 
 输出捕获逐项验证 containment、symlink、MIME、大小和 SHA-256，然后将字节写入当前角色的 CAS。Artifact 查询和动作验证 conversation、run、artifact 三层归属。open/reveal/save-as 由外壳提供原生 presenter；普通 Host API 不接受 Renderer 目标路径。
+
+聊天回复中的相对文件链接按该原生消息之前最近一次 `host_external_agent_result` 的 Run 解析，仅接受当前会话中该 Run 已登记且文件名唯一的 Artifact。历史回复不改绑到后来同名的成果；未知、重名或跨会话文件不生成下载按钮。点击使用不可变 conversation/run/artifact IDs 调用原生 Save As，WebDev 不支持原生保存时使用有界 Artifact 读取和浏览器 Blob 下载。链接路径只用于匹配展示名称，不作为 Host 文件系统路径。
+
+成果工作区在 `>= 1600px` 使用会话与成果等宽双列，角色舞台让位；`768..1599px` 为右侧抽屉，`<= 767px` 为全屏。预览区保持可读的最小高度，文件元数据、来源及执行证据默认折叠。不支持内联预览的格式（包括 XLSX）明确提示下载后打开，不作为文件损坏错误，也不声称已提供表格预览。
 
 ## 事件与查询
 

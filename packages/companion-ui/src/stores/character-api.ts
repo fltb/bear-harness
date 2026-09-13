@@ -32,6 +32,7 @@ interface CharacterApiContext {
 export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 	const { client, queryClient } = c;
 	const api: CharacterApi = {
+		inspectMemory: (request) => invoke(client, () => client.memory.inspect(request)),
 		observeTrust: (characterId) => {
 			const query = createRpcQuery({
 				client: queryClient,

@@ -4,6 +4,7 @@ import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { Button, Dialog, FileField } from "../ui/primitives.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
+import { RelationshipMemory } from "./RelationshipMemory.js";
 import type { SettingsPage } from "./SettingsSheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
@@ -12,8 +13,8 @@ import { SettingsSheet } from "./SettingsSheet.js";
  *
  * Kobalte 0.13 ships no `Sheet` primitive, so the drawer is built on the
  * `Dialog` family (focus trap, ESC-to-close, aria-modal, labelled title),
- * styled as the prototype's right-side panel. Its role, memory, system,
- * and package-authoring areas live in `Tabs`; page state is internal.
+ * styled as a right-side panel. Role settings include a read-only view of
+ * the selected character's relationship and explicit memory.
  */
 export function Backstage(props: {
 	open: boolean;
@@ -21,6 +22,7 @@ export function Backstage(props: {
 	initialTab?: "roles" | "settings";
 	initialSettingsPage?: SettingsPage;
 	onSettingsPageChange?: (page: SettingsPage) => void;
+	onOpenMemorySettings?: () => void;
 	returnFocus?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -73,7 +75,7 @@ export function Backstage(props: {
 							</div>
 						}
 					>
-						<RoleManager />
+						<RoleManager onOpenMemorySettings={props.onOpenMemorySettings} />
 					</Show>
 				</Dialog.Content>
 			</Dialog.Portal>
@@ -81,7 +83,7 @@ export function Backstage(props: {
 	);
 }
 
-function RoleManager() {
+function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
@@ -161,6 +163,18 @@ function RoleManager() {
 			<CurrentRolePackageManager
 				characters={workflow.characters}
 				selectedId={workflow.selectedPackageId}
+				memory={
+					<RelationshipMemory
+						characterId={workflow.selectedPackageId}
+						characterName={() =>
+							workflow
+								.characters()
+								.find((character) => character.id === workflow.selectedPackageId())?.name ?? ""
+						}
+						load={(request) => companion.characters.inspectMemory(request)}
+						onSystemSettings={props.onOpenMemorySettings}
+					/>
+				}
 				document={workflow.selectedPackage}
 				loading={workflow.selectedPackageLoading}
 				error={workflow.selectedPackageError}

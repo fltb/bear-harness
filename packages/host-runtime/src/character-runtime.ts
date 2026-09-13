@@ -275,12 +275,11 @@ export class CharacterRuntime {
 			async (conversationId) => {
 				const route = await this.pi.modelFor(conversationId);
 				if (!route) return undefined;
-				const credential = await options.credentials.get(route.providerId);
-				const apiKey =
-					credential?.piCredential?.type === "api_key"
-						? credential.piCredential.key
-						: credential?.apiKey;
-				return { ...route, ...(apiKey ? { apiKey } : {}) };
+				const stored = await options.credentials.get(route.providerId);
+				const credential =
+					stored?.piCredential ??
+					(stored?.apiKey ? { type: "api_key" as const, key: stored.apiKey } : undefined);
+				return { ...route, ...(credential ? { credential } : {}) };
 			},
 			async ({ run, outputs, needsResultReport }: TerminalRunResult, signal) => {
 				await this.diagnostics.operation(

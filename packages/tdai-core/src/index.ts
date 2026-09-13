@@ -70,6 +70,8 @@ export type {
 	IndexingStatusCallback,
 	ReindexResult,
 } from "./core/types.js";
+export { inspectLocalMemory } from "./core/memory-inspection.js";
+export type { MemoryInspectionItem, MemoryInspectionPage } from "./core/memory-inspection.js";
 export type {
 	MemoryRecord,
 	EmbeddingProviderInfo,

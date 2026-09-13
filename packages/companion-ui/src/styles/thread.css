@@ -125,7 +125,13 @@
 	color: var(--text-soft);
 }
 
-.message-markdown a {
+.message-artifact-link {
+	@apply inline cursor-pointer border-0 bg-transparent p-0 text-left;
+	font: inherit;
+}
+
+.message-markdown a[href],
+.message-artifact-link {
 	color: var(--text-action);
 	text-decoration: underline;
 	text-underline-offset: 0.15em;
@@ -565,6 +571,7 @@
 
 .attachment-preview-body {
 	@apply grid min-h-0 content-start gap-3 overflow-auto;
+	grid-auto-rows: max-content;
 }
 
 .attachment-preview-status,
@@ -586,7 +593,7 @@
 }
 
 .attachment-preview-media {
-	@apply grid min-h-0 place-items-center overflow-hidden rounded-lg border p-2;
+	@apply grid min-h-48 place-items-center overflow-hidden rounded-lg border p-2;
 	border-color: var(--line-soft);
 	background: var(--surface-canvas);
 }
@@ -650,9 +657,25 @@
 	color: var(--text-strong);
 }
 
-/* Current work stays beside the conversation; result/media surfaces remain independent. */
-.queue-pop.task-workspace {
-	@apply w-(--content-form) overflow-auto overscroll-contain p-4;
+.task-workspace {
+	border: var(--stroke-subtle) solid var(--line-glass);
+	box-shadow: var(--shadow-overlay);
+	color: var(--text-strong);
+}
+
+.task-workspace-overlay {
+	background: var(--surface-overlay);
+	backdrop-filter: blur(4px);
+}
+
+.task-workspace > .task-panel-heading {
+	@apply px-6 py-4;
+	border-bottom: var(--stroke-subtle) solid var(--line-soft);
+}
+
+.task-workspace > .task-panel-heading p {
+	@apply m-0 mt-1 text-xs leading-relaxed;
+	color: var(--text-soft);
 }
 
 .task-panel,
@@ -687,9 +710,29 @@
 	@apply m-0 mb-2;
 }
 
-.queue-pop.task-workspace .task-row {
-	@apply rounded-none px-0 py-3 bg-transparent;
-	border-width: 0 0 var(--stroke-subtle);
+.task-row {
+	@apply grid min-w-0 gap-3;
+}
+
+.task-workspace .task-row {
+	@apply w-full max-w-none;
+}
+
+.task-details > .task-inspect {
+	@apply justify-self-start;
+}
+
+.task-row h3 {
+	@apply m-0 text-sm font-semibold leading-relaxed;
+}
+
+.task-card-actions {
+	@apply flex flex-wrap items-center gap-2;
+}
+
+.task-card-actions .task-stop {
+	@apply ml-auto;
+	color: var(--text-danger);
 }
 
 .task-row h3,
@@ -699,6 +742,7 @@
 
 .task-panel-heading button,
 .task-inspect,
+.task-card-actions button,
 .task-pagination button,
 .task-details button {
 	@apply min-h-(--touch-target) rounded-(--radius-control) px-3 py-2 text-xs;
@@ -755,6 +799,107 @@
 	@apply max-w-full overflow-auto whitespace-pre-wrap rounded-(--radius-control) p-3 text-xs leading-relaxed;
 	overflow-wrap: anywhere;
 	background: var(--surface-control);
+}
+
+.task-activity {
+	@apply grid min-w-0 gap-1;
+}
+
+.task-activity-label {
+	@apply m-0 flex flex-wrap items-center gap-2 text-sm;
+	color: var(--text-strong);
+}
+
+.task-activity-label > span:last-child,
+.task-activity-time {
+	@apply text-xs;
+	color: var(--text-soft);
+}
+
+.task-activity-dot {
+	@apply size-1.5 rounded-full;
+	background: var(--focus-ring);
+}
+
+.task-activity-preview {
+	@apply m-0 line-clamp-2 whitespace-pre-wrap text-xs leading-relaxed;
+	color: var(--text-soft);
+	overflow-wrap: anywhere;
+}
+
+.task-event-timeline {
+	@apply m-0 list-none py-3 pl-2;
+}
+
+.task-event {
+	@apply relative min-w-0 pb-6 pl-6;
+	border-inline-start: var(--stroke-subtle) solid var(--line-soft);
+}
+
+.task-event:last-child {
+	@apply pb-0;
+	border-inline-start-color: transparent;
+}
+
+.task-event-marker {
+	@apply absolute -left-1 top-1.5 size-2 rounded-full;
+	background: var(--text-soft);
+	box-shadow: 0 0 0 4px var(--surface-panel);
+}
+
+.task-event[data-event-status="in_progress"] .task-event-marker,
+.task-event[data-event-status="completed"] .task-event-marker {
+	background: var(--focus-ring);
+}
+
+.task-event[data-event-warning="true"] .task-event-marker {
+	background: var(--text-danger);
+}
+
+.task-event-content {
+	@apply grid min-w-0 gap-2;
+}
+
+.task-event-head {
+	@apply flex flex-wrap items-center gap-2 text-sm;
+}
+
+.task-event-head time {
+	@apply ml-auto text-xs;
+	color: var(--text-soft);
+	font-variant-numeric: tabular-nums;
+}
+
+.task-event-state {
+	@apply rounded-full px-2 py-0.5 text-xs;
+	background: var(--surface-inset);
+	color: var(--text-soft);
+}
+
+.task-event[data-event-warning="true"] .task-event-state {
+	background: var(--surface-danger);
+	color: var(--text-danger);
+}
+
+.task-event-command,
+.task-event-output {
+	@apply m-0 max-h-52 min-w-0 overflow-auto;
+}
+
+.task-event-output {
+	@apply rounded-lg px-3 py-2 whitespace-pre-wrap text-xs leading-relaxed;
+	background: var(--surface-inset);
+	color: var(--text-soft);
+	overflow-wrap: anywhere;
+}
+
+.task-event-raw > summary {
+	@apply cursor-pointer text-xs;
+	color: var(--text-soft);
+}
+
+.task-event-raw pre {
+	@apply max-h-80;
 }
 
 .work-actions .permission-option {

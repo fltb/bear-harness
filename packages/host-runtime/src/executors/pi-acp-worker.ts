@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime as PiModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -48,10 +49,21 @@ class PiAcpAgent {
 	private shutdownOperation: Promise<{ drained: true }> | null = null;
 
 	constructor() {
-		this.runtime = ModelRuntime.create({
-			authPath: resolve(authDir, "auth.json"),
+		this.runtime = this.createRuntime();
+	}
+
+	private async createRuntime(): Promise<PiModelRuntime> {
+		const providerId = process.env.BEAR_PI_PROVIDER_ID;
+		const credential = process.env.BEAR_PI_CREDENTIAL;
+		delete process.env.BEAR_PI_CREDENTIAL;
+		const credentials = new InMemoryCredentialStore();
+		if (providerId && credential)
+			await credentials.modify(providerId, async () => JSON.parse(credential));
+		return ModelRuntime.create({
+			credentials,
 			modelsPath: resolve(authDir, "models.json"),
-			refreshOnCreate: false,
+			allowModelNetwork: false,
+			modelsStorePath: resolve(sessionDir, "models-store.json"),
 		});
 	}
 
@@ -239,6 +251,27 @@ class PiAcpAgent {
 		const context = session?.context;
 		if (!session || !context) return;
 		let update: acp.SessionNotification["update"] | undefined;
+		if (
+			event.type === "turn_start" ||
+			event.type === "auto_retry_start" ||
+			event.type === "auto_retry_end"
+		) {
+			update = {
+				sessionUpdate: "agent_message_chunk",
+				content: { type: "text", text: "" },
+				_meta: {
+					bearEvent: publicPayload({
+						type: event.type,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						delayMs: event.delayMs,
+						errorMessage: event.errorMessage,
+						success: event.success,
+						finalError: event.finalError,
+					}),
+				},
+			};
+		}
 		if (event.type === "message_start") session.streamedText = false;
 		if (event.type === "message_update") {
 			const delta = event.assistantMessageEvent as { type?: string; delta?: string } | undefined;
@@ -335,8 +368,6 @@ async function selectConfiguredModel(
 	const providerId = process.env.BEAR_PI_PROVIDER_ID;
 	const modelId = process.env.BEAR_PI_MODEL_ID;
 	if (!providerId || !modelId) return false;
-	const apiKey = process.env.BEAR_PI_API_KEY;
-	if (apiKey) await runtime.setRuntimeApiKey(providerId, apiKey);
 	if (!runtime.hasConfiguredAuth(providerId)) return false;
 	const model = runtime.getModels(providerId).find((candidate) => candidate.id === modelId);
 	if (!model) return false;

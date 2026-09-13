@@ -296,6 +296,7 @@ export function createShellWorkflowStore(input: {
 		await navigateToRun(run);
 		if (navigation !== artifactNavigation) return;
 		artifactSelection().setSelected({ runId: run.id, artifactId, run });
+		setQueueOpen(false);
 	};
 	const requestRunAgain = async (run: RunInfo, instruction: string) => {
 		await navigateToRun(run);

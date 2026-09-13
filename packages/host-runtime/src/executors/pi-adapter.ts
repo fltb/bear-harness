@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Credential } from "@earendil-works/pi-ai";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
@@ -115,7 +116,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 					? piModelEnvironment(
 							request.task.modelRoute.providerId,
 							request.task.modelRoute.modelId,
-							request.task.modelRoute.apiKey,
+							request.task.modelRoute.credential,
 						)
 					: {}),
 				...(this.bundledGit
@@ -135,11 +136,11 @@ export class PiAcpAdapter extends AcpExecutorController {
 export function piModelEnvironment(
 	providerId: string,
 	modelId: string,
-	apiKey?: string,
+	credential?: Credential,
 ): NodeJS.ProcessEnv {
 	return {
 		BEAR_PI_PROVIDER_ID: providerId,
 		BEAR_PI_MODEL_ID: modelId,
-		...(apiKey ? { BEAR_PI_API_KEY: apiKey } : {}),
+		...(credential ? { BEAR_PI_CREDENTIAL: JSON.stringify(credential) } : {}),
 	};
 }

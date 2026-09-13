@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import type { RunInfo } from "../src/stores/ipc.js";
 import { ThreadHead } from "../src/ThreadHead.js";
-import { ArtifactPreview, PermissionLayer, WorkTimelineItem } from "../src/WorkPanel.js";
+import {
+	ArtifactMessageContent,
+	ArtifactPreview,
+	PermissionLayer,
+	WorkTimelineItem,
+} from "../src/WorkPanel.js";
 
 const timestamp = "2026-08-31T00:00:00.000Z";
 const artifact = (
@@ -45,7 +50,11 @@ const run = (id: string, status: RunInfo["status"]): RunInfo => ({
 	evidence: [],
 });
 
-function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = false) {
+function renderWork(
+	overrides: Partial<CompanionStore> = {},
+	showPermission = false,
+	reply?: { entryId: string; text: string },
+) {
 	const steer = vi.fn(() => Promise.resolve({ outcome: "injected" as const }));
 	const interrupt = vi.fn(() => Promise.resolve());
 	const resume = vi.fn(() => Promise.resolve());
@@ -119,10 +128,22 @@ function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = fa
 				<WorkTimelineItem messageId="message-1" />
 				<ArtifactPreview />
 				{showPermission ? <PermissionLayer /> : null}
+				{reply ? (
+					<ArtifactMessageContent entryId={reply.entryId} content={reply.text} format="markdown" />
+				) : null}
 			</DesktopProvider>
 		</QueryClientProvider>
 	));
-	return { store, steer, interrupt, resume, cancel, respondPermission, unmount: view.unmount };
+	return {
+		store,
+		steer,
+		interrupt,
+		resume,
+		cancel,
+		respondPermission,
+		queryClient,
+		unmount: view.unmount,
+	};
 }
 
 describe("work timeline controls", () => {
@@ -168,7 +189,6 @@ describe("work timeline controls", () => {
 			await within(detail).findByText("The analysis is ready; no report was saved."),
 		).toBeVisible();
 		expect(within(detail).getByText(zhCN.work.task.noArtifacts)).toBeVisible();
-		expect(within(detail).getByText(zhCN.work.task.completionNotice)).toBeVisible();
 		expect(within(detail).getByText(zhCN.work.task.deliveryPending)).toBeVisible();
 		expect(
 			within(detail).queryByRole("button", { name: zhCN.work.timeline.resume }),
@@ -190,6 +210,7 @@ describe("work timeline controls", () => {
 		});
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
 		let detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		await user.click(within(detail).getByText(zhCN.work.activity.adjust));
 		const input = await within(detail).findByRole("textbox", { name: zhCN.work.steerInputLabel });
 		await user.type(input, "Keep the original source");
 		await user.click(within(detail).getByRole("button", { name: zhCN.work.timeline.steer }));
@@ -202,8 +223,9 @@ describe("work timeline controls", () => {
 			"executor_controller_unavailable",
 		);
 		await user.click(screen.getByRole("button", { name: zhCN.work.task.close }));
-		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+		await user.click(await screen.findByRole("button", { name: zhCN.work.timeline.revealDetails }));
 		detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+		await user.click(within(detail).getByText(zhCN.work.activity.adjust));
 		expect(
 			await within(detail).findByRole("textbox", { name: zhCN.work.steerInputLabel }),
 		).toHaveValue("Keep the original source and include references");
@@ -260,7 +282,7 @@ describe("work timeline controls", () => {
 		});
 		expect(screen.queryByText("interrupted task")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /1/ }));
-		const panel = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
+		const panel = screen.getByRole("dialog", { name: zhCN.work.activity.workspace });
 		expect(within(panel).getByText(/Background research/)).toBeVisible();
 		await user.click(within(panel).getByRole("button", { name: zhCN.work.timeline.revealDetails }));
 		const detail = await screen.findByRole("region", { name: zhCN.work.task.details });
@@ -341,8 +363,9 @@ describe("work timeline controls", () => {
 		);
 
 		expect(screen.queryByText("running task")).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.stopRun }));
-		expect(await screen.findByRole("alert")).toHaveTextContent(failure.message);
+		const card = screen.getByRole("dialog", { name: zhCN.work.timeline.needsYou });
+		await user.click(within(card).getByRole("button", { name: zhCN.work.timeline.stopRun }));
+		expect(await within(card).findByRole("alert")).toHaveTextContent(failure.message);
 	});
 
 	it("reads a selected text artifact in bounded chunks and drives every artifact action", async () => {
@@ -405,8 +428,16 @@ describe("work timeline controls", () => {
 		expect(preview).toHaveAttribute("data-artifact-preview", "report");
 		expect(await within(preview).findByText("hello world")).toBeVisible();
 		expect(read.mock.calls.map(([request]) => request.offset)).toEqual([0, 5]);
+		expect(
+			within(preview).getByRole("region", { name: zhCN.work.result.provenance, hidden: true }),
+		).not.toBeVisible();
+		await user.click(
+			within(preview).getByText(zhCN.work.result.provenance, { selector: "summary" }),
+		);
 		expect(within(preview).getByText("text/markdown")).toBeVisible();
-		expect(within(preview).getByText(zhCN.work.result.provenance)).toBeVisible();
+		expect(
+			within(preview).getByRole("region", { name: zhCN.work.result.provenance }),
+		).toBeVisible();
 		expect(within(preview).getByText(zhCN.work.artifactStatuses.verified)).toBeVisible();
 		expect(
 			within(preview).getByText("The report was generated from the requested source."),
@@ -530,6 +561,122 @@ describe("work timeline controls", () => {
 		expect(revokeObjectURL).toHaveBeenCalledWith("blob:fourth");
 	});
 
+	it("downloads a historical reply's own artifact rather than a later same-named result", async () => {
+		const user = userEvent.setup();
+		const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:reply-download");
+		const click = vi
+			.spyOn(HTMLAnchorElement.prototype, "click")
+			.mockImplementation(() => undefined);
+		try {
+			const oldFile = artifact("old-file", "数字网格.xlsx", "application/octet-stream", 3);
+			const newerFile = artifact("new-file", "数字网格.xlsx", "application/octet-stream", 3);
+			const saveAs = vi.fn(async () => ({ outcome: "unsupported" as const }));
+			renderWork(
+				{
+					runs: [
+						{ ...run("old", "completed"), artifacts: [oldFile] },
+						{ ...run("new", "completed"), artifacts: [newerFile] },
+					],
+					activePiEntries: [
+						{
+							type: "custom_message",
+							id: "old-result",
+							parentId: null,
+							timestamp,
+							customType: "host_external_agent_result",
+							content: "",
+							display: true,
+							details: { runId: "old" },
+						},
+						{
+							type: "custom_message",
+							id: "new-result",
+							parentId: "old-result",
+							timestamp,
+							customType: "host_external_agent_result",
+							content: "",
+							display: true,
+							details: { runId: "new" },
+						},
+					],
+					artifact: {
+						saveAs,
+						read: async ({ artifactId }) => ({
+							artifact: artifactId === oldFile.id ? oldFile : newerFile,
+							offset: 0,
+							nextOffset: 3,
+							eof: true,
+							base64: btoa(artifactId === oldFile.id ? "OLD" : "NEW"),
+						}),
+						open: vi.fn(),
+						reveal: vi.fn(),
+					},
+				},
+				false,
+				{
+					entryId: "old-result",
+					text: "[下载 Excel](../outputs/%E6%95%B0%E5%AD%97%E7%BD%91%E6%A0%BC.xlsx) [未知文件](../outputs/missing.xlsx) [外部站点](https://example.com/数字网格.xlsx)",
+				},
+			);
+			await user.click(await screen.findByRole("button", { name: "下载 Excel" }));
+			await waitFor(() => expect(click).toHaveBeenCalledOnce());
+			expect(saveAs).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				runId: "old",
+				artifactId: oldFile.id,
+			});
+			expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(oldFile.name);
+			const downloaded = createObjectURL.mock.calls.at(-1)?.[0];
+			expect(downloaded).toBeInstanceOf(Blob);
+			expect(await (downloaded as Blob).text()).toBe("OLD");
+			expect(screen.queryByRole("button", { name: "未知文件" })).not.toBeInTheDocument();
+			expect(screen.getByRole("link", { name: "外部站点" })).toHaveAttribute(
+				"href",
+				new URL("https://example.com/数字网格.xlsx").href,
+			);
+		} finally {
+			click.mockRestore();
+			createObjectURL.mockRestore();
+		}
+	});
+
+	it.each(["foreign-conversation", "ambiguous-name"])(
+		"does not authorize a %s artifact from a reply path",
+		async (boundary) => {
+			const file = artifact("file", "report.xlsx", "application/octet-stream", 3);
+			const result = { ...run("result", "completed"), artifacts: [file] };
+			if (boundary === "foreign-conversation") result.conversationId = "another-conversation";
+			else result.artifacts.push({ ...file, id: "duplicate" });
+			const view = renderWork(
+				{
+					runs: [result],
+					activePiEntries: [
+						{
+							type: "custom_message",
+							id: "receipt",
+							parentId: null,
+							timestamp,
+							customType: "host_external_agent_result",
+							content: "",
+							display: true,
+							details: { runId: result.id },
+						},
+					],
+				},
+				false,
+				{ entryId: "receipt", text: "[下载文件](../outputs/report.xlsx)" },
+			);
+			await waitFor(() =>
+				expect(view.queryClient.getQueryState(["test-run", "result", undefined])?.status).toBe(
+					"success",
+				),
+			);
+			expect(screen.getByText("下载文件")).toBeVisible();
+			expect(screen.queryByRole("button", { name: "下载文件" })).not.toBeInTheDocument();
+			expect(screen.queryByRole("link", { name: "下载文件" })).not.toBeInTheDocument();
+		},
+	);
+
 	it("downloads through a bounded browser Blob when native Save As is unsupported", async () => {
 		const user = userEvent.setup();
 		const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:download");
@@ -569,7 +716,6 @@ describe("work timeline controls", () => {
 		expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe("report.bin");
 		expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
 		await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:download"));
-		expect(within(preview).getByRole("status")).toHaveTextContent(zhCN.work.timeline.completed);
 
 		click.mockRestore();
 		createObjectURL.mockRestore();

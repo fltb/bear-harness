@@ -19,6 +19,8 @@ export type { IMemoryStore, IEmbeddingService, StoreLogger };
 
 const TAG = "[memory-tdai][factory]";
 
+export const LOCAL_MEMORY_DATABASE_FILENAME = "vectors.db";
+
 export interface StoreBundle {
 	store: IMemoryStore;
 	embedding: IEmbeddingService;
@@ -88,7 +90,7 @@ export function createStoreBundle(
 
 			// dimensions from config (0 when provider="none" → vec0 deferred)
 			const dims = config.embedding.dimensions;
-			const dbPath = path.join(options.dataDir, "vectors.db");
+			const dbPath = path.join(options.dataDir, LOCAL_MEMORY_DATABASE_FILENAME);
 			const store = new VectorStore(dbPath, dims, logger);
 
 			logger?.debug?.(

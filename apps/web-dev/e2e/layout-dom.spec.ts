@@ -159,12 +159,15 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 	const workButton = page.getByRole("button", {
 		name: `${zhCN.threadHead.runningWork} 0`,
 		exact: true,
+		includeHidden: true,
 	});
 	await workButton.click();
-	const taskWorkspace = page.getByRole("region", { name: zhCN.threadHead.runningWork });
+	const taskWorkspace = page.getByRole("dialog", { name: zhCN.work.activity.workspace });
 	await expect(taskWorkspace).toBeVisible();
 	await expect(workButton).toHaveAttribute("aria-expanded", "true");
-	await expect(taskWorkspace).toBeFocused();
+	await expect
+		.poll(() => taskWorkspace.evaluate((element) => element.contains(document.activeElement)))
+		.toBe(true);
 	await assertSurface(page, viewport, taskWorkspace);
 	const historyButton = taskWorkspace.getByRole("button", { name: zhCN.work.task.history });
 	await historyButton.click();
@@ -218,6 +221,21 @@ async function visitConversationNavigation(page: Page, viewport: Viewport): Prom
 		await expect(
 			page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }),
 		).toBeFocused();
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		const closedNavigation = page.getByRole("navigation", {
+			name: zhCN.sidebar.conversations,
+			includeHidden: true,
+		});
+		await expect
+			.poll(() =>
+				closedNavigation.evaluate((element) => {
+					const surface = element.closest("aside");
+					if (!surface) throw new Error("closed mobile navigation is unavailable");
+					return surface.getBoundingClientRect().right;
+				}),
+			)
+			.toBeLessThanOrEqual(0);
+		await page.emulateMedia({ reducedMotion: "no-preference" });
 		await revealSidebar(page, viewport);
 	}
 	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
@@ -411,10 +429,12 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	await expect(mediaTrigger).toBeFocused();
 
 	await sendMessage(page, "E2E_DELEGATE_ARTIFACT");
-	const artifact = page.getByRole("button", {
-		name: `${zhCN.work.timeline.viewArtifacts}: e2e-report.txt`,
-		exact: true,
-	});
+	const artifact = page
+		.getByRole("article", { name: zhCN.messages.toolActivity.externalResult, exact: true })
+		.getByRole("button", {
+			name: `${zhCN.work.timeline.viewArtifacts}: e2e-report.txt`,
+			exact: true,
+		});
 	await expect(artifact).toBeVisible({ timeout: 30_000 });
 	const artifactPreview = page.getByRole("dialog", { name: "e2e-report.txt" });
 	await expect(artifactPreview).toHaveCount(0);
@@ -435,15 +455,23 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	).toHaveAttribute("aria-current", "true");
 	await expect(
 		artifactPreview.getByRole("region", { name: zhCN.work.result.provenance }),
+	).not.toBeVisible();
+	await artifactPreview
+		.getByText(zhCN.work.result.provenance, { exact: true })
+		.filter({ visible: true })
+		.click();
+	await expect(
+		artifactPreview.getByRole("region", { name: zhCN.work.result.provenance }),
 	).toBeVisible();
 	await expect(artifactPreview.getByRole("button", { name: zhCN.work.download })).toBeEnabled();
 	await assertSurface(page, viewport, artifactPreview);
 	const resultBox = await artifactPreview.boundingBox();
 	const mainBox = await page.getByRole("main").boundingBox();
 	if (!resultBox || !mainBox) throw new Error("Conversation and result require visible geometry");
-	const presence = page.getByRole("img", { name: "极昼值守中", exact: true });
+	// test-quality-allow locator: the standing-character stage is the column that yields to results
+	const presence = page.locator(".presence-stage");
 	if (viewport.mode === "fullscreen") {
-		await expect(presence).toHaveCount(0);
+		await expect(presence).toBeHidden();
 		expect(resultBox.x).toBeGreaterThanOrEqual(mainBox.x + mainBox.width - 1);
 		expect(Math.abs(resultBox.width - mainBox.width)).toBeLessThanOrEqual(1);
 		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });

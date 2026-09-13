@@ -177,7 +177,7 @@ type NativeReply =
 	| { tool: "write" | "bash"; args: Record<string, unknown> }
 	| { text: string };
 
-async function nativeWorkerFixture(replies: NativeReply[]) {
+async function nativeWorkerFixture(replies: NativeReply[], providerId = "native-test") {
 	const cwd = createTemp("workspace");
 	const authDir = createTemp("home");
 	let requestCount = 0;
@@ -236,7 +236,7 @@ async function nativeWorkerFixture(replies: NativeReply[]) {
 		join(authDir, "models.json"),
 		JSON.stringify({
 			providers: {
-				"native-test": {
+				[providerId]: {
 					baseUrl: `http://127.0.0.1:${address.port}/v1`,
 					api: "openai-completions",
 					models: [
@@ -263,9 +263,9 @@ async function nativeWorkerFixture(replies: NativeReply[]) {
 			HOME: createTemp("home"),
 			BEAR_PI_AUTH_DIR: authDir,
 			BEAR_PI_SESSION_DIR: createTemp("home"),
-			BEAR_PI_PROVIDER_ID: "native-test",
+			BEAR_PI_PROVIDER_ID: providerId,
 			BEAR_PI_MODEL_ID: "native-test-model",
-			BEAR_PI_API_KEY: "local-test-only",
+			BEAR_PI_CREDENTIAL: JSON.stringify({ type: "api_key", key: "local-test-only" }),
 			BEAR_PI_SHELL_PATH: realpathSync.native("/bin/bash"),
 		},
 		readOnlyPaths: [realpathSync.native(fileURLToPath(new URL("../../..", import.meta.url)))],
@@ -478,7 +478,7 @@ describe("ACP external-agent transport", () => {
 		}>();
 		const client = new AcpRunClient(
 			fixtureSpec(cwd, false, {
-				BEAR_PI_API_KEY: secret,
+				BEAR_PI_CREDENTIAL: JSON.stringify({ type: "api_key", key: secret }),
 				FIXTURE_STDERR_EXIT_CODE: "23",
 			}),
 			{
@@ -504,7 +504,7 @@ describe("ACP external-agent transport", () => {
 		const events: Array<{ type: string; [key: string]: unknown }> = [];
 		const failed = Promise.withResolvers<void>();
 		const controller = new FixtureController(false, {
-			BEAR_PI_API_KEY: secret,
+			BEAR_PI_CREDENTIAL: JSON.stringify({ type: "api_key", key: secret }),
 			FIXTURE_STDERR_EXIT_CODE: "23",
 		});
 		await controller.launch({
@@ -644,37 +644,58 @@ describe("ACP external-agent transport", () => {
 });
 
 describe("native Pi ACP worker", () => {
-	it("completes a native retry and write while retaining the transient error as evidence", async () => {
-		const fixture = await nativeWorkerFixture([
-			{ error: "overloaded" },
-			{ tool: "write", args: { path: "verified.txt", content: "native retry completed\n" } },
-			{ text: "The native write completed." },
-		]);
-		const { controller, request, events, terminal } = nativeController(fixture.spec);
-		try {
-			await bounded(controller.launch(request));
-			await bounded(terminal.promise);
-			expect(readFileSync(join(fixture.cwd, "verified.txt"), "utf8")).toBe(
-				"native retry completed\n",
+	it.each(["native-test", "openai"])(
+		"completes a native retry and write with read-only %s settings",
+		async (providerId) => {
+			const fixture = await nativeWorkerFixture(
+				[
+					{ error: "overloaded" },
+					{ tool: "write", args: { path: "verified.txt", content: "native retry completed\n" } },
+					{ text: "The native write completed." },
+				],
+				providerId,
 			);
-			expect(events).toContainEqual(
-				expect.objectContaining({
-					type: "evidence",
-					kind: "acp.error",
-					data: { message: expect.stringContaining("overloaded") },
-				}),
-			);
-			expect(
-				events.filter((event) => ["completed", "failed", "cancelled"].includes(event.type)),
-			).toEqual([expect.objectContaining({ type: "completed" })]);
-		} finally {
+			const { controller, request, events, terminal } = nativeController(fixture.spec);
 			try {
-				await controller.close();
+				await bounded(controller.launch(request));
+				await bounded(terminal.promise);
+				expect(readFileSync(join(fixture.cwd, "verified.txt"), "utf8")).toBe(
+					"native retry completed\n",
+				);
+				expect(events).toContainEqual(
+					expect.objectContaining({
+						type: "evidence",
+						kind: "acp.error",
+						data: { message: expect.stringContaining("overloaded") },
+					}),
+				);
+				expect(events).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({
+							type: "evidence",
+							kind: "pi.auto_retry_start",
+							data: expect.objectContaining({ attempt: 1, maxAttempts: expect.any(Number) }),
+						}),
+						expect.objectContaining({
+							type: "evidence",
+							kind: "pi.auto_retry_end",
+							data: expect.objectContaining({ success: true, attempt: 1 }),
+						}),
+					]),
+				);
+				expect(
+					events.filter((event) => ["completed", "failed", "cancelled"].includes(event.type)),
+				).toEqual([expect.objectContaining({ type: "completed" })]);
 			} finally {
-				await fixture.close();
+				try {
+					await controller.close();
+				} finally {
+					await fixture.close();
+				}
 			}
-		}
-	}, 30_000);
+		},
+		30_000,
+	);
 
 	it("fails a genuinely unsuccessful final native response", async () => {
 		const fixture = await nativeWorkerFixture([{ error: "Invalid model input" }]);

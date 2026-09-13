@@ -1,4 +1,8 @@
-import type { LocalEmbeddingAcquisitionState } from "@bear-harness/protocol";
+import type {
+	LocalEmbeddingAcquisitionState,
+	MemoryInspectRequest,
+	MemoryInspectResponse,
+} from "@bear-harness/protocol";
 import type { CreateQueryResult } from "@tanstack/solid-query";
 import type { Accessor } from "solid-js";
 import type {
@@ -195,6 +199,7 @@ export interface ExternalAgentApi {
 }
 
 export interface CharacterApi {
+	inspectMemory(request: MemoryInspectRequest): Promise<MemoryInspectResponse>;
 	observeTrust(
 		characterId: Accessor<string>,
 	): QueryView<{ trust: Awaited<ReturnType<CharacterApi["pluginTrust"]>> }>;

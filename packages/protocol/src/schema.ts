@@ -827,6 +827,32 @@ export const MessageAbortRequest = z.strictObject({
 // Memory
 // ---------------------------------------------------------------------------
 
+export const MemoryInspectRequest = z.strictObject({
+	characterId: z.string().min(1).max(64),
+	kind: z.enum(["records", "profiles", "explicit"]).default("records"),
+	offset: z.number().int().safe().min(0).default(0),
+	limit: z.number().int().min(1).max(25).default(20),
+});
+export const MemoryInspectResponse = z.strictObject({
+	characterId: z.string().min(1).max(64),
+	relationshipMemoryEnabled: z.boolean(),
+	explicit: z.string().max(4000).optional(),
+	items: z
+		.array(
+			z.strictObject({
+				id: z.string().min(1).max(256),
+				type: z.string().max(256),
+				content: z.string().max(262_144),
+				sceneName: z.string().max(1024),
+				createdAt: z.string().max(64),
+				updatedAt: z.string().max(64),
+				sessionId: z.string().max(256).optional(),
+			}),
+		)
+		.max(25),
+	nextOffset: z.number().int().safe().min(0).optional(),
+});
+
 export const LocalEmbeddingCandidate = z.strictObject({
 	id: z.string().min(1).max(200),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
@@ -1427,6 +1453,8 @@ export const ArtifactStatus = z.enum([
 ]);
 export const RunEvidenceSummary = z.strictObject({
 	kind: z.string().min(1).max(128),
+	title: z.string().min(1).max(128).optional(),
+	status: z.enum(["pending", "in_progress", "completed", "failed"]).optional(),
 	summary: z.string().min(1).max(512).optional(),
 	createdAt: WireTimestamp,
 });
@@ -2166,6 +2194,7 @@ export const RPC = {
 		abort: endpoint("message.abort", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
+		inspect: endpoint("memory.inspect", MemoryInspectRequest, MemoryInspectResponse, "query"),
 		localEmbeddingInventory: endpoint(
 			"memory.localEmbeddingInventory",
 			z.strictObject({}),

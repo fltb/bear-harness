@@ -261,6 +261,21 @@ export abstract class AcpExecutorController implements ExecutorController {
 		const update = notification.update;
 		switch (update.sessionUpdate) {
 			case "agent_message_chunk":
+				if (
+					update._meta?.bearEvent &&
+					typeof update._meta.bearEvent === "object" &&
+					"type" in update._meta.bearEvent &&
+					["turn_start", "auto_retry_start", "auto_retry_end"].includes(
+						String(update._meta.bearEvent.type),
+					)
+				) {
+					active.request.emit({
+						type: "evidence",
+						kind: `pi.${update._meta.bearEvent.type}`,
+						data: boundedEvidence(update._meta.bearEvent),
+					});
+					return;
+				}
 				if (typeof update._meta?.bearError === "string") {
 					active.request.emit({
 						type: "evidence",
@@ -294,7 +309,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 				active.request.emit({
 					type: "evidence",
 					kind: "acp.tool_call_update",
-					data: compactToolUpdate(update),
+					data: compactToolUpdate({
+						...update,
+						title: update.title ?? active.toolCallTitles.get(update.toolCallId),
+					}),
 				});
 				return;
 			case "usage_update":

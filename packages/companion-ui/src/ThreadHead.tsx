@@ -1,11 +1,11 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { faSliders } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import { ConversationStatePanel } from "./ConversationStatePanel.js";
 import { Icon } from "./Icon.js";
 import { RunTaskPanel } from "./RunTaskPanel.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
-import { Button } from "./ui/primitives.js";
+import { Button, Dialog } from "./ui/primitives.js";
 
 /**
  * Thread head: current scene and external-task queue. Pi conversation execution
@@ -21,10 +21,8 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [stateOpen, setStateOpen] = createSignal(false);
 	const activeCharacterState = createMemo(() => workflow.host.companionState?.state.character);
-	let wrapper: HTMLDivElement | undefined;
 	let queueTrigger: HTMLButtonElement | undefined;
 	let conversationStateTrigger: HTMLButtonElement | undefined;
-	let panel: HTMLElement | undefined;
 	const closeQueue = () => {
 		workflow.closeQueue();
 		if (queueTrigger?.isConnected) queueTrigger.focus();
@@ -37,24 +35,6 @@ export function ThreadHead(props: { sceneLabel: string }) {
 			});
 		}
 	};
-
-	onMount(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (!queueOpen() || event.key !== "Escape") return;
-			event.preventDefault();
-			closeQueue();
-		};
-		const onPointerDown = (event: PointerEvent) => {
-			if (!queueOpen() || wrapper?.contains(event.target as Node)) return;
-			workflow.closeQueue();
-		};
-		document.addEventListener("keydown", onKey);
-		document.addEventListener("pointerdown", onPointerDown);
-		onCleanup(() => {
-			document.removeEventListener("keydown", onKey);
-			document.removeEventListener("pointerdown", onPointerDown);
-		});
-	});
 
 	return (
 		<header class="thread-head">
@@ -74,7 +54,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 					<span>{t("threadHead.conversationState")}</span>
 				</Button>
 			</Show>
-			<div class="work-pill-wrap" ref={wrapper}>
+			<div class="work-pill-wrap">
 				<Button
 					ref={(element) => {
 						queueTrigger = element;
@@ -91,28 +71,30 @@ export function ThreadHead(props: { sceneLabel: string }) {
 					{t("threadHead.runningWork")}
 					<b>{activeRuns().length}</b>
 				</Button>
-				<Show when={queueOpen()}>
-					<section
-						ref={(element) => {
-							panel = element;
-							onMount(() => {
-								if (!workflow.selectedTaskId() && element.isConnected) element.focus();
-							});
-						}}
-						id="current-work-panel"
-						class="queue-pop task-workspace"
-						tabIndex={-1}
-						aria-label={t("threadHead.runningWork")}
-					>
-						<div class="task-panel-heading">
-							<h2>{t("threadHead.runningWork")}</h2>
-							<Button type="button" onClick={closeQueue}>
-								{t("work.task.close")}
-							</Button>
-						</div>
-						<RunTaskPanel onBack={() => panel?.isConnected && panel.focus()} />
-					</section>
-				</Show>
+				<Dialog
+					open={queueOpen()}
+					onOpenChange={(open) => {
+						if (!open) closeQueue();
+					}}
+				>
+					<Dialog.Portal>
+						<Dialog.Overlay class="task-workspace-overlay" />
+						<Dialog.Content id="current-work-panel" class="task-workspace">
+							<header class="task-panel-heading">
+								<div>
+									<Dialog.Title>{t("work.activity.workspace")}</Dialog.Title>
+									<Dialog.Description>{t("work.activity.description")}</Dialog.Description>
+								</div>
+								<Button type="button" onClick={closeQueue}>
+									{t("work.task.close")}
+								</Button>
+							</header>
+							<div class="task-workspace-scroll">
+								<RunTaskPanel />
+							</div>
+						</Dialog.Content>
+					</Dialog.Portal>
+				</Dialog>
 			</div>
 			<ConversationStatePanel open={stateOpen()} onOpenChange={setConversationStateOpen} />
 		</header>

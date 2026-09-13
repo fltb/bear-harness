@@ -39,15 +39,19 @@
 	grid-area: header;
 }
 
-/* The queue cannot escape its sticky header's stacking context. Keep the
- * open task surface above the composer, below result and modal layers. */
-.thread-head:has(.task-workspace) {
-	@apply z-40;
+.task-workspace-overlay {
+	@apply fixed inset-0;
+	z-index: var(--layer-top-overlay);
 }
 
-.queue-pop.task-workspace {
-	max-inline-size: calc(100vw - var(--space-8));
-	max-block-size: calc(100dvh - var(--space-12) * 2);
+.task-workspace {
+	@apply fixed inset-x-4 inset-y-12 m-auto grid min-h-0 max-w-5xl overflow-hidden rounded-2xl;
+	z-index: var(--layer-top-overlay);
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+.task-workspace-scroll {
+	@apply min-h-0 overflow-y-auto overscroll-contain p-6;
 }
 
 .conversation-state-overlay {
@@ -173,6 +177,7 @@
 	@apply fixed inset-y-0 left-0 z-100 w-80;
 	max-inline-size: 86cqw;
 	--motion-surface-offset-x: -100%;
+	transform: translateX(-100%);
 	pointer-events: none;
 }
 
@@ -309,11 +314,14 @@
 	@apply min-h-11;
 }
 
-.app[data-layout="mobile"] .queue-pop.task-workspace {
-	@apply fixed inset-x-3 bottom-3 top-12 m-0 w-auto;
-	max-inline-size: none;
-	max-block-size: none;
-	z-index: var(--layer-top-overlay);
+@media (width <= 767px) {
+	.task-workspace {
+		@apply inset-0 m-0 h-dvh w-full max-w-none rounded-none;
+	}
+
+	.task-workspace-scroll {
+		@apply p-4;
+	}
 }
 
 .app[data-layout="mobile"] .search-trigger kbd {

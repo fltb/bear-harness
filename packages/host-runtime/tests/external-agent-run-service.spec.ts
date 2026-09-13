@@ -18,7 +18,7 @@ import { ArtifactStore } from "../src/artifacts/index.js";
 import type { ExecutorLaunchRequest, ExecutorRecovery } from "../src/executors/router.js";
 import { ExternalAgentRunService, type RunStatus } from "../src/external-agents/run-service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
-import { conversations, runs } from "../src/storage/schema.js";
+import { conversations, evidence, runs } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 
@@ -858,6 +858,73 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 			).rejects.toMatchObject({ reason: "run_controller_unknown" });
 			expect(fixture.service.getDetail("unknown").run).toMatchObject({ status: "running" });
 			expect(fixture.cancel).not.toHaveBeenCalled();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("orders same-time evidence by insertion and keeps cursor pages within their Run", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "ordered", "completed");
+			seedRun(fixture.database, "other", "completed");
+			for (const [id, runId] of [
+				["z", "ordered"],
+				["a", "ordered"],
+				["foreign", "other"],
+				["m", "ordered"],
+			]) {
+				fixture.database.orm
+					.insert(evidence)
+					.values({ id, runId, kind: "step", data: {}, createdAt: "2026-09-13 00:00:00" })
+					.run();
+			}
+			const first = fixture.service.getDetail("ordered", { limit: 2 });
+			expect(first.evidence.map((item) => item.id)).toEqual(["m", "a"]);
+			const second = fixture.service.getDetail("ordered", { limit: 2, cursor: first.nextCursor });
+			expect(second.evidence.map((item) => item.id)).toEqual(["z"]);
+			expect(second.nextCursor).toBeUndefined();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("coalesces consecutive message fragments without losing whitespace or overflow text", async () => {
+		const fixture = setup({
+			launch: async ({ emit }) => {
+				emit({ type: "started" });
+				for (const text of ["Hello", " ", "world\\n"])
+					emit({ type: "evidence", kind: "acp.message", data: { text } });
+				emit({
+					type: "evidence",
+					kind: "acp.tool_call",
+					data: { toolCallId: "write", title: "write", status: "completed" },
+				});
+				for (const text of ["x".repeat(4_090), " final text"])
+					emit({ type: "evidence", kind: "acp.message", data: { text } });
+				emit({ type: "completed" });
+			},
+		});
+		try {
+			const receipt = await fixture.service.delegate(params);
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(receipt.runId).run.status).toBe("completed"),
+			);
+			const records = fixture.service.getDetail(receipt.runId).evidence.toReversed();
+			expect(records.map((item) => item.kind)).toEqual([
+				"acp.message",
+				"acp.tool_call",
+				"acp.message",
+				"acp.message",
+			]);
+			expect(records.map((item) => item.data)).toEqual([
+				{ text: "Hello world\\n" },
+				{ toolCallId: "write", title: "write", status: "completed" },
+				{ text: "x".repeat(4_090) },
+				{ text: " final text" },
+			]);
 		} finally {
 			await fixture.service.close();
 			fixture.database.close();

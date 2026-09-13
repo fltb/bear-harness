@@ -16,7 +16,8 @@ const contractsUrl = pathToFileURL(
 
 const EXPECTED_POLICY = {
 	localOnly: true,
-	contentMode: "metadata-unless-trace",
+	// Global diagnostics stay metadata-only; character trace payloads have a separate policy.
+	contentMode: "metadata",
 	maxAgeDays: 30,
 	maxBytes: 209715200,
 	segmentBytes: 5242880,
@@ -28,6 +29,8 @@ const EXPECTED_POLICY = {
 };
 
 const EXPECTED_NAMES = [
+	"embedding.failure",
+	"embedding.measurement",
 	"app.session",
 	"diagnostics.prune",
 	"window.session",
@@ -43,7 +46,6 @@ const EXPECTED_NAMES = [
 	"tool.execute",
 	"host.rule.evaluate",
 	"character.state.transition",
-	"trace.content",
 	"webdev.rpc_dispatch_failure",
 	"app.started",
 	"app.previous_exit_unclean",

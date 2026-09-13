@@ -140,3 +140,4 @@ coverage/
 
 # Local UI/UX audits and screenshots are workstation evidence, not release assets.
 /artifacts/
+/.tmp/

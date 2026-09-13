@@ -317,9 +317,35 @@
 	background: var(--surface-success);
 }
 
-.memory-actions,
 .candidate-actions {
 	@apply mt-2 flex flex-wrap justify-end gap-1.5;
+}
+
+.memory-actions {
+	@apply flex flex-wrap items-center justify-start gap-2;
+}
+
+.memory-actions button[aria-pressed="true"] {
+	border-color: var(--sys-accent);
+	background: var(--surface-success);
+}
+
+.memory-items {
+	@apply m-0 grid list-none gap-3 p-0;
+}
+
+.memory-entry {
+	@apply grid min-w-0 gap-3;
+}
+
+.memory-entry header,
+.memory-entry footer {
+	@apply flex flex-wrap items-center justify-between gap-2 text-xs;
+	color: var(--text-soft);
+}
+
+.memory-entry code {
+	overflow-wrap: anywhere;
 }
 
 .mini-btn {

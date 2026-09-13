@@ -184,8 +184,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .empty-note,
-.conversations-empty,
-.queue-pop .empty {
+.conversations-empty {
 	@apply rounded-xl border border-dashed px-4 py-5 text-center text-sm leading-relaxed;
 	--semantic-fg-role: muted;
 	border-color: var(--line-soft);
@@ -966,7 +965,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .attachment-preview-column,
 .conversation-state-panel,
-.queue-pop.task-workspace,
+.task-workspace,
 .media-viewer,
 .confirmation-dialog,
 .plugin-trust-dialog,

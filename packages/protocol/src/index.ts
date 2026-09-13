@@ -210,6 +210,9 @@ export type MessageAbortRequest = z.infer<typeof schema.MessageAbortRequest>;
 // Memory
 // ---------------------------------------------------------------------------
 
+export type MemoryInspectRequest = z.infer<typeof schema.MemoryInspectRequest>;
+export type MemoryInspectResponse = z.infer<typeof schema.MemoryInspectResponse>;
+
 export type LocalEmbeddingTarget = z.infer<typeof schema.LocalEmbeddingTarget>;
 export type LocalEmbeddingInventoryItem = z.infer<typeof schema.LocalEmbeddingInventoryItem>;
 export type LocalEmbeddingInventoryRequest = RequestOf<

@@ -391,6 +391,7 @@ describe("run-owned Artifact RPC", () => {
 			models: {} as never,
 			appSettings: {} as never,
 			memoryEmbedding: {} as never,
+			inspectMemory: vi.fn(),
 			memoryScope: { installationId: "install", userId: "user" },
 			externalAgentRuns: new ExternalAgentRunService(
 				database.orm,

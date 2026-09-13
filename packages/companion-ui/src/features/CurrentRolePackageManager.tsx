@@ -1,5 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createMemo, createSignal, For, Index, Show } from "solid-js";
+import { createMemo, createSignal, For, Index, type JSX, Show } from "solid-js";
 import { parseDocument } from "yaml";
 import {
 	isPersonaList,
@@ -31,6 +31,7 @@ function desktopBridgeAvailable(): boolean {
 export function CurrentRolePackageManager(props: {
 	characters: () => Array<{ id: string; name: string; active: boolean }>;
 	selectedId: () => string | undefined;
+	memory?: JSX.Element;
 	document: () => CharacterPackageDocument | undefined;
 	loading: () => boolean;
 	error: () => string | undefined;
@@ -244,6 +245,7 @@ export function CurrentRolePackageManager(props: {
 					)}
 				</For>
 			</section>
+			{props.memory}
 			<Show when={props.loading()}>
 				<p class="status-line" role="status">
 					{t("currentRolePackage.loading")}

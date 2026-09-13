@@ -7,6 +7,7 @@
  */
 
 import type { RunAction, RunSteerResponse } from "@bear-harness/protocol";
+import type { Credential } from "@earendil-works/pi-ai";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
@@ -32,7 +33,7 @@ export interface ExecutorTask {
 	outputDirectory: string;
 	/** Immutable Host-materialized input snapshots readable by the agent. */
 	readOnlyPaths?: string[];
-	modelRoute?: { providerId: string; modelId: string; apiKey?: string };
+	modelRoute?: { providerId: string; modelId: string; credential?: Credential };
 }
 
 export type ExecutorEvent =

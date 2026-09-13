@@ -14,6 +14,8 @@
 import type {
 	ArtifactActionRequest,
 	LivePush,
+	MemoryInspectRequest,
+	MemoryInspectResponse,
 	ProviderLoginResponse,
 	ResponseOf,
 } from "@bear-harness/protocol";
@@ -90,6 +92,7 @@ export interface HostCompositionContext {
 	diagnostics: CharacterTrace;
 	diagnosticDirectories: { system: string; character: string; memory: string };
 	localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
+	inspectMemory(request: MemoryInspectRequest): Promise<MemoryInspectResponse>;
 	memoryEmbedding: {
 		validateLocal(options: Parameters<typeof validateLocalEmbedding>[0]): Promise<{ ready: true }>;
 		validateRemote(
@@ -590,6 +593,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		return undefined;
 	};
+	dispatcher.registerHandler(RPC.memory.inspect, (request) => s.inspectMemory(request));
 	dispatcher.registerHandler(RPC.memory.localEmbeddingInventory, async () =>
 		s.localEmbeddingAcquisition.inventory(configuredLocalTarget()),
 	);

@@ -1,6 +1,7 @@
-import type { LivePush } from "@bear-harness/protocol";
+import { lstat } from "node:fs/promises";
+import type { LivePush, MemoryInspectRequest, MemoryInspectResponse } from "@bear-harness/protocol";
 import { CacheKey, ProviderLoginResponse } from "@bear-harness/protocol/schema";
-import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
+import { inspectLocalMemory, type MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import type { Credential as PiCredential, Provider } from "@earendil-works/pi-ai";
 import { eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
@@ -22,6 +23,7 @@ import {
 } from "./composition.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { HostEventLoop, type RuntimeResource } from "./host-event-loop.js";
+import { ExplicitMemoryFile } from "./memory/explicit-memory.js";
 import { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
 import {
 	type DeepPartial,
@@ -350,6 +352,42 @@ export class HostRuntime {
 			releaseRuntime: (companionId) =>
 				companionId === runtime.companionId ? runtime.resetMemory() : Promise.resolve(),
 		};
+		const inspectMemory = async (request: MemoryInspectRequest): Promise<MemoryInspectResponse> => {
+			const status = this.characterDeletionStatus(request.characterId);
+			if (!status.packagePresent) throw { kind: "not_found", reason: "character_package_missing" };
+			const base = {
+				characterId: request.characterId,
+				relationshipMemoryEnabled: this.appSettings.load().memoryVectorService.enabled,
+			};
+			if (!status.runtimePresent) return { ...base, explicit: "", items: [] };
+			const paths = this.storage.layout.companion(request.characterId);
+			for (const directory of request.kind === "explicit"
+				? [paths.memory]
+				: [paths.memory, paths.tdaiMemory]) {
+				try {
+					const stat = await lstat(directory);
+					if (!stat.isDirectory() || stat.isSymbolicLink()) {
+						throw { kind: "unavailable", reason: "character_memory_path_unsafe" };
+					}
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				}
+			}
+			if (request.kind === "explicit") {
+				const explicit = await new ExplicitMemoryFile(
+					this.options.dataDir,
+					this.memoryScope.userId,
+					request.characterId,
+				).read();
+				return { ...base, explicit, items: [] };
+			}
+			const page = await inspectLocalMemory(paths.tdaiMemory, {
+				kind: request.kind,
+				offset: request.offset,
+				limit: request.limit,
+			});
+			return { ...base, ...page };
+		};
 		const context: HostCompositionContext = Object.freeze({
 			signal: this.lifetime.signal,
 			systemOrm: this.storage.system.orm,
@@ -363,6 +401,7 @@ export class HostRuntime {
 			sessions: runtime.sessions,
 			models: runtime.models,
 			memoryEmbedding,
+			inspectMemory,
 			localEmbeddingAcquisition: this.localEmbeddingAcquisition,
 			memoryScope: this.memoryScope,
 			appSettings: this.appSettings,

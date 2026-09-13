@@ -139,34 +139,17 @@ function DesktopFrame(props: { platform?: string }) {
 	};
 
 	onMount(() => {
-		const update = (width: number) => {
-			const mode = layoutModeForWidth(width);
+		const update = () => {
+			const mode = layoutModeForWidth(appRef?.clientWidth || window.innerWidth);
 			setLayoutMode(mode);
 			document.documentElement.dataset.appLayout = mode;
 			if (mode !== "mobile") closeMobileNavigation(false);
 		};
-		update(appRef?.clientWidth || window.innerWidth);
-		if (typeof ResizeObserver === "undefined" || !appRef) {
-			const onResize = () => update(appRef?.clientWidth || window.innerWidth);
-			window.addEventListener("resize", onResize);
-			onCleanup(() => window.removeEventListener("resize", onResize));
-			return;
-		}
-		let resizeFrame: number | undefined;
-		const observer = new ResizeObserver((entries) => {
-			const width = entries[0]?.contentRect.width;
-			if (width === undefined) return;
-			if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
-			resizeFrame = requestAnimationFrame(() => {
-				resizeFrame = undefined;
-				update(width);
-			});
-		});
-		observer.observe(appRef);
-		onCleanup(() => {
-			observer.disconnect();
-			if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
-		});
+		// The frame fills the renderer viewport. Resize events also update
+		// hidden windows, where requestAnimationFrame can remain suspended.
+		update();
+		window.addEventListener("resize", update);
+		onCleanup(() => window.removeEventListener("resize", update));
 	});
 	onMount(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -307,6 +290,7 @@ function DesktopFrame(props: { platform?: string }) {
 				initialTab={workflow.backstageTab()}
 				initialSettingsPage={workflow.settingsPage()}
 				onSettingsPageChange={workflow.setSettingsPage}
+				onOpenMemorySettings={() => workflow.openBackstage("settings", "memory")}
 				returnFocus={() => {
 					if (layoutMode() === "mobile") {
 						mobileNavigationTriggerRef?.focus();

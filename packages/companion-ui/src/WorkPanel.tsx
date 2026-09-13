@@ -1,8 +1,18 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import {
+	type ComponentProps,
+	createMemo,
+	createSignal,
+	createUniqueId,
+	For,
+	onCleanup,
+	Show,
+} from "solid-js";
 import { downloadBlob } from "./lib/browser-download.js";
 import { finishMotionExitImmediately } from "./lib/motion.js";
+import { NativeMessageContent, nativeRecord } from "./NativeMessageContent.js";
+import { RunActivity } from "./RunActivity.js";
 import type {
 	ArtifactActionResponse,
 	ArtifactIdentity,
@@ -132,6 +142,83 @@ async function downloadArtifactInBrowser(
 	downloadBlob(new Blob(chunks, { type: artifact.mime }), artifact.name);
 }
 
+/** Resolve reply links only against the Run delivered before this native message. */
+export function ArtifactMessageContent(
+	props: ComponentProps<typeof NativeMessageContent> & { entryId?: string },
+) {
+	const workflow = useShellWorkflowStore();
+	const sourceRunId = createMemo(() => {
+		if (props.format === "plain") return undefined;
+		const entries = workflow.host.activePiEntries ?? [];
+		const end = props.entryId
+			? entries.findIndex((entry) => entry.id === props.entryId)
+			: entries.length - 1;
+		for (let index = end; index >= 0; index--) {
+			const entry = entries[index];
+			if (!entry) continue;
+			const value = nativeRecord(entry.type === "message" ? entry.message : entry);
+			if (value?.customType !== "host_external_agent_result") continue;
+			const runId = nativeRecord(value.details)?.runId;
+			if (typeof runId === "string") return runId;
+		}
+		return undefined;
+	});
+	return (
+		<Show when={sourceRunId()} fallback={<NativeMessageContent {...props} />}>
+			{(runId) => <RunLinkedMessageContent {...props} runId={runId()} />}
+		</Show>
+	);
+}
+
+function RunLinkedMessageContent(
+	props: ComponentProps<typeof NativeMessageContent> & { entryId?: string; runId: string },
+) {
+	const workflow = useShellWorkflowStore();
+	const detail = workflow.host.run.observeDetail(() => props.runId);
+	const actionKey = `message-artifact:${workflow.host.activeConversationId}:${props.entryId ?? "streaming"}`;
+	const action = workflow.runActionState(actionKey);
+	const links = createMemo(() => {
+		const run = detail.data?.run;
+		if (!run || run.id !== props.runId || run.conversationId !== workflow.host.activeConversationId)
+			return undefined;
+		return {
+			resolve(href: string): string | undefined {
+				// Paths are display references, never filesystem capabilities.
+				if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href)) return undefined;
+				let name: string | undefined;
+				try {
+					name = decodeURIComponent(href.split(/[?#]/)[0] ?? "")
+						.replaceAll("\\", "/")
+						.split("/")
+						.at(-1);
+				} catch {
+					return undefined;
+				}
+				if (!name) return undefined;
+				const matches = run.artifacts.filter(
+					(artifact) => artifact.name.split("/").at(-1) === name,
+				);
+				return matches.length === 1 ? matches[0]?.id : undefined;
+			},
+			download(artifactId: string) {
+				if (action.busy() || !run.artifacts.some((artifact) => artifact.id === artifactId)) return;
+				const identity = { conversationId: run.conversationId, runId: run.id, artifactId };
+				void workflow.runRunAction(actionKey, async () => {
+					const outcome = await workflow.host.artifact.saveAs(identity);
+					if (outcome.outcome === "unsupported")
+						await downloadArtifactInBrowser(workflow.host.artifact, identity);
+				});
+			},
+		};
+	});
+	return (
+		<>
+			<NativeMessageContent {...props} artifactLinks={links()} />
+			<Show when={action.error()}>{(error) => <p role="alert">{error()}</p>}</Show>
+		</>
+	);
+}
+
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
@@ -233,11 +320,12 @@ export function PermissionCard(props: { permission: RunPermissionRequest; run?: 
 	);
 }
 
-export function WorkRunCard(props: { run: RunInfo }) {
+export function WorkRunCard(props: { run: RunInfo; detail?: boolean }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = useShellWorkflowStore();
 	const titleId = createUniqueId();
 	const artifactState = workflow.runActionState(`${props.run.id}:artifact`);
+	const cancelState = workflow.runActionState(`${props.run.id}:cancel`);
 	const origin = createMemo(
 		() =>
 			workflow.host.conversations?.find((item) => item.conversationId === props.run.conversationId)
@@ -255,9 +343,33 @@ export function WorkRunCard(props: { run: RunInfo }) {
 			<small class="task-origin">
 				{t("work.task.origin")}: {origin()}
 			</small>
-			<Button type="button" class="task-inspect" onClick={() => workflow.openTask(props.run.id)}>
-				{t("work.timeline.revealDetails")}
-			</Button>
+			<RunActivity run={props.run} />
+			<Show when={!props.detail}>
+				<div class="task-card-actions">
+					<Button
+						type="button"
+						class="task-inspect"
+						onClick={() => workflow.openTask(props.run.id)}
+					>
+						{t("work.timeline.revealDetails")}
+					</Button>
+					<Show when={props.run.actions?.includes("cancel")}>
+						<Button
+							type="button"
+							class="task-stop"
+							disabled={cancelState.busy()}
+							onClick={() =>
+								void workflow.runRunAction(`${props.run.id}:cancel`, () =>
+									workflow.host.run.cancel(props.run.id),
+								)
+							}
+						>
+							{t("work.timeline.stopRun")}
+						</Button>
+					</Show>
+				</div>
+				<Show when={cancelState.error()}>{(error) => <p role="alert">{error()}</p>}</Show>
+			</Show>
 			<Show when={props.run.artifacts.length > 0}>
 				<ul class="artifact-list" aria-label={t("work.result.tabsLabel")}>
 					<For each={props.run.artifacts}>
@@ -299,15 +411,24 @@ export function WorkRunCard(props: { run: RunInfo }) {
 export function DelegatedRunCard(props: { runId: string }) {
 	const workflow = useShellWorkflowStore();
 	const [t] = useTranslation(undefined, { i18n });
+	const active = createMemo(() => workflow.host.runs.find((run) => run.id === props.runId));
+	const detail = workflow.host.run.observeDetail(() => (active() ? undefined : props.runId));
 	return (
-		<Button
-			type="button"
-			class="task-inspect"
-			data-run-id={props.runId}
-			onClick={() => workflow.openTask(props.runId)}
+		<Show
+			when={active() ?? detail.data?.run}
+			fallback={
+				<Button
+					type="button"
+					class="task-inspect"
+					data-run-id={props.runId}
+					onClick={() => workflow.openTask(props.runId)}
+				>
+					{t("work.timeline.revealDetails")}
+				</Button>
+			}
 		>
-			{t("work.timeline.revealDetails")}
-		</Button>
+			{(run) => <WorkRunCard run={run()} />}
+		</Show>
 	);
 }
 
@@ -491,7 +612,14 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 					>
 						<Show when={previewIssue()} keyed>
 							{(issue) => (
-								<p class="attachment-preview-error" role="alert">
+								<p
+									class={
+										issue === "unsupported"
+											? "attachment-preview-status"
+											: "attachment-preview-error"
+									}
+									role={issue === "unsupported" ? "status" : "alert"}
+								>
 									{t(`work.result.issues.${issue}`)}
 								</p>
 							)}
@@ -508,82 +636,85 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 							)}
 						</Show>
 					</section>
-					<dl class="attachment-preview-metadata">
-						<div>
-							<dt>{t("work.result.filePage.name")}</dt>
-							<dd>{props.selection.artifact.name}</dd>
-						</div>
-						<div>
-							<dt>{t("work.result.filePage.mime")}</dt>
-							<dd>{props.selection.artifact.mime}</dd>
-						</div>
-						<div>
-							<dt>{t("work.result.filePage.size")}</dt>
-							<dd>{formatBytes(props.selection.artifact.bytes)}</dd>
-						</div>
-						<div>
-							<dt>{t("work.result.filePage.sha256")}</dt>
-							<dd>
-								<code>{props.selection.artifact.sha256}</code>
-							</dd>
-						</div>
-						<div>
-							<dt>{t("work.result.filePage.status")}</dt>
-							<dd>{t(`work.artifactStatuses.${props.selection.artifact.status}`)}</dd>
-						</div>
-						<div>
-							<dt>{t("work.result.createdAt")}</dt>
-							<dd data-testid="artifact-created-at">{props.selection.artifact.createdAt}</dd>
-						</div>
-					</dl>
-					<section class="attachment-preview-metadata" aria-label={t("work.result.provenance")}>
-						<h3>{t("work.result.provenance")}</h3>
-						<dl>
+					<details class="task-disclosure">
+						<summary>{t("work.result.provenance")}</summary>
+						<dl class="attachment-preview-metadata">
 							<div>
-								<dt>{t("work.result.producerRun")}</dt>
+								<dt>{t("work.result.filePage.name")}</dt>
+								<dd>{props.selection.artifact.name}</dd>
+							</div>
+							<div>
+								<dt>{t("work.result.filePage.mime")}</dt>
+								<dd>{props.selection.artifact.mime}</dd>
+							</div>
+							<div>
+								<dt>{t("work.result.filePage.size")}</dt>
+								<dd>{formatBytes(props.selection.artifact.bytes)}</dd>
+							</div>
+							<div>
+								<dt>{t("work.result.filePage.sha256")}</dt>
 								<dd>
-									<code data-testid="artifact-producer-run">{props.selection.run.id}</code>
+									<code>{props.selection.artifact.sha256}</code>
 								</dd>
 							</div>
 							<div>
-								<dt>{t("work.result.executorProfile")}</dt>
-								<dd>{props.selection.run.executorProfile}</dd>
+								<dt>{t("work.result.filePage.status")}</dt>
+								<dd>{t(`work.artifactStatuses.${props.selection.artifact.status}`)}</dd>
 							</div>
 							<div>
-								<dt>{t("work.result.triggerEntry")}</dt>
-								<dd>
-									<code data-testid="artifact-trigger-entry">
-										{props.selection.run.triggerEntryId}
-									</code>
-								</dd>
+								<dt>{t("work.result.createdAt")}</dt>
+								<dd data-testid="artifact-created-at">{props.selection.artifact.createdAt}</dd>
 							</div>
 						</dl>
-						<Show when={props.selection.run.summary} keyed>
-							{(summary) => (
+						<section class="attachment-preview-metadata" aria-label={t("work.result.provenance")}>
+							<h3>{t("work.result.provenance")}</h3>
+							<dl>
 								<div>
-									<strong>{t("work.result.summary")}</strong>
-									<p>{summary}</p>
+									<dt>{t("work.result.producerRun")}</dt>
+									<dd>
+										<code data-testid="artifact-producer-run">{props.selection.run.id}</code>
+									</dd>
 								</div>
-							)}
-						</Show>
-						<h3>{t("work.result.evidence")}</h3>
-						<Show
-							when={props.selection.run.evidence.length > 0}
-							fallback={<p>{t("work.result.noEvidence")}</p>}
-						>
-							<ul aria-label={t("work.result.evidence")}>
-								<For each={props.selection.run.evidence}>
-									{(item) => (
-										<li>
-											<strong>{item.kind}</strong>
-											<Show when={item.summary}> · {item.summary}</Show>
-											<small> · {item.createdAt}</small>
-										</li>
-									)}
-								</For>
-							</ul>
-						</Show>
-					</section>
+								<div>
+									<dt>{t("work.result.executorProfile")}</dt>
+									<dd>{props.selection.run.executorProfile}</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.triggerEntry")}</dt>
+									<dd>
+										<code data-testid="artifact-trigger-entry">
+											{props.selection.run.triggerEntryId}
+										</code>
+									</dd>
+								</div>
+							</dl>
+							<Show when={props.selection.run.summary} keyed>
+								{(summary) => (
+									<div>
+										<strong>{t("work.result.summary")}</strong>
+										<p>{summary}</p>
+									</div>
+								)}
+							</Show>
+							<h3>{t("work.result.evidence")}</h3>
+							<Show
+								when={props.selection.run.evidence.length > 0}
+								fallback={<p>{t("work.result.noEvidence")}</p>}
+							>
+								<ul aria-label={t("work.result.evidence")}>
+									<For each={props.selection.run.evidence}>
+										{(item) => (
+											<li>
+												<strong>{item.kind}</strong>
+												<Show when={item.summary}> · {item.summary}</Show>
+												<small> · {item.createdAt}</small>
+											</li>
+										)}
+									</For>
+								</ul>
+							</Show>
+						</section>
+					</details>
 				</div>
 				<footer class="attachment-preview-actions">
 					<Button

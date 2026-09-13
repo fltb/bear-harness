@@ -115,13 +115,15 @@ describe("shell visual and thread head contracts", () => {
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
 		await user.click(queue);
-		expect(screen.getByRole("region", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
+		expect(screen.getByRole("dialog", { name: zhCN.work.activity.workspace })).toHaveTextContent(
 			zhCN.threadHead.noRunningWork,
 		);
-		await user.click(queue);
-		expect(
-			screen.queryByRole("region", { name: zhCN.threadHead.runningWork }),
-		).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: zhCN.work.task.close }));
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.work.activity.workspace }),
+			).not.toBeInTheDocument(),
+		);
 	});
 
 	it("moves focus through current work and task details, restoring it on back, Escape, and close", async () => {
@@ -166,8 +168,8 @@ describe("shell visual and thread head contracts", () => {
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		const workMenu = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
-		expect(workMenu).toHaveFocus();
+		const workMenu = screen.getByRole("dialog", { name: zhCN.work.activity.workspace });
+		await waitFor(() => expect(workMenu).toContainElement(document.activeElement as HTMLElement));
 		expect(workMenu).toHaveTextContent(zhCN.work.timeline.runStatuses.needs_user);
 		expect(workMenu).toHaveTextContent(zhCN.threadHead.recentWork);
 		expect(workMenu).toHaveTextContent("Completed run");
@@ -176,23 +178,27 @@ describe("shell visual and thread head contracts", () => {
 			within(workMenu).getAllByRole("button", { name: zhCN.work.timeline.revealDetails })[0]!,
 		);
 		const details = screen.getByRole("region", { name: zhCN.work.task.details });
-		expect(details).toHaveFocus();
+		await waitFor(() => expect(workMenu).toContainElement(document.activeElement as HTMLElement));
 		expect(within(details).getByRole("status")).toHaveTextContent(zhCN.work.task.loading);
 		await user.click(within(details).getByRole("button", { name: zhCN.work.task.back }));
-		expect(workMenu).toHaveFocus();
+		await waitFor(() => expect(workMenu).toContainElement(document.activeElement as HTMLElement));
 		await user.click(
 			within(workMenu).getAllByRole("button", { name: zhCN.work.timeline.revealDetails })[0]!,
 		);
 		await user.keyboard("{Escape}");
-		expect(
-			screen.queryByRole("region", { name: zhCN.threadHead.runningWork }),
-		).not.toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.work.activity.workspace }),
+			).not.toBeInTheDocument(),
+		);
 		expect(queueButton).toHaveFocus();
 		await user.keyboard("{Enter}");
-		const reopenedWork = screen.getByRole("region", { name: zhCN.threadHead.runningWork });
-		expect(screen.getByRole("region", { name: zhCN.work.task.details })).toHaveFocus();
+		const reopenedWork = await screen.findByRole("dialog", { name: zhCN.work.activity.workspace });
+		await waitFor(() =>
+			expect(reopenedWork).toContainElement(document.activeElement as HTMLElement),
+		);
 		await user.click(within(reopenedWork).getByRole("button", { name: zhCN.work.task.close }));
-		expect(reopenedWork).not.toBeInTheDocument();
+		await waitFor(() => expect(reopenedWork).not.toBeInTheDocument());
 		expect(queueButton).toHaveFocus();
 	});
 

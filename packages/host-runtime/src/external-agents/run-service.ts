@@ -19,7 +19,7 @@ import type {
 	Run as WireRun,
 } from "@bear-harness/protocol";
 import { RunPermission } from "@bear-harness/protocol/schema";
-import { and, count, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import PQueue from "p-queue";
 import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
 import type {
@@ -27,6 +27,7 @@ import type {
 	ExecutorPermissionOption,
 	ExecutorRouter,
 	ExecutorRun,
+	ExecutorTask,
 } from "../executors/router.js";
 import type { AppDatabase } from "../storage/database.js";
 import { conversations, evidence, runs } from "../storage/schema.js";
@@ -129,7 +130,7 @@ export class ExternalAgentRunService {
 		private readonly runRoot: string,
 		private readonly resolvePiModel: (
 			conversationId: string,
-		) => Promise<{ providerId: string; modelId: string; apiKey?: string } | undefined>,
+		) => Promise<ExecutorTask["modelRoute"]>,
 		private readonly onTerminal?: (
 			result: TerminalRunResult,
 			signal: AbortSignal,
@@ -436,14 +437,25 @@ export class ExternalAgentRunService {
 				.select({ kind: evidence.kind, data: evidence.data, createdAt: evidence.createdAt })
 				.from(evidence)
 				.where(eq(evidence.runId, run.id))
-				.orderBy(desc(evidence.createdAt))
+				.orderBy(desc(sql`${evidence}.rowid`))
 				.limit(20)
 				.all()
 				.reverse()
 				.map((item) => {
 					const summary = summarizeEvidence(item.data);
+					const metadata = evidenceRecord(item.data);
+					const status = metadata?.status;
 					return {
 						kind: safeRunText(item.kind, 128) || "evidence",
+						...(typeof metadata?.title === "string" && metadata.title
+							? { title: safeRunText(metadata.title, 128) }
+							: {}),
+						...(status === "pending" ||
+						status === "in_progress" ||
+						status === "completed" ||
+						status === "failed"
+							? { status }
+							: {}),
 						...(summary ? { summary } : {}),
 						createdAt: item.createdAt,
 					};
@@ -582,10 +594,43 @@ export class ExternalAgentRunService {
 		};
 	}
 	private recordEvidence(runId: string, kind: string, data: unknown): void {
+		const text = evidenceRecord(data)?.text;
+		if (kind === "acp.message" && typeof text === "string") {
+			const previous = this.db
+				.select({ id: evidence.id, kind: evidence.kind, data: evidence.data })
+				.from(evidence)
+				.where(eq(evidence.runId, runId))
+				.orderBy(desc(sql`${evidence}.rowid`))
+				.limit(1)
+				.get();
+			const previousText = evidenceRecord(previous?.data)?.text;
+			if (
+				previous?.kind === kind &&
+				typeof previousText === "string" &&
+				Buffer.byteLength(previousText, "utf8") + Buffer.byteLength(text, "utf8") <= 4_096
+			) {
+				this.db
+					.update(evidence)
+					.set({
+						data: boundedEvidence({ text: previousText + text }),
+						createdAt: new Date().toISOString(),
+					})
+					.where(eq(evidence.id, previous.id))
+					.run();
+				this.changed(runId);
+				return;
+			}
+		}
 		const evidenceId = randomUUID();
 		this.db
 			.insert(evidence)
-			.values({ id: evidenceId, runId, kind: kind.slice(0, 128), data: boundedEvidence(data) })
+			.values({
+				id: evidenceId,
+				runId,
+				kind: kind.slice(0, 128),
+				data: boundedEvidence(data),
+				createdAt: new Date().toISOString(),
+			})
 			.run();
 		this.changed(runId);
 	}
@@ -815,14 +860,14 @@ export class ExternalAgentRunService {
 				and(
 					eq(evidence.runId, runId),
 					cursor
-						? or(
-								lt(evidence.createdAt, cursor.createdAt),
-								and(eq(evidence.createdAt, cursor.createdAt), lt(evidence.id, cursor.id)),
+						? lt(
+								sql`${evidence}.rowid`,
+								sql`(SELECT rowid FROM ${evidence} WHERE ${evidence.id} = ${cursor.id} AND ${evidence.runId} = ${runId})`,
 							)
 						: undefined,
 				),
 			)
-			.orderBy(desc(evidence.createdAt), desc(evidence.id))
+			.orderBy(desc(sql`${evidence}.rowid`))
 			.limit(limit + 1)
 			.all();
 		const page = rows.slice(0, limit);
@@ -1392,11 +1437,44 @@ const SAFE_EVIDENCE_KEYS = [
 	"cost",
 ] as const;
 
+function evidenceRecord(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function evidenceText(value: unknown): string | undefined {
+	if (typeof value === "string") return value;
+	const record = evidenceRecord(value);
+	if (!record) return undefined;
+	if (Array.isArray(record.content))
+		return record.content
+			.map((part) => {
+				const block = evidenceRecord(part);
+				return block?.type === "text" && typeof block.text === "string" ? block.text : "";
+			})
+			.filter(Boolean)
+			.join("\n");
+	return undefined;
+}
+
 function summarizeEvidence(data: unknown): string | undefined {
 	if (typeof data === "string" || typeof data === "number" || typeof data === "boolean")
 		return safeRunText(String(data), 512) || undefined;
 	if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
 	const record = data as Record<string, unknown>;
+	const output = evidenceText(record.rawOutput);
+	const input = evidenceRecord(record.rawInput);
+	const content =
+		output ||
+		record.errorMessage ||
+		record.finalError ||
+		record.message ||
+		record.text ||
+		record.reason ||
+		input?.command ||
+		input?.path;
+	if (typeof content === "string" && content) return safeRunText(content, 512) || undefined;
 	const parts = SAFE_EVIDENCE_KEYS.flatMap((key) => {
 		const value = record[key];
 		return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
@@ -1413,8 +1491,7 @@ function safeRunText(value: string, maxBytes: number): string {
 		.replace(
 			/\b(authorization|api[-_ ]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
 			"$1: <redacted>",
-		)
-		.trim();
+		);
 }
 
 function summarize(row: RunRow, outputArtifacts: ArtifactRecord[] = []): RunSummary {

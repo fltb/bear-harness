@@ -13,6 +13,10 @@ export interface MessageContentProps {
 	codeCopiedLabel?: string;
 	copiedCodeIndex?: number;
 	onCopyCode?(code: string, index: number): void;
+	artifactLinks?: {
+		resolve(href: string): string | undefined;
+		download(artifactId: string): void;
+	};
 }
 
 const LARGE_STREAM_PLAIN_TEXT_THRESHOLD = 16_384;
@@ -50,7 +54,11 @@ interface CodeActions {
 	copiedIndex(): number | undefined;
 }
 
-export function renderMarkdown(text: string, codeActions?: CodeActions): string {
+export function renderMarkdown(
+	text: string,
+	codeActions?: CodeActions,
+	resolveArtifact?: (href: string) => string | undefined,
+): string {
 	const rendered = markdown.parse(text, { async: false });
 	const sanitized = DOMPurify.sanitize(rendered, {
 		USE_PROFILES: { html: true, mathMl: true, svg: true },
@@ -62,6 +70,16 @@ export function renderMarkdown(text: string, codeActions?: CodeActions): string 
 	template.innerHTML = sanitized;
 	for (const link of template.content.querySelectorAll("a")) {
 		const href = link.getAttribute("href");
+		const artifactId = href ? resolveArtifact?.(href) : undefined;
+		if (artifactId) {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = "message-artifact-link";
+			button.dataset.artifactId = artifactId;
+			button.append(...link.childNodes);
+			link.replaceWith(button);
+			continue;
+		}
 		if (!href?.startsWith("https://")) link.removeAttribute("href");
 		else {
 			link.target = "_blank";
@@ -117,18 +135,25 @@ export function MessageContent(props: MessageContentProps) {
 								copiedIndex: () => props.copiedCodeIndex,
 							}
 						: undefined,
+					props.artifactLinks?.resolve,
 				),
 	);
-	const copyCode = (event: Event) => {
-		if (!props.onCopyCode || !contentRef || !(event.target instanceof Element)) return;
+	const handleContentClick = (event: Event) => {
+		if (!contentRef || !(event.target instanceof Element)) return;
+		const artifact = event.target.closest<HTMLButtonElement>("button[data-artifact-id]");
+		if (artifact && contentRef.contains(artifact) && artifact.dataset.artifactId) {
+			props.artifactLinks?.download(artifact.dataset.artifactId);
+			return;
+		}
+		if (!props.onCopyCode) return;
 		const button = event.target.closest<HTMLButtonElement>("button[data-code-index]");
 		if (!button || !contentRef.contains(button)) return;
 		const index = Number(button.dataset.codeIndex);
 		const code = contentRef.querySelectorAll("pre code").item(index)?.textContent;
 		if (Number.isInteger(index) && code !== undefined) props.onCopyCode(code, index);
 	};
-	onMount(() => contentRef?.addEventListener("click", copyCode));
-	onCleanup(() => contentRef?.removeEventListener("click", copyCode));
+	onMount(() => contentRef?.addEventListener("click", handleContentClick));
+	onCleanup(() => contentRef?.removeEventListener("click", handleContentClick));
 	return (
 		<div
 			class="message-content"

@@ -48,7 +48,12 @@ import {
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
-import { DelegatedRunCard, WorkRunCard, WorkTimelineItem } from "./WorkPanel.js";
+import {
+	ArtifactMessageContent,
+	DelegatedRunCard,
+	WorkRunCard,
+	WorkTimelineItem,
+} from "./WorkPanel.js";
 
 type PiSessionEntryId = PiSessionEntry["id"];
 const MAX_REMEMBERED_TOOL_DISCLOSURES = 32;
@@ -369,7 +374,8 @@ function PiTimelineEntryView(props: {
 						</div>
 					</Show>
 					<Show when={!editing()}>
-						<NativeMessageContent
+						<ArtifactMessageContent
+							entryId={props.entry.id}
 							content={content()}
 							format={isUser ? "plain" : "markdown"}
 							codeCopyLabel={t("messages.copyCode")}
@@ -973,7 +979,7 @@ function StreamingAssistantProjection(props: {
 					class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
 					aria-label={characterName()}
 				>
-					<NativeMessageContent
+					<ArtifactMessageContent
 						content={content()}
 						format="markdown"
 						streaming={store.activePiLiveState?.isStreaming === true}

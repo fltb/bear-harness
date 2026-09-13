@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { RuntimeLayout, requireCompanionId } from "../storage/layout.js";
@@ -54,7 +55,20 @@ export class ExplicitMemoryFile {
 
 	async read(): Promise<string> {
 		try {
-			return await readFile(this.path, "utf8");
+			if (!(await lstat(this.path)).isFile()) throw new Error("Unsafe explicit memory file");
+			const handle = await open(this.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+			try {
+				const stat = await handle.stat();
+				if (!stat.isFile() || stat.size > MAX_CHARACTERS * 4) {
+					throw new Error(`Explicit memory exceeds ${MAX_CHARACTERS} characters`);
+				}
+				const text = await handle.readFile("utf8");
+				if (text.length > MAX_CHARACTERS)
+					throw new Error(`Explicit memory exceeds ${MAX_CHARACTERS} characters`);
+				return text;
+			} finally {
+				await handle.close();
+			}
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
 			throw error;

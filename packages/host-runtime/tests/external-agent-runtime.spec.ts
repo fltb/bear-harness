@@ -71,7 +71,7 @@ function seedHostileAmbientEnvironment(): void {
 		HTTPS_PROXY: "https://proxy-user:proxy-secret@proxy.invalid",
 		ALL_PROXY: "socks5://proxy-user:proxy-secret@proxy.invalid",
 		OPENAI_API_KEY: "ambient-provider-secret",
-		BEAR_PI_API_KEY: "ambient-bear-secret",
+		BEAR_PI_CREDENTIAL: "ambient-bear-secret",
 		BEAR_HOST_SECRET: "ambient-host-secret",
 		CODEX_HOME: "/real/home/.codex",
 	};
@@ -160,7 +160,7 @@ describe("external-agent process environments", () => {
 		expect(environment).not.toHaveProperty("HOME");
 		expect(environment).not.toHaveProperty("USERPROFILE");
 		expectNoAmbientSecrets(environment);
-		expect(environment).not.toHaveProperty("BEAR_PI_API_KEY");
+		expect(environment).not.toHaveProperty("BEAR_PI_CREDENTIAL");
 		expect(environment).not.toHaveProperty("CODEX_HOME");
 	});
 
@@ -174,7 +174,7 @@ describe("external-agent process environments", () => {
 		launch.task.modelRoute = {
 			providerId: "configured-provider",
 			modelId: "configured-model",
-			apiKey: "configured-process-only-key",
+			credential: { type: "api_key", key: "configured-process-only-key" },
 		};
 		const adapter = new InspectablePiAdapter(
 			null as never,
@@ -198,7 +198,7 @@ describe("external-agent process environments", () => {
 			TEMP: temporary,
 			BEAR_PI_PROVIDER_ID: "configured-provider",
 			BEAR_PI_MODEL_ID: "configured-model",
-			BEAR_PI_API_KEY: "configured-process-only-key",
+			BEAR_PI_CREDENTIAL: JSON.stringify({ type: "api_key", key: "configured-process-only-key" }),
 			BEAR_PI_SESSION_DIR: piSessionDirectory,
 			BEAR_PI_AUTH_DIR: piAuthDirectory,
 		});
@@ -208,7 +208,7 @@ describe("external-agent process environments", () => {
 		expectNoAmbientSecrets(observedChildEnvironment);
 		expect(observedChildEnvironment).toMatchObject({
 			HOME: home,
-			BEAR_PI_API_KEY: "configured-process-only-key",
+			BEAR_PI_CREDENTIAL: JSON.stringify({ type: "api_key", key: "configured-process-only-key" }),
 		});
 		expect(observedChildEnvironment).not.toHaveProperty("CODEX_HOME");
 		expectPrivateDirectory(runRoot);
@@ -267,14 +267,14 @@ describe("external-agent process environments", () => {
 			NO_BROWSER: "1",
 		});
 		expectNoAmbientSecrets(environment);
-		expect(environment).not.toHaveProperty("BEAR_PI_API_KEY");
+		expect(environment).not.toHaveProperty("BEAR_PI_CREDENTIAL");
 		const observedChildEnvironment = observeChildEnvironment(spec);
 		expectNoAmbientSecrets(observedChildEnvironment);
 		expect(observedChildEnvironment).toMatchObject({
 			HOME: home,
 			CODEX_HOME: snapshotCodexHome,
 		});
-		expect(observedChildEnvironment).not.toHaveProperty("BEAR_PI_API_KEY");
+		expect(observedChildEnvironment).not.toHaveProperty("BEAR_PI_CREDENTIAL");
 		expectPrivateDirectory(runRoot);
 		expectPrivateDirectory(home);
 		expectPrivateDirectory(temporary);

@@ -1,14 +1,17 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { NativeMessageContent } from "./NativeMessageContent.js";
+import { RunEventTimeline } from "./RunActivity.js";
 import type { RunInfo } from "./stores/ipc.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button, TextField } from "./ui/primitives.js";
 import { PermissionCard, WorkRunCard } from "./WorkPanel.js";
 
-export function RunTaskPanel(props: { onBack?: () => void }) {
+export function RunTaskPanel() {
 	const workflow = useShellWorkflowStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [historyOpen, setHistoryOpen] = createSignal(false);
+	let panel: HTMLDivElement | undefined;
 	const recent = createMemo(() =>
 		workflow.host.runs.filter(
 			(run) =>
@@ -19,7 +22,13 @@ export function RunTaskPanel(props: { onBack?: () => void }) {
 		),
 	);
 	return (
-		<div class="task-panel">
+		<div
+			class="task-panel"
+			tabIndex={-1}
+			ref={(element) => {
+				panel = element;
+			}}
+		>
 			<p class="task-scope">{t("work.task.scope")}</p>
 			<Show
 				when={workflow.selectedTaskId()}
@@ -29,7 +38,7 @@ export function RunTaskPanel(props: { onBack?: () => void }) {
 						<h3>{t("work.task.unfinished")}</h3>
 						<Show
 							when={workflow.activeRuns().length}
-							fallback={<p class="empty">{t("threadHead.noRunningWork")}</p>}
+							fallback={<p class="empty-note">{t("threadHead.noRunningWork")}</p>}
 						>
 							<For each={workflow.activeRuns()}>{(run) => <WorkRunCard run={run} />}</For>
 						</Show>
@@ -51,7 +60,7 @@ export function RunTaskPanel(props: { onBack?: () => void }) {
 					</>
 				}
 			>
-				{(runId) => <TaskDetails runId={runId} onBack={props.onBack} />}
+				{(runId) => <TaskDetails runId={runId} onBack={() => panel?.focus()} />}
 			</Show>
 		</div>
 	);
@@ -117,7 +126,7 @@ function TaskHistory() {
 	);
 }
 
-function TaskDetails(props: { runId: string; onBack?: () => void }) {
+function TaskDetails(props: { runId: string; onBack(): void }) {
 	const workflow = useShellWorkflowStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [pages, setPages] = createSignal<(string | undefined)[]>([undefined]);
@@ -126,13 +135,10 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 		() => pages().at(-1),
 	);
 	const navigation = workflow.runActionState(`${props.runId}:origin`);
+	let backButton: HTMLButtonElement | undefined;
+	onMount(() => backButton?.focus());
 	return (
 		<section
-			ref={(element) => {
-				onMount(() => {
-					if (element.isConnected) element.focus();
-				});
-			}}
 			tabIndex={-1}
 			class="task-details"
 			data-task-detail={props.runId}
@@ -141,10 +147,13 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 		>
 			<Button
 				type="button"
+				ref={(element) => {
+					backButton = element;
+				}}
 				class="task-inspect"
 				onClick={() => {
 					workflow.closeTask();
-					props.onBack?.();
+					props.onBack();
 				}}
 			>
 				{t("work.task.back")}
@@ -172,43 +181,18 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 						run().status === "failed" ||
 						run().status === "cancelled" ||
 						run().status === "forced_termination";
-					const activity = createMemo(() => {
-						const times = [
-							run().startedAt,
-							run().completedAt,
-							...run().evidence.map((item) => item.createdAt),
-						].filter((value): value is string => !!value);
-						return times.sort().at(-1);
-					});
 					return (
 						<>
-							<WorkRunCard run={run()} />
-							<dl class="task-metadata">
-								<dt>{t("work.result.producerRun")}</dt>
-								<dd>{run().id}</dd>
-								<dt>{t("work.result.executorProfile")}</dt>
-								<dd>{run().executorProfile}</dd>
-								<dt>{t("work.result.triggerEntry")}</dt>
-								<dd>{run().triggerEntryId}</dd>
-								<Show when={activity()}>
-									{(at) => (
-										<>
-											<dt>{t("work.task.lastActivity")}</dt>
-											<dd>
-												<time dateTime={at()}>{new Date(at()).toLocaleString()}</time>
-											</dd>
-										</>
-									)}
-								</Show>
-							</dl>
+							<WorkRunCard run={run()} detail />
 							<Button
 								type="button"
 								class="task-inspect"
 								disabled={navigation.busy()}
 								onClick={() =>
-									void workflow.runRunAction(`${props.runId}:origin`, () =>
-										workflow.host.selectConversation(run().conversationId),
-									)
+									void workflow.runRunAction(`${props.runId}:origin`, async () => {
+										await workflow.host.selectConversation(run().conversationId);
+										workflow.closeQueue();
+									})
 								}
 							>
 								{t("work.task.openOrigin")}
@@ -218,7 +202,6 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 								<p role="status">{t("work.task.busy")}</p>
 							</Show>
 							<Show when={terminal()}>
-								<p class="task-notice">{t("work.task.completionNotice")}</p>
 								<p class="task-notice" role="status">
 									{run().resultReportedAt
 										? t("work.task.delivered")
@@ -232,55 +215,46 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 										: t("work.task.controllerUnknown")}
 								</p>
 							</Show>
-							<RunControls run={run()} />
+							<Show when={!terminal()}>
+								<p class="task-notice">{t("work.activity.background")}</p>
+							</Show>
+							<Show when={!terminal()}>
+								<RunControls run={run()} />
+							</Show>
 							<Show when={run().permission} keyed>
 								{(permission) => <PermissionCard permission={permission} run={run()} />}
 							</Show>
-							<details class="task-disclosure">
-								<summary>{t("work.task.instruction")}</summary>
-								<pre>{data().instruction}</pre>
-								<Show when={data().inputPaths.length}>
-									<h4>{t("work.task.inputs")}</h4>
-									<ul>
-										<For each={data().inputPaths}>
-											{(path) => (
-												<li>
-													<code>{path}</code>
-												</li>
-											)}
-										</For>
-									</ul>
-								</Show>
-							</details>
 							<Show when={run().summary}>
 								{(summary) => (
 									<section>
 										<h4>
 											{run().status === "failed" ? t("work.task.errors") : t("work.result.summary")}
 										</h4>
-										<pre>{summary()}</pre>
+										<NativeMessageContent content={summary()} />
 									</section>
 								)}
 							</Show>
 							<Show when={!run().artifacts.length}>
 								<p class="task-notice">{t("work.task.noArtifacts")}</p>
 							</Show>
-							<section class="task-evidence" aria-label={t("work.result.evidence")}>
-								<h4>{t("work.result.evidence")}</h4>
+							<section class="task-evidence" aria-label={t("work.activity.timeline")}>
+								<div class="task-panel-heading">
+									<h4>{t("work.activity.timeline")}</h4>
+									<Show when={pages().length > 1}>
+										<Button
+											type="button"
+											class="task-inspect"
+											onClick={() => setPages([undefined])}
+										>
+											{t("work.activity.latest")}
+										</Button>
+									</Show>
+								</div>
+								<Show when={pages().length > 1}>
+									<p class="task-notice">{t("work.activity.older")}</p>
+								</Show>
 								<Show when={data().evidence.length} fallback={<p>{t("work.result.noEvidence")}</p>}>
-									<For each={data().evidence}>
-										{(item) => (
-											<details class="task-disclosure" data-evidence-id={item.id}>
-												<summary>
-													{item.kind} ·{" "}
-													<time dateTime={item.createdAt}>
-														{new Date(item.createdAt).toLocaleString()}
-													</time>
-												</summary>
-												<pre>{JSON.stringify(item.data, null, 2)}</pre>
-											</details>
-										)}
-									</For>
+									<RunEventTimeline evidence={data().evidence} />
 								</Show>
 								<div class="task-pagination">
 									<Show when={pages().length > 1}>
@@ -305,6 +279,36 @@ function TaskDetails(props: { runId: string; onBack?: () => void }) {
 									</Show>
 								</div>
 							</section>
+							<Show when={terminal()}>
+								<RunControls run={run()} />
+							</Show>
+							<details class="task-disclosure">
+								<summary>{t("work.task.instruction")}</summary>
+								<pre>{data().instruction}</pre>
+								<Show when={data().inputPaths.length}>
+									<h4>{t("work.task.inputs")}</h4>
+									<ul>
+										<For each={data().inputPaths}>
+											{(path) => (
+												<li>
+													<code>{path}</code>
+												</li>
+											)}
+										</For>
+									</ul>
+								</Show>
+							</details>
+							<details class="task-disclosure">
+								<summary>{t("work.activity.raw")}</summary>
+								<dl class="task-metadata">
+									<dt>{t("work.result.producerRun")}</dt>
+									<dd>{run().id}</dd>
+									<dt>{t("work.result.executorProfile")}</dt>
+									<dd>{run().executorProfile}</dd>
+									<dt>{t("work.result.triggerEntry")}</dt>
+									<dd>{run().triggerEntryId}</dd>
+								</dl>
+							</details>
 						</>
 					);
 				}}
@@ -391,15 +395,18 @@ function RunControls(props: { run: RunInfo }) {
 					canRequestAgain()
 				}
 			>
-				<TextField>
-					<TextField.Label>{t("work.steerInputLabel")}</TextField.Label>
-					<TextField.TextArea
-						class="task-instruction"
-						value={draft.steerText()}
-						maxLength={12000}
-						onInput={(event) => draft.setSteerText(event.currentTarget.value)}
-					/>
-				</TextField>
+				<details class="task-disclosure">
+					<summary>{t("work.activity.adjust")}</summary>
+					<TextField>
+						<TextField.Label>{t("work.steerInputLabel")}</TextField.Label>
+						<TextField.TextArea
+							class="task-instruction"
+							value={draft.steerText()}
+							maxLength={12000}
+							onInput={(event) => draft.setSteerText(event.currentTarget.value)}
+						/>
+					</TextField>
+				</details>
 			</Show>
 			<div class="work-actions">
 				<Show when={props.run.actions?.includes("steer")}>
@@ -437,7 +444,7 @@ function RunControls(props: { run: RunInfo }) {
 					</Button>
 				</Show>
 			</div>
-			<Show when={!props.run.actions?.length}>
+			<Show when={!props.run.actions?.length && !canRequestAgain()}>
 				<p class="task-notice">{t("work.task.noActions")}</p>
 			</Show>
 			<Show when={busy()}>
