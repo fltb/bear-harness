@@ -364,6 +364,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.invalidations.invalidate(CacheKey.characters());
 		return { character: s.characterLoader.display(character) };
 	});
+	dispatcher.registerHandler(RPC.character.archiveBegin, () => s.characterLoader.archives.begin());
+	dispatcher.registerHandler(RPC.character.archiveAppend, ({ uploadId, offset, base64 }) => {
+		s.characterLoader.archives.append(uploadId, offset, base64);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.character.archiveCancel, ({ uploadId }) => {
+		s.characterLoader.archives.cancel(uploadId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.character.archiveFinish, async ({ uploadId }) => {
+		const character = await s.characterLoader.archives.finish(uploadId);
+		s.seedCharacter(character, "imported");
+		s.invalidations.invalidate(CacheKey.characters());
+		return { character: s.characterLoader.display(character) };
+	});
+
 	dispatcher.registerHandler(RPC.character.pluginTrustGet, async ({ characterId: requestedId }) => {
 		const characterId = requestedId ?? getCompanionId(s);
 		const character = s.characterLoader.load(characterId);

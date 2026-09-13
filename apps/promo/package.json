@@ -4,9 +4,13 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "vite",
+		"dev": "node scripts/native.mjs",
 		"build": "vite build",
-		"export": "node scripts/export.mjs"
+		"export": "node scripts/export.mjs",
+		"dev:web": "vite",
+		"check:copy": "node scripts/check-copy.mjs",
+		"prebuild": "npm run check:copy",
+		"preexport": "npm run check:copy"
 	},
 	"dependencies": {
 		"@bear-harness/companion-client": "file:../../packages/companion-client",

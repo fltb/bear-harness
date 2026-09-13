@@ -9,12 +9,17 @@ const out = resolve(root, ".local-output");
 const timeline = JSON.parse(await readFile(resolve(out, "timeline.json"), "utf8"));
 const script = JSON.parse(await readFile(resolve(root, "src/demo/scenario.json"), "utf8"));
 const expected =
-	"# 夜读角\n带一本想读的书，来坐一会儿。\n\n- 自由参加，不安排轮流自我介绍。\n- 想分享的时候再开口，也可以自己安静读书。\n- 日期：待定。\n- 报名方式：待定。\n";
+	"# 一起来客栈看书\n\n想约大家带本书来白熊客栈坐坐。我们找张靠窗的桌子，各自看书，读到有意思的地方就聊一会儿。\n\n- 时间：待定，大家一起商量。\n- 地点：白熊客栈。\n- 带上：一本想看的书。\n";
 await mkdir(resolve(out, "verification"), { recursive: true });
 const browser = await chromium.launch({
-	headless: true,
-	args: ["--autoplay-policy=no-user-gesture-required"],
+	headless: false,
+	executablePath: process.env.PROMO_CHROMIUM ?? "/usr/bin/chromium",
+	args: ["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
 });
+const cdp = await browser.newBrowserCDPSession();
+const { gpu } = await cdp.send("SystemInfo.getInfo");
+assert.equal(gpu.featureStatus.gpu_compositing, "enabled");
+assert(!/swiftshader|llvmpipe|software/i.test(gpu.auxAttributes.glRenderer));
 const context = await browser.newContext({
 	viewport: { width: 1920, height: 1080 },
 	deviceScaleFactor: 1,
@@ -42,6 +47,23 @@ page.on("response", (response) => {
 });
 page.on("download", (download) => downloads.push(download));
 const checks = [];
+const clicks = [];
+await context.exposeBinding("recordPromoClick", (_source, click) => clicks.push(click));
+await context.addInitScript(() => {
+	document.addEventListener(
+		"click",
+		(event) => {
+			const button = event.target instanceof Element ? event.target.closest("button") : null;
+			if (button && window !== window.top) {
+				void window.recordPromoClick({
+					label: button.textContent.trim(),
+					time: window.top.document.querySelector("audio")?.currentTime,
+				});
+			}
+		},
+		true,
+	);
+});
 async function open() {
 	await page.goto("http://127.0.0.1:3266/");
 	await page.evaluate(async () => {
@@ -67,13 +89,13 @@ async function inspect() {
 try {
 	await open();
 	await page.evaluate(() => window.promo.play());
-	for (const scene of timeline.scenes) {
+	for (const scene of timeline.scenes.filter((scene) => scene.end > scene.start)) {
 		const target =
-			scene.id === 3 || scene.id === 7
+			scene.id === 9
 				? scene.actionStart + 1
-				: scene.id === 11
-					? scene.start + 3
-					: scene.id === 12
+				: scene.id === 13
+					? scene.resultOpenAt + 0.8
+					: scene.id === 14
 						? scene.start + 3
 						: Math.min(scene.end - 0.4, scene.responseEnd + Math.min(4, scene.readingSeconds / 2));
 		await page.waitForFunction((t) => window.promo.inspect().time >= t, target, { timeout: 45000 });
@@ -81,7 +103,7 @@ try {
 		assert.equal(result.state.demo.fault, null);
 		assert.equal(result.state.sceneId, scene.id);
 		const expectedScene = script.find((item) => item.id === scene.id);
-		if (expectedScene.assistant && ![3, 7, 11, 12].includes(scene.id))
+		if (expectedScene.assistant && ![9, 13, 14].includes(scene.id))
 			assert(result.body.replace(/\s/g, "").includes(expectedScene.assistant.replace(/\s/g, "")));
 		await page.screenshot({ path: resolve(out, `verification/play-scene-${scene.id}.png`) });
 		checks.push({
@@ -101,14 +123,35 @@ try {
 		{ timeout: Math.ceil(timeline.duration * 1000) },
 	);
 	assert.equal(faults.length, 0, JSON.stringify(faults));
-	assert(downloads.length >= 1, "normal play must execute actual Web download");
+	assert.equal(downloads.length, 1, "normal play must download exactly once");
+	const resultScene = timeline.scenes.find((scene) => scene.id === 13);
+	const memoryScene = timeline.scenes.find((scene) => scene.id === 9);
+	for (const [label, at] of [
+		["角色设置", memoryScene.actionStart],
+		["查看成果", resultScene.resultOpenAt],
+		["保存副本", resultScene.actionStart],
+	]) {
+		const click = clicks.find(
+			(click) => click.label.includes(label) && Math.abs(click.time - at) < 1,
+		);
+		assert(click, `${label} must click within one second of the spoken anchor ${at}`);
+	}
+	await writeFile(
+		resolve(out, "synchronized-clicks.json"),
+		JSON.stringify(
+			{ renderer: gpu.auxAttributes.glRenderer, clicks, narrationDuration: timeline.duration },
+			null,
+			2,
+		),
+	);
+	console.log("Spoken action anchors verified against real clicks");
 	const downloaded = await readFile(await downloads[0].path(), "utf8");
 	assert.equal(downloaded, expected);
 	const paths = [];
-	for (const id of [3, 8, 10, 11]) {
+	for (const id of [10, 12, 13]) {
 		const scene = timeline.scenes.find((item) => item.id === id);
 		const target =
-			id === 3 ? scene.actionStart + 1 : id === 11 ? scene.start + 4 : scene.responseEnd + 3;
+			id === 13 ? scene.resultOpenAt + 0.8 : Math.min(scene.end - 0.2, scene.responseEnd + 1);
 		await open();
 		await page.evaluate(async (time) => {
 			await window.promo.seek(time);

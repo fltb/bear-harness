@@ -33,12 +33,6 @@ import type { AppDatabase } from "../storage/database.js";
 import { conversations, evidence, runs } from "../storage/schema.js";
 
 export const MAX_CONCURRENT_RUNS = 2;
-const MAX_RUN_CLEANUP_ENTRIES = 10_000;
-const MAX_RUN_CLEANUP_DEPTH = 64;
-const MAX_RUN_OUTPUT_ENTRIES = 1_000;
-const MAX_RUN_OUTPUT_DEPTH = 32;
-const MAX_RUN_ARTIFACT_BYTES = 512 * 1024 * 1024;
-const MAX_RUN_OUTPUT_BYTES = 1024 * 1024 * 1024;
 export type RunStatus =
 	| "enqueued"
 	| "running"
@@ -192,7 +186,7 @@ export class ExternalAgentRunService {
 		const admitted = existing();
 		if (admitted) return { accepted: true, runId: admitted.id, executor: "pi" };
 		const instruction = params.instruction.trim();
-		if (!instruction || instruction.length > 12_000)
+		if (!instruction)
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const inputPaths = validateInputPaths(params.inputPaths);
 		this.executorRouter.validateProfile("pi-default", "pi");
@@ -687,7 +681,7 @@ export class ExternalAgentRunService {
 	}
 
 	private async performSteer(runId: string, instruction: string): Promise<RunSteerResponse> {
-		if (!instruction.trim() || instruction.length > 12_000)
+		if (!instruction.trim())
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
@@ -732,7 +726,7 @@ export class ExternalAgentRunService {
 		});
 	}
 	private async performResume(runId: string, instruction?: string): Promise<RunSummary> {
-		if (instruction !== undefined && (!instruction.trim() || instruction.length > 12_000))
+		if (instruction !== undefined && !instruction.trim())
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const run = await this.enqueueEvent(() => {
 			const current = this.getRun(runId);
@@ -873,7 +867,7 @@ export class ExternalAgentRunService {
 		const page = rows.slice(0, limit);
 		return {
 			run: this.project(summarize(row)),
-			instruction: safeRunText(row.instruction, 12_000),
+			instruction: safeRunText(row.instruction, Number.POSITIVE_INFINITY),
 			inputPaths: row.inputPaths.map((path) => safeRunText(basename(path), 1_024)),
 			evidence: page.map((item) => ({
 				id: item.id,
@@ -1261,30 +1255,25 @@ function boundedEvidence(
 	paths: string[] = [],
 ): RunGetResponse["evidence"][number]["data"] {
 	type Json = RunGetResponse["evidence"][number]["data"];
-	let nodes = 0;
-	let remaining = 16_000;
 	const seen = new Set<object>();
 	const visit = (item: unknown, depth: number): Json => {
-		if (++nodes > 256 || depth > 8 || remaining <= 0) return "[truncated]";
 		if (item === null || typeof item === "boolean") return item;
 		if (typeof item === "number") return Number.isFinite(item) ? item : null;
 		if (typeof item === "string") {
-			const text = safeRunText(sanitizeText(item, paths), Math.min(remaining, 4_096)).replace(
+			const text = safeRunText(sanitizeText(item, paths), Number.POSITIVE_INFINITY).replace(
 				/(?:[A-Za-z]:[\\/]|\/)[\w.-]+(?:[\\/][^\s"'<>]*)/g,
 				"<redacted-path>",
 			);
-			remaining -= text.length;
 			return text;
 		}
 		if (!item || typeof item !== "object") return null;
 		if (seen.has(item)) return "[circular]";
 		seen.add(item);
-		if (Array.isArray(item)) return item.slice(0, 32).map((child) => visit(child, depth + 1));
+		if (Array.isArray(item)) return item.map((child) => visit(child, depth + 1));
 		const result: Record<string, Json> = {};
-		for (const [key, child] of Object.entries(item).slice(0, 32)) {
+		for (const [key, child] of Object.entries(item)) {
 			const safeKey = safeRunText(key, 128);
 			if (!safeKey || safeKey === "__proto__" || safeKey === "constructor") continue;
-			remaining -= safeKey.length;
 			result[safeKey] =
 				/authorization|api.?key|token|secret|password|credential|environment|signature/i.test(key)
 					? "<redacted>"
@@ -1296,20 +1285,15 @@ function boundedEvidence(
 }
 
 /**
- * Host-only teardown for ephemeral external-agent state. The walk is bounded
+ * Host-only teardown for ephemeral external-agent state. The walk is iterative
  * and uses lstat for every entry so links are unlinked, never traversed.
  */
 export function removeExternalAgentRunRoot(runRoot: string): void {
 	const root = resolve(runRoot);
 	const pending: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
-	let visited = 0;
 	while (pending.length > 0) {
 		const current = pending.pop();
 		if (!current) break;
-		visited += 1;
-		if (visited > MAX_RUN_CLEANUP_ENTRIES || current.depth > MAX_RUN_CLEANUP_DEPTH) {
-			throw new Error("external_agent_run_cleanup_limit_exceeded");
-		}
 		let stat: Stats;
 		try {
 			stat = lstatSync(current.path);
@@ -1519,11 +1503,10 @@ function executionInstruction(
 }
 
 function validateInputPaths(paths: readonly string[]): string[] {
-	if (paths.length > 10 || new Set(paths).size !== paths.length)
+	if (new Set(paths).size !== paths.length)
 		throw { kind: "validation_failed", reason: "input_paths_invalid" };
 	return paths.map((path) => {
-		if (!isAbsolute(path) || path.length > 4096)
-			throw { kind: "validation_failed", reason: "input_path_invalid" };
+		if (!isAbsolute(path)) throw { kind: "validation_failed", reason: "input_path_invalid" };
 		try {
 			statSync(path);
 		} catch {
@@ -1564,7 +1547,6 @@ function captureArtifacts(
 	}
 	const pending = [{ path: root, depth: 0 }];
 	const files: Array<{ path: string; logicalName: string; stat: Stats }> = [];
-	let visited = 0;
 	let totalBytes = 0;
 	while (pending.length) {
 		const directory = pending.pop();
@@ -1575,24 +1557,18 @@ function captureArtifacts(
 		}
 		if (!within(root, realpathSync.native(directory.path))) throw new Error("run_output_escape");
 		for (const entry of readdirSync(directory.path, { withFileTypes: true })) {
-			visited += 1;
-			if (visited > MAX_RUN_OUTPUT_ENTRIES) throw new Error("run_output_entry_limit_exceeded");
 			const path = join(directory.path, entry.name);
 			const stat = lstatSync(path);
 			if (stat.isSymbolicLink()) continue;
 			if (stat.isDirectory()) {
-				if (directory.depth >= MAX_RUN_OUTPUT_DEPTH) {
-					throw new Error("run_output_depth_limit_exceeded");
-				}
 				pending.push({ path, depth: directory.depth + 1 });
 				continue;
 			}
 			if (!stat.isFile()) throw new Error("run_output_entry_invalid");
 			const canonical = realpathSync.native(path);
 			if (!within(root, canonical)) throw new Error("run_output_escape");
-			if (stat.size > MAX_RUN_ARTIFACT_BYTES) throw new Error("run_output_file_too_large");
 			totalBytes += stat.size;
-			if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_RUN_OUTPUT_BYTES) {
+			if (!Number.isSafeInteger(totalBytes)) {
 				throw new Error("run_output_total_too_large");
 			}
 			files.push({
@@ -1613,7 +1589,6 @@ function captureArtifacts(
 				mime: "application/octet-stream",
 				sniffMime: (header) => outputMime(file.path, header),
 				producerRunId: runId,
-				maxBytes: MAX_RUN_ARTIFACT_BYTES,
 			});
 			store.markVerified(artifact.id);
 			return { ...artifact, status: "verified" as const };

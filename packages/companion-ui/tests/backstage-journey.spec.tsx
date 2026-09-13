@@ -2,6 +2,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { Button } from "@kobalte/core/button";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { strToU8, zipSync } from "fflate";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
@@ -183,7 +184,7 @@ describe("ordinary-user backstage journey", () => {
 		await waitFor(() => expect(activate).toHaveBeenCalledWith("target-character"));
 	});
 
-	it("opens character and system settings as distinct destinations and imports a package folder", async () => {
+	it("opens character and system settings as distinct destinations and imports a ZIP package", async () => {
 		const user = userEvent.setup();
 		const importPackage = vi.fn(() => Promise.resolve());
 		const store = {
@@ -219,12 +220,13 @@ describe("ordinary-user backstage journey", () => {
 		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImportInput, {
 			selector: "input",
 		});
-		const manifest = new File(["id: imported"], "character.yaml", { type: "text/yaml" });
-		Object.defineProperty(manifest, "webkitRelativePath", { value: "imported/character.yaml" });
+		const manifest = new File(
+			[zipSync({ "imported/character.yaml": strToU8("id: imported") })],
+			"imported.zip",
+			{ type: "application/zip" },
+		);
 		await user.upload(input, manifest);
-		expect(importPackage).toHaveBeenCalledWith([
-			expect.objectContaining({ path: "imported/character.yaml", base64: expect.any(String) }),
-		]);
+		expect(importPackage).toHaveBeenCalledWith(manifest);
 		characterView.unmount();
 
 		const closeSystemSettings = vi.fn();

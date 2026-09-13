@@ -22,8 +22,6 @@ import type {
 	ExecutorRun,
 } from "./router.js";
 
-const MAX_SUMMARY_CHARS = 12_000;
-
 /** Prompt used to re-prompt a paused run after an interrupt (session keeps its history). */
 const CONTINUATION_PROMPT =
 	"Continue the requested work from where you left off and report the result concisely when done.";
@@ -41,7 +39,6 @@ type ActiveRun = {
 	paused: boolean;
 	turn: Promise<void> | null;
 	release: Promise<void> | null;
-	evidenceCount: number;
 };
 
 /** Host-side ACP filesystem implementation for one approved run. */
@@ -76,7 +73,6 @@ export abstract class AcpExecutorController implements ExecutorController {
 			paused: false,
 			turn: null,
 			release: null,
-			evidenceCount: 0,
 		};
 		this.activeRuns.set(request.run.runId, active);
 
@@ -280,22 +276,20 @@ export abstract class AcpExecutorController implements ExecutorController {
 					active.request.emit({
 						type: "evidence",
 						kind: "acp.error",
-						data: { message: update._meta.bearError.slice(0, 2_000) },
+						data: { message: update._meta.bearError },
 					});
 					return;
 				}
 				if (update.content.type === "text") {
-					active.messageText = (active.messageText + update.content.text).slice(-MAX_SUMMARY_CHARS);
-					if (active.evidenceCount++ < 2_000)
-						active.request.emit({
-							type: "evidence",
-							kind: "acp.message",
-							data: { text: update.content.text.slice(0, MAX_SUMMARY_CHARS) },
-						});
+					active.messageText = active.messageText + update.content.text;
+					active.request.emit({
+						type: "evidence",
+						kind: "acp.message",
+						data: { text: update.content.text },
+					});
 				}
 				return;
 			case "tool_call":
-				if (active.evidenceCount++ >= 2_000) return;
 				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
@@ -304,7 +298,6 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 				return;
 			case "tool_call_update":
-				if (active.evidenceCount++ >= 2_000) return;
 				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
@@ -316,7 +309,6 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 				return;
 			case "usage_update":
-				if (active.evidenceCount++ >= 2_000) return;
 				active.request.emit({
 					type: "evidence",
 					kind: "acp.usage",
@@ -433,27 +425,31 @@ function compactToolUpdate(update: {
 	};
 }
 
-/** Bound public tool payloads without exposing binary blobs or thinking signatures. */
-function boundedEvidence(value: unknown, depth = 0, budget = { left: 12_000 }): unknown {
-	if (budget.left <= 0) return "[truncated]";
-	if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-	if (typeof value === "string") {
-		const text = value.slice(0, budget.left);
-		budget.left -= text.length;
-		return text;
-	}
-	if (depth >= 6) return "[truncated]";
-	if (Array.isArray(value))
-		return value.slice(0, 64).map((item) => boundedEvidence(item, depth + 1, budget));
+/** Filter private fields while preserving public tool payloads. */
+function boundedEvidence(value: unknown, seen = new Set<object>()): unknown {
+	if (
+		value === null ||
+		typeof value === "boolean" ||
+		typeof value === "number" ||
+		typeof value === "string"
+	)
+		return value;
 	if (value && typeof value === "object") {
-		const result: Record<string, unknown> = {};
-		for (const [key, item] of Object.entries(value).slice(0, 64)) {
-			if (/signature|thinking|token|secret|password|authorization|api.?key|^data$/i.test(key))
-				continue;
-			if (budget.left <= 0) break;
-			budget.left -= key.length;
-			result[key] = boundedEvidence(item, depth + 1, budget);
-		}
+		if (seen.has(value)) return "[circular]";
+		seen.add(value);
+		const result = Array.isArray(value)
+			? value.map((item) => boundedEvidence(item, seen))
+			: Object.fromEntries(
+					Object.entries(value)
+						.filter(
+							([key]) =>
+								!/signature|thinking|token|secret|password|authorization|api.?key|^data$/i.test(
+									key,
+								),
+						)
+						.map(([key, item]) => [key, boundedEvidence(item, seen)]),
+				);
+		seen.delete(value);
 		return result;
 	}
 	return null;

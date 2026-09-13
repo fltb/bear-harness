@@ -24,11 +24,8 @@ import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-
 // ---------------------------------------------------------------------------
 
 const MAX_STRING_LENGTH = 4096;
-const MAX_PATH_LENGTH = 1024;
 const MAX_ARRAY_LENGTH = 100;
 const MAX_RECORD_ENTRIES = MAX_ARRAY_LENGTH;
-export const MAX_PI_LIVE_ITEMS = 10_000;
-export const MAX_PI_QUEUE_CHARACTERS = 2_000_000;
 export const MAX_EVENT_PAYLOAD_DEPTH = 32;
 export const MAX_EVENT_PAYLOAD_NODES = 1024;
 const MAX_SAFE_INT = 9007199254740991;
@@ -37,8 +34,6 @@ const WireTimestamp = z
 	.min(1)
 	.max(64)
 	.refine((value) => Number.isFinite(Date.parse(value)), "must be a valid timestamp");
-export const MAX_MESSAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_MESSAGE_ATTACHMENT_BYTES / 3) * 4;
 const boundedRecord = <K extends z.ZodString, V extends Schema>(
 	key: K,
 	value: V,
@@ -225,7 +220,7 @@ export const OnboardingStateData = z.strictObject({
 	),
 });
 export const CharacterGetRequest = z.strictObject({});
-const CharacterMediaUrl = z.string().min(1).max(20_000_000);
+const CharacterMediaUrl = z.string().min(1);
 export const CharacterSummary = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
@@ -351,7 +346,7 @@ export const CharacterMedia = z.discriminatedUnion("kind", [
 		description: CharacterCopy,
 		use_when: CharacterCopy,
 		loop: z.boolean(),
-		url: z.string().min(1).max(20_000_000),
+		url: z.string().min(1),
 		posterUrl: CharacterMediaUrl.optional(),
 	}),
 	z.strictObject({
@@ -361,7 +356,7 @@ export const CharacterMedia = z.discriminatedUnion("kind", [
 		description: CharacterCopy,
 		use_when: CharacterCopy,
 		loop: z.boolean(),
-		url: z.string().min(1).max(20_000_000),
+		url: z.string().min(1),
 		posterUrl: CharacterMediaUrl,
 	}),
 	z.strictObject({
@@ -371,7 +366,7 @@ export const CharacterMedia = z.discriminatedUnion("kind", [
 		description: CharacterCopy,
 		use_when: CharacterCopy,
 		loop: z.boolean(),
-		url: z.string().min(1).max(20_000_000),
+		url: z.string().min(1),
 		posterUrl: CharacterMediaUrl.optional(),
 		captionsUrl: CharacterMediaUrl,
 	}),
@@ -382,7 +377,7 @@ export const CharacterMedia = z.discriminatedUnion("kind", [
 		description: CharacterCopy,
 		use_when: CharacterCopy,
 		loop: z.boolean(),
-		url: z.string().min(1).max(20_000_000),
+		url: z.string().min(1),
 		posterUrl: CharacterMediaUrl.optional(),
 		captionsUrl: CharacterMediaUrl,
 	}),
@@ -434,7 +429,7 @@ export const CharacterDisplay = z
 			expressions: boundedRecord(z.string().min(1).max(64), CharacterMediaUrl),
 			expressionLabels: boundedRecord(z.string().min(1).max(64), z.string().max(MAX_STRING_LENGTH)),
 		}),
-		media: z.array(CharacterMedia).max(200),
+		media: z.array(CharacterMedia),
 	})
 	.superRefine((character, context) => {
 		const sceneIds = new Set(character.scenes.map((scene) => scene.id));
@@ -488,14 +483,14 @@ export const CharacterPackageGetRequest = z.strictObject({
 });
 export const CharacterPackageUpdateRequest = z.strictObject({
 	characterId: CharacterPackageId,
-	yaml: z.string().max(1_048_576),
+	yaml: z.string(),
 	expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 export const CharacterPackageDocument = z.strictObject({
 	characterId: CharacterPackageId,
 	origin: z.enum(["official", "local", "imported"]),
 	writable: z.boolean(),
-	yaml: z.string().max(1_048_576),
+	yaml: z.string(),
 	sha256: z.string().regex(/^[0-9a-f]{64}$/),
 	character: CharacterDisplay,
 	manifest: BoundedJsonValue,
@@ -539,12 +534,18 @@ export const CharacterImportRequest = z.strictObject({
 	files: z
 		.array(
 			z.strictObject({
-				path: z.string().min(1).max(512),
-				base64: z.string().max(8_000_000),
+				path: z.string().min(1),
+				base64: z.string(),
 			}),
 		)
-		.min(1)
-		.max(500),
+		.min(1),
+});
+export const CharacterArchiveBeginRequest = z.strictObject({});
+export const CharacterArchiveIdentity = z.strictObject({ uploadId: z.string().uuid() });
+export const CharacterArchiveAppendRequest = z.strictObject({
+	uploadId: z.string().uuid(),
+	offset: z.number().int().safe().nonnegative(),
+	base64: z.string(),
 });
 export const CharacterPluginTrust = z.strictObject({
 	characterId: CharacterPackageId,
@@ -564,9 +565,9 @@ export const CharacterPluginTrustConfirmRequest = z.strictObject({
 });
 const CharacterDraftFile = z.strictObject({
 	encoding: z.enum(["utf8", "base64"]),
-	content: z.string().max(8_000_000),
+	content: z.string(),
 });
-const CharacterDraftFiles = boundedRecord(z.string().min(1).max(512), CharacterDraftFile);
+const CharacterDraftFiles = z.record(z.string().min(1).max(512), CharacterDraftFile);
 export const CharacterDraft = z.strictObject({
 	id: z.string().min(1).max(64),
 	basePackageId: z.string().min(1).max(64).optional(),
@@ -591,10 +592,10 @@ export const CharacterDraftPatchRequest = z
 	})
 	.superRefine(({ files }, context) => {
 		const count = Object.keys(files).length;
-		if (count < 1 || count > 100)
+		if (count < 1)
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "files must contain 1 to 100 entries",
+				message: "files must contain at least one entry",
 				path: ["files"],
 			});
 	});
@@ -604,7 +605,7 @@ export const CharacterDraftRevision = z.strictObject({
 	createdAt: WireTimestamp,
 });
 export const CharacterDraftListRevisionsResponse = z.strictObject({
-	revisions: z.array(CharacterDraftRevision).max(10_000),
+	revisions: z.array(CharacterDraftRevision),
 });
 export const CharacterDraftRestoreRevisionRequest = z.strictObject({
 	id: z.string().min(1).max(64),
@@ -619,11 +620,10 @@ export const CharacterDraftUploadAssetsRequest = z.strictObject({
 			z.strictObject({
 				path: z.string().min(1).max(512),
 				mime: z.string().min(3).max(128),
-				base64: z.string().min(1).max(8_000_000),
+				base64: z.string().min(1),
 			}),
 		)
-		.min(1)
-		.max(100),
+		.min(1),
 });
 export const CharacterDraftValidateRequest = z.strictObject({
 	id: z.string().min(1).max(64),
@@ -654,19 +654,19 @@ export const OnboardingResponse = z.discriminatedUnion("status", [
 // Conversation
 // ---------------------------------------------------------------------------
 
-export const ConversationId = z.string().min(1).max(128);
+export const ConversationId = z.string().min(1);
 export const ConversationSummary = z.strictObject({
 	conversationId: ConversationId,
-	name: z.string().max(MAX_STRING_LENGTH).optional(),
+	name: z.string().optional(),
 	created: WireTimestamp,
 	modified: WireTimestamp,
 	messageCount: z.number().int().nonnegative(),
-	firstMessage: z.string().max(MAX_STRING_LENGTH),
+	firstMessage: z.string(),
 	isStreaming: z.boolean(),
 });
 export const ConversationListRequest = z.strictObject({
 	archived: z.boolean().optional(),
-	title: z.string().max(1000).optional(),
+	title: z.string().optional(),
 	cursor: z.string().min(1).max(512).optional(),
 	limit: z.number().int().min(1).max(100).default(50),
 });
@@ -675,7 +675,7 @@ export const ConversationListResponse = z.strictObject({
 	nextCursor: z.string().min(1).max(512).optional(),
 });
 export const ConversationCreateRequest = z.strictObject({
-	title: z.string().max(MAX_STRING_LENGTH).optional(),
+	title: z.string().optional(),
 });
 export const ConversationActiveGetRequest = z.strictObject({});
 export const ConversationSelectRequest = z.strictObject({
@@ -686,7 +686,7 @@ export const ConversationOpenRequest = z.strictObject({
 });
 export const ConversationRenameRequest = z.strictObject({
 	conversationId: ConversationId,
-	title: z.string().min(1).max(200),
+	title: z.string().min(1),
 });
 export const ConversationArchiveRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -699,7 +699,7 @@ export const ConversationDeleteRequest = z.strictObject({
 // Message
 // ---------------------------------------------------------------------------
 
-export const PiSessionEntryId = z.string().min(1).max(128);
+export const PiSessionEntryId = z.string().min(1);
 export const PiMessageChoices = z.strictObject({
 	prompt: CharacterCopy,
 	items: z
@@ -715,7 +715,7 @@ export const PiMessageChoices = z.strictObject({
 function isPiWireValue(value: unknown): boolean {
 	try {
 		const encoded = JSON.stringify(value);
-		return encoded !== undefined && encoded.length <= 8 * 1024 * 1024;
+		return encoded !== undefined;
 	} catch {
 		return false;
 	}
@@ -732,45 +732,33 @@ export const PiAgentSessionEvent = z.custom<AgentSessionEvent>(
 	"Pi event is not serializable",
 );
 export const PiProjectionVersion = z.strictObject({
-	instanceId: z.string().min(1).max(256),
+	instanceId: z.string().min(1),
 	sequence: z.number().int().safe().nonnegative(),
 });
-export const PiLiveSnapshot = z
-	.strictObject({
-		version: PiProjectionVersion.optional(),
-		isStreaming: z.boolean(),
-		isRetrying: z.boolean(),
-		retryAttempt: z.number().int().nonnegative(),
-		isCompacting: z.boolean(),
-		streamingMessage: PiAgentMessage.optional(),
-		pendingToolCallIds: z.array(z.string().min(1).max(256)).max(MAX_PI_LIVE_ITEMS),
-		steering: z.array(z.string().max(65536)).max(MAX_PI_LIVE_ITEMS),
-		followUp: z.array(z.string().max(65536)).max(MAX_PI_LIVE_ITEMS),
-		errorMessage: z.string().max(4096).optional(),
-	})
-	.superRefine((snapshot, context) => {
-		let characters = 0;
-		for (const message of snapshot.steering) characters += message.length;
-		for (const message of snapshot.followUp) characters += message.length;
-		if (characters > MAX_PI_QUEUE_CHARACTERS) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: `Pi queue must contain at most ${MAX_PI_QUEUE_CHARACTERS} characters`,
-			});
-		}
-	});
+export const PiLiveSnapshot = z.strictObject({
+	version: PiProjectionVersion.optional(),
+	isStreaming: z.boolean(),
+	isRetrying: z.boolean(),
+	retryAttempt: z.number().int().nonnegative(),
+	isCompacting: z.boolean(),
+	streamingMessage: PiAgentMessage.optional(),
+	pendingToolCallIds: z.array(z.string().min(1)),
+	steering: z.array(z.string()),
+	followUp: z.array(z.string()),
+	errorMessage: z.string().optional(),
+});
 export const ConversationDetail = z.strictObject({
 	conversationId: ConversationId,
-	name: z.string().max(MAX_STRING_LENGTH).optional(),
+	name: z.string().optional(),
 	selectedModel: z
 		.strictObject({
-			providerId: z.string().min(1).max(64),
-			modelId: z.string().min(1).max(128),
+			providerId: z.string().min(1),
+			modelId: z.string().min(1),
 		})
 		.optional(),
 	branch: z.strictObject({
 		activeLeafId: PiSessionEntryId.optional(),
-		latestLeafIds: z.array(PiSessionEntryId).max(MAX_ARRAY_LENGTH),
+		latestLeafIds: z.array(PiSessionEntryId),
 		entries: z.array(PiSessionEntry).max(MAX_ARRAY_LENGTH),
 		hasMoreBefore: z.boolean(),
 	}),
@@ -792,7 +780,7 @@ export const ConversationHistoryResponse = z.strictObject({
 });
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
-	text: z.string().min(1).max(65536),
+	text: z.string().min(1),
 	clientMessageId: z.string().uuid(),
 });
 export const MessageSendResponse = EmptyResponse;
@@ -800,7 +788,7 @@ export const MessageSendResponse = EmptyResponse;
 export const MessageCorrectRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
-	feedback: z.string().min(1).max(65536),
+	feedback: z.string().min(1),
 });
 export const MessageSwitchVersionRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -809,7 +797,7 @@ export const MessageSwitchVersionRequest = z.strictObject({
 export const MessageEditRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
-	text: z.string().min(1).max(65536),
+	text: z.string().min(1),
 });
 export const MessageContinueRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1020,7 +1008,10 @@ export const CanonListSourcesRequest = z.strictObject({
 });
 export const CanonAddSourceRequest = z.strictObject({
 	logicalName: z.string().min(1).max(255),
-	content: z.string().min(1).max(1_048_576),
+	content: z
+		.string()
+		.min(1)
+		.max(16 * 1024 * 1024),
 });
 export const CanonSearchRequest = z.strictObject({
 	query: z.string().min(1).max(1000),
@@ -1044,7 +1035,7 @@ export const CanonModule = z.strictObject({
 	kind: CanonModuleKind,
 	title: z.string().min(1).max(255),
 	instructions: z.string().max(16_384),
-	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
+	sourceChunkIds: z.array(z.string().min(1).max(64)).max(10_000),
 	createdAt: WireTimestamp,
 	origin: z.enum(["user", "package"]),
 	stableKey: z.string().max(64).optional(),
@@ -1060,7 +1051,7 @@ export const CanonUpsertModuleRequest = z.strictObject({
 	kind: CanonModuleKind,
 	title: z.string().min(1).max(255),
 	instructions: z.string().max(16_384),
-	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
+	sourceChunkIds: z.array(z.string().min(1).max(64)).max(10_000),
 });
 export const CanonDeleteModuleRequest = z.strictObject({
 	id: z.string().min(1).max(64),
@@ -1151,18 +1142,16 @@ export const ProviderInfo = z.strictObject({
 		z.literal("unavailable"),
 	]),
 	/** Effective provider endpoint; never contains credentials. */
-	baseUrl: z.string().max(2048).optional(),
-	availableModels: z
-		.array(
-			z.strictObject({
-				id: z.string().min(1).max(128),
-				name: z.string().max(MAX_STRING_LENGTH),
-				supportsImages: z.boolean(),
-				thinkingLevels: z.array(ModelThinkingLevel).max(7).optional(),
-				cost: ProviderModelCost,
-			}),
-		)
-		.max(1000),
+	baseUrl: z.string().optional(),
+	availableModels: z.array(
+		z.strictObject({
+			id: z.string().min(1).max(128),
+			name: z.string().max(MAX_STRING_LENGTH),
+			supportsImages: z.boolean(),
+			thinkingLevels: z.array(ModelThinkingLevel).max(7).optional(),
+			cost: ProviderModelCost,
+		}),
+	),
 	unavailable: z.array(z.string().min(1).max(64)).max(30),
 });
 export const ProviderListRequest = z.strictObject({
@@ -1175,7 +1164,7 @@ export const ProviderListResponse = z.strictObject({
 });
 export const ProviderSetApiKeyRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
-	apiKey: z.string().min(1).max(2048),
+	apiKey: z.string().min(1),
 	sessionOnly: z.boolean().optional(),
 });
 export const ProviderSetApiKeyResponse = EmptyResponse;
@@ -1190,7 +1179,7 @@ const ProviderAuthEvent = z.union([
 		links: z
 			.array(
 				z.strictObject({
-					url: z.string().max(2048),
+					url: z.string(),
 					label: z.string().max(MAX_STRING_LENGTH).optional(),
 				}),
 			)
@@ -1199,13 +1188,13 @@ const ProviderAuthEvent = z.union([
 	}),
 	z.strictObject({
 		type: z.literal("auth_url"),
-		url: z.string().max(2048),
+		url: z.string(),
 		instructions: z.string().max(MAX_STRING_LENGTH).optional(),
 	}),
 	z.strictObject({
 		type: z.literal("device_code"),
 		userCode: z.string().max(128),
-		verificationUri: z.string().max(2048),
+		verificationUri: z.string(),
 		intervalSeconds: z.number().int().positive().max(3600).optional(),
 		expiresInSeconds: z.number().int().positive().max(86400).optional(),
 	}),
@@ -1379,8 +1368,8 @@ export const ModelDisableRequest = ModelRoute;
 // ---------------------------------------------------------------------------
 
 export const ExternalAgentCandidate = z.strictObject({
-	candidatePath: z.string().min(1).max(MAX_PATH_LENGTH),
-	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH).nullable(),
+	candidatePath: z.string().min(1),
+	canonicalPath: z.string().min(1).nullable(),
 	version: z.string().min(1).max(64).nullable(),
 	sha256: z.string().length(64).nullable(),
 	status: z.union([z.literal("usable"), z.literal("not_found"), z.literal("rejected")]),
@@ -1390,7 +1379,7 @@ export const ExternalAgentDiscoverCodexResponse = z.strictObject({
 	candidates: z.array(ExternalAgentCandidate).max(100),
 });
 export const ExternalAgentConnectCodexRequest = z.strictObject({
-	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH),
+	canonicalPath: z.string().min(1),
 	version: z.string().min(1).max(64),
 	sha256: z.string().length(64),
 });
@@ -1420,7 +1409,7 @@ export const ExternalAgentStatusResponse = z.strictObject({
 });
 export const RunSteerRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
-	instruction: z.string().min(1).max(12000),
+	instruction: z.string().min(1),
 });
 export const RunSteerResponse = z.strictObject({
 	outcome: z.enum(["injected", "startedNewTurn", "sent"]),
@@ -1430,7 +1419,7 @@ export const RunInterruptRequest = z.strictObject({
 });
 export const RunResumeRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
-	instruction: z.string().min(1).max(12000).optional(),
+	instruction: z.string().min(1).optional(),
 });
 export const RunCancelRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
@@ -1512,7 +1501,7 @@ export const Run = z
 		executorProfile: z.string().min(1).max(64),
 		title: z.string().min(1).max(80),
 		status: RunStatus,
-		artifacts: z.array(ArtifactSummary).max(1000),
+		artifacts: z.array(ArtifactSummary),
 		summary: z.string().max(MAX_STRING_LENGTH).optional(),
 		evidence: z.array(RunEvidenceSummary).max(20),
 		permission: RunPermission.optional(),
@@ -1552,8 +1541,8 @@ export const RunGetRequest = z.strictObject({
 });
 export const RunGetResponse = z.strictObject({
 	run: Run,
-	instruction: z.string().max(12000),
-	inputPaths: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(MAX_ARRAY_LENGTH),
+	instruction: z.string(),
+	inputPaths: z.array(z.string().min(1)),
 	evidence: z
 		.array(
 			z.strictObject({
@@ -1563,7 +1552,7 @@ export const RunGetResponse = z.strictObject({
 				data: BoundedJsonValue.refine((value) => {
 					try {
 						const encoded = JSON.stringify(value);
-						return encoded !== undefined && encoded.length <= 65536;
+						return encoded !== undefined;
 					} catch {
 						return false;
 					}
@@ -2002,7 +1991,7 @@ export const LivePush = z.discriminatedUnion("type", [
 	}),
 ]);
 export const LivePushBatch = z.strictObject({
-	events: z.array(LivePush).max(MAX_ARRAY_LENGTH),
+	events: z.array(LivePush),
 });
 
 // ---------------------------------------------------------------------------
@@ -2088,6 +2077,31 @@ export const RPC = {
 			"mutation",
 		),
 		import: endpoint("character.import", CharacterImportRequest, CharacterResponse, "mutation"),
+		archiveBegin: endpoint(
+			"character.archiveBegin",
+			CharacterArchiveBeginRequest,
+			CharacterArchiveIdentity,
+			"mutation",
+		),
+		archiveAppend: endpoint(
+			"character.archiveAppend",
+			CharacterArchiveAppendRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		archiveFinish: endpoint(
+			"character.archiveFinish",
+			CharacterArchiveIdentity,
+			CharacterResponse,
+			"mutation",
+		),
+		archiveCancel: endpoint(
+			"character.archiveCancel",
+			CharacterArchiveIdentity,
+			EmptyResponse,
+			"mutation",
+		),
+
 		pluginTrustGet: endpoint(
 			"character.pluginTrustGet",
 			CharacterPluginTrustGetRequest,

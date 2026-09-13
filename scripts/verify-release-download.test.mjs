@@ -10,9 +10,17 @@ const COMMIT = "a".repeat(40);
 const TARGETS = ["mac-x64", "mac-arm64", "win-x64", "linux-x64"];
 const STAGES = ["quality", "recovery", "electron-e2e", "web-e2e"];
 
-test("release tags must match the package version and a canonical RC number", () => {
+test("release tags must match the stable version or a canonical RC number", () => {
+	assert.equal(validateReleaseTag("v1.0.0", "1.0.0"), 0);
 	assert.equal(validateReleaseTag("v1.0.0-rc.29", "1.0.0"), 29);
-	for (const tag of ["v1.0.1-rc.29", "v1.0.0-rc.0", "v1.0.0-rc.029", "v1.0.0-rc.next"]) {
+	for (const tag of [
+		"v1.0.1",
+		"v1.0.0-next",
+		"v1.0.1-rc.29",
+		"v1.0.0-rc.0",
+		"v1.0.0-rc.029",
+		"v1.0.0-rc.next",
+	]) {
 		assert.throws(() => validateReleaseTag(tag, "1.0.0"));
 	}
 });
@@ -22,7 +30,7 @@ test("download verification binds all four packages to the final green attestati
 	const result = await verifyReleaseDownload({
 		repoRoot: fixture.root,
 		downloadRoot: fixture.downloadRoot,
-		tag: "v1.0.0-rc.29",
+		tag: "v1.0.0",
 		commit: COMMIT,
 	});
 	assert.equal(result.assets.length, 4);

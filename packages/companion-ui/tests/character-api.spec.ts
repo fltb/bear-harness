@@ -167,14 +167,14 @@ describe("character store API", () => {
 
 	it("propagates RPC failures without running success refreshes", async () => {
 		const { api, callbacks, client } = createCharacterHarness();
-		client.character.import = vi.fn(() =>
+		client.character.archiveBegin = vi.fn(() =>
 			Promise.resolve({
 				ok: false as const,
 				error: { kind: "invalid_request" as const, reason: "bad_package" },
 			}),
 		);
 
-		await expect(api.import([{ path: "bad", base64: "!" }])).rejects.toMatchObject({
+		await expect(api.import(new File(["bad"], "bad.zip"))).rejects.toMatchObject({
 			name: "IpcInvocationError",
 			kind: "invalid_request",
 			reason: "bad_package",

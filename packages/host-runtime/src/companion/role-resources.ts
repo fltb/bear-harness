@@ -8,9 +8,6 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import jsonPatch from "fast-json-patch";
 import { parse } from "yaml";
 
-const MAX_ROLE_RESOURCE_TREE_DEPTH = 64;
-const MAX_ROLE_RESOURCE_TREE_ENTRIES = 10_000;
-
 const StateValue = z.union([z.string(), z.number().finite(), z.boolean()]);
 const { getValueByPointer } = jsonPatch;
 const StateRules = z.record(z.string().min(1).max(160), z.array(StateValue).min(1).max(30));
@@ -182,16 +179,11 @@ export function roleSkillPrompt(skills: readonly RoleSkill[]): string {
 function files(root: string, predicate: (path: string) => boolean): string[] {
 	const collected: string[] = [];
 	const pending: Array<{ directory: string; depth: number }> = [{ directory: root, depth: 0 }];
-	let entriesSeen = 0;
 	while (pending.length > 0) {
 		const current = pending.pop();
 		if (!current) break;
-		if (current.depth > MAX_ROLE_RESOURCE_TREE_DEPTH)
-			throw new Error("role resource tree is too deep");
+
 		for (const entry of readdirSync(current.directory, { withFileTypes: true })) {
-			entriesSeen += 1;
-			if (entriesSeen > MAX_ROLE_RESOURCE_TREE_ENTRIES)
-				throw new Error("role resource tree is too large");
 			const path = join(current.directory, entry.name);
 			const stat = lstatSync(path);
 			if (stat.isDirectory()) pending.push({ directory: path, depth: current.depth + 1 });

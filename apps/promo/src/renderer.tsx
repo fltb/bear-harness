@@ -25,7 +25,6 @@ const transport = createDemoTransport();
 const client = createCompanionClient(transport);
 let disposed = false;
 let currentScene = 0;
-let mediaExpectedOpen = false;
 const submittedInputs = new Set<number>();
 const typedProgress = new Map<number, number>();
 let lastControl = { x: 800, y: 750 };
@@ -154,35 +153,38 @@ async function enterScene(sceneId: number): Promise<void> {
 	if (sceneId === 4) {
 		await switchCharacter("RJ", "rj");
 		await selectConversation("rj-moving-books");
-	} else if (sceneId === 5) {
+	} else if (sceneId === 6) {
 		await switchCharacter("沃利贝尔", "volibear");
 		await selectConversation("volibear-wind");
-	} else if (sceneId === 6 || sceneId === 7) {
+	} else if (sceneId === 8 || sceneId === 9) {
 		await switchCharacter("极昼", "jizhou");
 		await selectConversation("jizhou-night-reading");
-	} else if (sceneId === 8) {
-		await switchCharacter("极昼", "jizhou");
-		await createConversation();
 	} else if (sceneId === 10) {
 		await switchCharacter("极昼", "jizhou");
+		await createConversation();
+	} else if (sceneId === 12) {
+		await switchCharacter("极昼", "jizhou");
 		await selectConversation("jizhou-night-reading");
-	} else if (sceneId === 11) {
+	} else if (sceneId === 13) {
 		await switchCharacter("极昼", "jizhou");
 		await selectConversation("jizhou-night-reading-2");
-		await waitFor(
-			() => visibleButtons().some((button) => buttonLabel(button).includes("查看成果")),
-			"completed work result entry",
-		);
-		clickButton("查看成果");
-		await waitFor(
-			() => visibleButtons().some((button) => buttonLabel(button).includes("保存副本")),
-			"real artifact workspace",
-		);
-	} else if (sceneId === 12) {
+	} else if (sceneId === 14) {
 		await closeResultWorkspace();
 		await switchCharacter("极昼", "jizhou");
 		await selectConversation("jizhou-night-reading");
 	}
+}
+
+async function revealResult(): Promise<void> {
+	await waitFor(
+		() => visibleButtons().some((button) => buttonLabel(button).includes("查看成果")),
+		"completed work result entry",
+	);
+	clickButton("查看成果");
+	await waitFor(
+		() => visibleButtons().some((button) => buttonLabel(button).includes("保存副本")),
+		"real artifact workspace",
+	);
 }
 
 function setComposer(text: string): { area: HTMLTextAreaElement; form: HTMLFormElement } {
@@ -221,26 +223,8 @@ async function inputScene(sceneId: number, progress: number): Promise<void> {
 		);
 	}
 }
-function mediaIsOpen(): boolean {
-	return Boolean(document.querySelector(".media-viewer, [role='dialog'], .dialog"));
-}
-
-async function closeMediaScene(sceneId: number): Promise<void> {
-	if (sceneId !== 3 || !mediaExpectedOpen) return;
-	if (!mediaIsOpen()) throw new Error("real media modal disappeared before close");
-	clickButton("关闭");
-	await waitFor(() => !mediaIsOpen(), "media modal close");
-	mediaExpectedOpen = false;
-}
 async function actionScene(sceneId: number): Promise<void> {
-	if (sceneId === 3) {
-		clickButton("极光书桌");
-		await waitFor(
-			() => Boolean(document.querySelector('[role="dialog"], .dialog')),
-			"real media modal open",
-		);
-		mediaExpectedOpen = true;
-	} else if (sceneId === 7) {
+	if (sceneId === 9) {
 		if (!document.querySelector(".backstage-sheet")) clickButton("角色设置");
 		await waitFor(
 			() => visibleButtons().some((button) => buttonLabel(button).includes("关系记忆")),
@@ -259,27 +243,19 @@ async function actionScene(sceneId: number): Promise<void> {
 					?.textContent?.includes("靠窗坐") === true,
 			"saved explicit memory document",
 		);
-	} else if (sceneId === 11) {
+	} else if (sceneId === 13) {
 		const downloaded = new Promise<void>((resolve) =>
 			window.addEventListener("demo:download", () => resolve(), { once: true }),
 		);
 		clickButton("保存副本");
 		await downloaded;
-	} else if (sceneId === 12) {
+	} else if (sceneId === 14) {
 		// The result workspace is closed on scene entry, before the closing card.
 		return;
 	}
 }
 async function exitScene(sceneId: number): Promise<void> {
-	if (sceneId === 3) await closeMediaScene(sceneId);
-	else if (sceneId === 7) await closeBackstage();
-	if ([3, 4, 5].includes(sceneId)) {
-		clickButton("角色设置");
-		await waitFor(
-			() => document.querySelector(".backstage-sheet") !== null,
-			"visible next-character selector",
-		);
-	}
+	if (sceneId === 9) await closeBackstage();
 }
 
 const demo: DemoApi = {
@@ -290,16 +266,23 @@ const demo: DemoApi = {
 		try {
 			const scene = SCENARIO.find((item) => item.id === sceneId);
 			if (!scene) throw new Error(`unknown scene ${sceneId}`);
-			if (!["enter", "input", "response", "settled", "action", "close", "exit"].includes(phase))
+			if (
+				!["enter", "input", "response", "settled", "action", "close", "exit", "reveal"].includes(
+					phase,
+				)
+			)
 				throw new Error(`unknown demo phase ${phase}`);
 			if (phase === "enter") {
 				currentScene = sceneId;
 				await enterScene(sceneId);
+			} else if (phase === "reveal") {
+				if (sceneId !== 13) throw new Error("Result reveal belongs to scene 13");
+				await revealResult();
 			} else if (phase === "input") await inputScene(sceneId, progress);
 			else if (phase === "response" || phase === "settled" || phase === "action") {
 				if (sceneId !== 0 && scene.user) transport.advance(sceneId, phase, progress);
 				if (phase === "action") await actionScene(sceneId);
-			} else if (phase === "close") await closeMediaScene(sceneId);
+			} else if (phase === "close") return;
 			else if (phase === "exit") await exitScene(sceneId);
 			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 			if (transport.inspect().fault)
@@ -312,7 +295,7 @@ const demo: DemoApi = {
 		}
 	},
 	inspect() {
-		const labels: Record<number, string> = { 3: "极光书桌", 7: "角色设置", 11: "保存副本" };
+		const labels: Record<number, string> = { 9: "角色设置", 13: "保存副本" };
 		const label = labels[currentScene];
 		const target = label
 			? visibleButtons().find((button) => buttonLabel(button).includes(label))

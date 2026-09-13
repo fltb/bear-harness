@@ -223,9 +223,9 @@ export const en = {
 		roleSwitchBusyCancel: "Keep waiting",
 		roleSwitchBusyConfirm: "Stop and switch",
 		roleImport: "Import character package",
-		roleImportInput: "Choose character package folder",
+		roleImportInput: "Choose character ZIP package",
 		roleImportHint:
-			"Choose an extracted character package folder. It will be stored on this device and added to the character list. Packages may contain behavior extensions, so only import sources you trust.",
+			"Choose a character ZIP package. It will be stored on this device and added to the character list. Packages may contain behavior extensions, so only import sources you trust.",
 		roleImportBusy: "Validating and importing...",
 		roleImportDone: "Character package imported",
 		roleImportFailed: "Character package import failed: ",

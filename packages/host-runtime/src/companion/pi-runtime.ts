@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import type { LivePush, ModelThinkingLevel, PiProjectionVersion } from "@bear-harness/protocol";
-import { MAX_PI_LIVE_ITEMS, MAX_PI_QUEUE_CHARACTERS } from "@bear-harness/protocol/schema";
 import type { RecallResult } from "@bear-harness/tdai-core";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -29,15 +28,6 @@ import { loadRolePluginTools } from "./role-resources.js";
 type Images = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
 type ModelRoute = { providerId: string; modelId: string };
 
-function requirePiQueueCapacity(session: AgentSession, nextMessage: string): void {
-	if (session.pendingMessageCount >= MAX_PI_LIVE_ITEMS)
-		throw { kind: "unavailable", reason: "pi_message_queue_full" };
-	let characters = nextMessage.length;
-	for (const message of session.getSteeringMessages()) characters += message.length;
-	for (const message of session.getFollowUpMessages()) characters += message.length;
-	if (characters > MAX_PI_QUEUE_CHARACTERS)
-		throw { kind: "unavailable", reason: "pi_message_queue_full" };
-}
 export interface PiRoleResources {
 	appendSystemPrompt: string;
 	pluginPaths: string[];
@@ -162,7 +152,6 @@ export class PiRuntime {
 		return this.inSessionSequence(sessionId, async () => {
 			const session = await this.requireSessionNow(sessionId);
 			if (session.isStreaming) throw { kind: "unavailable", reason: "pi_session_busy" };
-			requirePiQueueCapacity(session, text);
 			const shouldName =
 				!session.sessionName && !session.messages.some(({ role }) => role === "user");
 			let turn!: Promise<void>;
@@ -361,7 +350,6 @@ export class PiRuntime {
 				.getEntries()
 				.find((entry) => isExternalResult(entry, runId));
 			if (existing) return { delivery: Promise.resolve({ entryId: existing.id }) };
-			requirePiQueueCapacity(session, content);
 			const operations =
 				this.externalDeliveries.get(session) ?? new Map<string, ExternalDelivery>();
 			this.externalDeliveries.set(session, operations);
@@ -560,7 +548,6 @@ export class PiRuntime {
 		text: string,
 		options: { images?: Images; responseGuidance?: string } = {},
 	): Promise<void> {
-		requirePiQueueCapacity(session, text);
 		const operation = Symbol("response-guidance");
 		if (options.responseGuidance !== undefined) {
 			if (this.pendingResponseGuidance.has(session.sessionId)) {
@@ -859,7 +846,6 @@ export class PiRuntime {
 		if (!mimeType) throw new Error("image_type_unsupported");
 		const info = await lstat(path);
 		if (!info.isFile() || info.isSymbolicLink()) throw new Error("image_path_not_regular_file");
-		if (info.size > 20 * 1024 * 1024) throw new Error("image_too_large");
 		if (session.model?.input?.includes("image"))
 			throw new Error("current_model_supports_images_use_native_read");
 		const route = this.options.multimodalFallback(companionId);

@@ -39,8 +39,18 @@ async function waitUntil(check, description, timeout = 30000) {
 async function main() {
 	await mkdir(out, { recursive: true });
 	const timeline = JSON.parse(await readFile(resolve(out, "timeline.json"), "utf8"));
+	const slides = JSON.parse(await readFile(resolve(root, "src/demo/slides.json"), "utf8"));
+	for (const slide of slides) {
+		if (
+			timeline.captions
+				.filter((cue) => cue.slideId === slide.id)
+				.map((cue) => cue.text)
+				.join("") !== slide.narration
+		)
+			throw new Error("Regenerate narration before exporting the revised copy");
+	}
 	const profile = await mkdtemp(resolve(out, ".gpu-profile-"));
-	const raw = resolve(out, "gpu-capture.mkv");
+	const raw = resolve(out, "gpu-capture.ts");
 	const temporary = resolve(out, ".slides-gpu-final.mp4");
 	let browser;
 	let display = 95;
@@ -65,7 +75,7 @@ async function main() {
 			return existsSync(`/tmp/.X11-unix/X${display}`);
 		}, "isolated X11 display");
 		const chrome = launch(
-			"/usr/bin/chromium",
+			process.env.PROMO_CHROMIUM ?? "/usr/bin/chromium",
 			[
 				"--no-sandbox",
 				"--ozone-platform=x11",
@@ -108,15 +118,55 @@ async function main() {
 		const cdp = await browser.newBrowserCDPSession();
 		const info = await cdp.send("SystemInfo.getInfo");
 		const renderer = info.gpu.auxAttributes.glRenderer;
-		if (!renderer.includes("NVIDIA") || info.gpu.featureStatus.gpu_compositing !== "enabled") {
+		if (
+			!renderer ||
+			/swiftshader|llvmpipe|softpipe|software/i.test(renderer) ||
+			info.gpu.featureStatus.gpu_compositing !== "enabled"
+		) {
 			throw new Error(`Hardware rendering unavailable: ${renderer}`);
 		}
 		console.log(`GPU renderer: ${renderer}`);
+		const vaapi = !renderer.includes("NVIDIA");
+		const videoEncoder = vaapi ? "h264_vaapi" : "h264_nvenc";
+		const deviceArgs = vaapi
+			? ["-vaapi_device", process.env.PROMO_VAAPI_DEVICE ?? "/dev/dri/renderD128"]
+			: [];
+		const encodeArgs = (quality) =>
+			vaapi
+				? [
+						"-c:v",
+						videoEncoder,
+						"-rc_mode",
+						"CQP",
+						"-qp",
+						String(quality),
+						"-flags",
+						"-global_header",
+					]
+				: [
+						"-c:v",
+						videoEncoder,
+						"-preset",
+						"p4",
+						"-rc",
+						"vbr",
+						"-cq",
+						String(quality),
+						"-b:v",
+						"0",
+					];
+		const faults = [];
+		page.on("pageerror", (error) => faults.push(error.message));
+		page.on("response", (response) => {
+			if (response.status() >= 400) faults.push(`HTTP ${response.status()} ${response.url()}`);
+		});
+		console.log(`Hardware video encoder: ${videoEncoder}`);
 		await writeFile(resolve(out, "gpu-renderer.json"), JSON.stringify(info.gpu, null, 2));
 		await page.evaluate(() => window.promo.seek(0));
 
 		// x11grab continuously captures the isolated display. No screenshot loop.
 		const recorder = launch("ffmpeg", [
+			...deviceArgs,
 			"-hide_banner",
 			"-loglevel",
 			"info",
@@ -134,17 +184,8 @@ async function main() {
 			`:${display}.0`,
 			"-an",
 			"-vf",
-			"scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p",
-			"-c:v",
-			"h264_nvenc",
-			"-preset",
-			"p4",
-			"-rc",
-			"vbr",
-			"-cq",
-			"16",
-			"-b:v",
-			"0",
+			`scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=${vaapi ? "nv12,hwupload" : "yuv420p"}`,
+			...encodeArgs(16),
 			"-color_range",
 			"tv",
 			"-colorspace",
@@ -203,21 +244,32 @@ async function main() {
 			}
 		}, 1000);
 		try {
-			await page.waitForFunction(
-				() =>
-					document.querySelector("audio").ended ||
-					window.promo.inspect().time >= window.promo.duration - 0.02,
-				undefined,
-				{ timeout: (timeline.duration + 30) * 1000 },
-			);
+			await Promise.race([
+				page.waitForFunction(
+					() =>
+						document.querySelector("audio").ended ||
+						window.promo.inspect().time >= window.promo.duration - 0.02,
+					undefined,
+					{ timeout: (timeline.duration + 30) * 1000 },
+				),
+				recorder.finished.then(() => {
+					throw new Error(`Capture stopped before playback completed: ${recorder.log}`);
+				}),
+			]);
 		} finally {
 			clearInterval(progress);
 		}
 		await sleep(400);
 		recorder.stdin.write("q\n");
 		if ((await recorder.finished) !== 0) throw new Error(recorder.log);
-		console.log("Recording complete; trimming preroll and muxing original narration with NVENC");
+		const finalState = await page.evaluate(() => window.promo.inspect());
+		if (faults.length || finalState.demo.fault || finalState.time < timeline.duration - 0.15)
+			throw new Error(`Incomplete promo playback: ${JSON.stringify({ faults, finalState })}`);
+		console.log(
+			`Recording complete; trimming preroll and muxing original narration with ${videoEncoder}`,
+		);
 		const encoder = launch("ffmpeg", [
+			...deviceArgs,
 			"-hide_banner",
 			"-loglevel",
 			"error",
@@ -234,18 +286,9 @@ async function main() {
 			"1:a:0",
 			"-t",
 			String(timeline.duration),
-			"-c:v",
-			"h264_nvenc",
-			"-preset",
-			"p4",
-			"-rc",
-			"vbr",
-			"-cq",
-			"19",
-			"-b:v",
-			"0",
-			"-pix_fmt",
-			"yuv420p",
+			...(vaapi ? ["-vf", "format=nv12,hwupload"] : ["-pix_fmt", "yuv420p"]),
+			...encodeArgs(19),
+			...(vaapi ? ["-bsf:v", "extract_extradata"] : []),
 			"-r",
 			"30",
 			"-fps_mode",
@@ -274,7 +317,8 @@ async function main() {
 				{
 					renderer,
 					capture: "continuous x11grab on isolated Xvfb display",
-					encoder: "h264_nvenc",
+					encoder: videoEncoder,
+					faults,
 					fps: 30,
 					width: 1920,
 					height: 1080,

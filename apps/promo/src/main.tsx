@@ -14,19 +14,21 @@ interface PromoSlide {
 
 const PROMO_SLIDES = slides as PromoSlide[];
 const PAGE_BY_SCENE: Record<number, number> = {
-	0: 1,
-	1: 2,
-	2: 2,
-	3: 3,
-	4: 4,
-	5: 4,
-	6: 5,
-	7: 5,
-	8: 6,
-	9: 7,
-	10: 7,
-	11: 8,
-	12: 9,
+	"0": 1,
+	"1": 2,
+	"2": 2,
+	"3": 3,
+	"4": 4,
+	"5": 4,
+	"6": 4,
+	"7": 4,
+	"8": 5,
+	"9": 5,
+	"10": 6,
+	"11": 7,
+	"12": 7,
+	"13": 8,
+	"14": 9,
 };
 
 const initialState: PromoState = {
@@ -139,7 +141,7 @@ function PromoStage() {
 				style={{ transform: `translate(-50%, -50%) scale(${stageScale()})` }}
 			>
 				<header class="promo-header">
-					<div class="promo-brand" aria-label="白熊客栈">
+					<div class="promo-brand">
 						<span class="promo-brand-mark" aria-hidden="true">
 							◒
 						</span>
@@ -169,7 +171,7 @@ function PromoStage() {
 					</nav>
 				</header>
 
-				<div class="promo-window" aria-label="白熊客栈应用窗口">
+				<section class="promo-window" aria-label="白熊客栈应用窗口">
 					<div class="promo-window-titlebar">
 						<div class="promo-window-controls" aria-hidden="true">
 							<span />
@@ -189,7 +191,7 @@ function PromoStage() {
 							<iframe ref={iframe} title="白熊客栈真实应用演示" />
 						</div>
 					</div>
-				</div>
+				</section>
 
 				<PromoOverlay state={state} record={record} page={currentPage()} />
 				<Show when={debug}>

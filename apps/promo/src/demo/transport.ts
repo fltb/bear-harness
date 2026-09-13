@@ -23,7 +23,7 @@ export const DEMO_MODEL = Object.freeze({
 const NOW = "2026-09-13T00:00:00.000Z";
 const ARTIFACT_ID = "artifact-night-reading";
 const RUN_ID = "run-night-reading";
-const ARTIFACT_SHA = "6835c6ec506a26c088d5c5f9a0d2842a4b253827f711dd5f744ce5be5bfbefd6";
+const ARTIFACT_SHA = "28c44576ac11a5fb6646ba8b0ebb7f9abc96e8adeef92230b25d13a07e13dd71";
 const EMPTY_LIVE = () => ({
 	isStreaming: false,
 	isRetrying: false,
@@ -111,9 +111,9 @@ export class DemoTransport implements HostTransport {
 	private readonly settled = new Set<number>();
 
 	constructor() {
-		this.createConversation("jizhou-night-reading", "jizhou", "夜读角");
-		this.createConversation("rj-moving-books", "rj", "搬书");
-		this.createConversation("volibear-wind", "volibear", "迎风而行");
+		this.createConversation("jizhou-night-reading", "jizhou", "夜班闲聊");
+		this.createConversation("rj-moving-books", "rj", "新手套");
+		this.createConversation("volibear-wind", "volibear", "冰封河岸");
 	}
 
 	private createConversation(id: string, characterId: string, title: string): DemoConversation {
@@ -201,7 +201,7 @@ export class DemoTransport implements HostTransport {
 			conversationId: this.workConversationId ?? "jizhou-night-reading",
 			triggerEntryId: "demo-user-9",
 			executorProfile: "demo",
-			title: "整理夜读角活动说明",
+			title: "整理读书邀请",
 			status: this.runStatus,
 			artifacts:
 				this.runStatus === "completed"
@@ -297,7 +297,7 @@ export class DemoTransport implements HostTransport {
 						candidates: [
 							{
 								id: "private-uninstalled",
-								name: "本制作不启用自动记忆",
+								name: "本演示的自动记忆已关闭",
 								dimensions: 384,
 								isDefault: true,
 								target: { kind: "candidate", candidateId: "private-uninstalled" },
@@ -411,11 +411,11 @@ export class DemoTransport implements HostTransport {
 				}
 				case "conversation.create": {
 					const title =
-						this.preparedScene === 8
-							? "夜读角活动说明"
+						this.preparedScene === 10
+							? "读书邀请"
 							: ((request as { title?: string }).title ?? "新对话");
 					const id =
-						this.preparedScene === 8
+						this.preparedScene === 10
 							? "jizhou-night-reading-2"
 							: `${this.currentCharacterId}-conversation-${++this.conversationCounter}`;
 					const value = this.createConversation(id, this.currentCharacterId, title);
@@ -452,14 +452,14 @@ export class DemoTransport implements HostTransport {
 						type: "message_end",
 						message: userEntry.message,
 					});
-					if (scene.id === 7) {
+					if (scene.id === 9) {
 						this.tool(value, "explicit_memory", "demo-memory-call", {
 							changed: true,
-							content: "- 喜欢靠窗坐。\n- 不喜欢活动里轮流自我介绍。\n",
+							content: "- 喜欢靠窗坐。\n- 和朋友一起看书时，喜欢各自阅读，读到有意思的地方再聊。\n",
 						});
 						this.memorySaved = true;
 					}
-					if (scene.id === 9) {
+					if (scene.id === 11) {
 						this.workConversationId = payload.conversationId;
 						this.runStatus = "running";
 						this.runEvent();
@@ -472,7 +472,7 @@ export class DemoTransport implements HostTransport {
 					const explicit =
 						payload.kind === "explicit"
 							? payload.characterId === "jizhou" && this.memorySaved
-								? "- 喜欢靠窗坐。\n- 不喜欢活动里轮流自我介绍。\n"
+								? "- 喜欢靠窗坐。\n- 和朋友一起看书时，喜欢各自阅读，读到有意思的地方再聊。\n"
 								: ""
 							: undefined;
 					return this.ok({
@@ -514,7 +514,7 @@ export class DemoTransport implements HostTransport {
 				case "run.get":
 					return this.ok({
 						run: this.runProjection(),
-						instruction: "整理夜读角 Markdown 活动说明",
+						instruction: "整理读书邀请 Markdown 文件",
 						inputPaths: [],
 						evidence: [],
 					});
@@ -581,7 +581,7 @@ export class DemoTransport implements HostTransport {
 						localEmbeddingCandidates: [
 							{
 								id: "private-uninstalled",
-								name: "本制作不启用自动记忆",
+								name: "本演示的自动记忆已关闭",
 								dimensions: 384,
 								isDefault: true,
 							},
@@ -701,9 +701,7 @@ export class DemoTransport implements HostTransport {
 				this.fail("demo.advance", `scene ${sceneId} is not pending`);
 			const value = this.conversations.get(current.conversationId);
 			if (!value) this.fail("demo.advance", "scripted conversation disappeared");
-			if (sceneId === 3)
-				this.tool(value, "host_media", "demo-media-call", { mediaId: "continuity_light" });
-			if (sceneId === 9)
+			if (sceneId === 11)
 				this.tool(value, "host_delegate", "demo-work-call", {
 					accepted: true,
 					executor: "pi",
@@ -734,7 +732,7 @@ export class DemoTransport implements HostTransport {
 			if (sceneId === 2) this.invalidate([["companionState", current.conversationId]]);
 			return;
 		}
-		if (phase === "action" && sceneId === 10 && this.runStatus === "running") {
+		if (phase === "action" && sceneId === 12 && this.runStatus === "running") {
 			this.runStatus = "completed";
 			this.runEvent();
 			this.invalidate([["runs"]]);

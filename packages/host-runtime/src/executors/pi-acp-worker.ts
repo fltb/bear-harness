@@ -281,7 +281,7 @@ class PiAcpAgent {
 					sessionUpdate: "agent_message_chunk",
 					content: {
 						type: "text",
-						text: delta.delta.slice(0, 12_000),
+						text: delta.delta,
 					},
 				};
 			}
@@ -299,10 +299,7 @@ class PiAcpAgent {
 						sessionUpdate: "agent_message_chunk",
 						content: { type: "text", text: "" },
 						_meta: {
-							bearError: (message.errorMessage || `pi_stop_reason:${message.stopReason}`).slice(
-								0,
-								2_000,
-							),
+							bearError: message.errorMessage || `pi_stop_reason:${message.stopReason}`,
 						},
 					};
 				}
@@ -313,7 +310,7 @@ class PiAcpAgent {
 							sessionId,
 							update: {
 								sessionUpdate: "agent_message_chunk",
-								content: { type: "text", text: text.slice(0, 12_000) },
+								content: { type: "text", text: text },
 							},
 						});
 				}
@@ -395,25 +392,30 @@ function extractText(value: unknown): string {
 	return "";
 }
 
-function publicPayload(value: unknown, depth = 0, budget = { left: 12_000 }): unknown {
-	if (budget.left <= 0 || depth >= 6) return "[truncated]";
-	if (typeof value === "string") {
-		const text = value.slice(0, budget.left);
-		budget.left -= text.length;
-		return text;
-	}
-	if (value === null || typeof value === "number" || typeof value === "boolean") return value;
-	if (Array.isArray(value))
-		return value.slice(0, 64).map((item) => publicPayload(item, depth + 1, budget));
+function publicPayload(value: unknown, seen = new Set<object>()): unknown {
+	if (
+		value === null ||
+		typeof value === "boolean" ||
+		typeof value === "number" ||
+		typeof value === "string"
+	)
+		return value;
 	if (value && typeof value === "object") {
-		const result: Record<string, unknown> = {};
-		for (const [key, item] of Object.entries(value).slice(0, 64)) {
-			if (/signature|thinking|token|secret|password|authorization|api.?key|^data$/i.test(key))
-				continue;
-			if (budget.left <= 0) break;
-			budget.left -= key.length;
-			result[key] = publicPayload(item, depth + 1, budget);
-		}
+		if (seen.has(value)) return "[circular]";
+		seen.add(value);
+		const result = Array.isArray(value)
+			? value.map((item) => publicPayload(item, seen))
+			: Object.fromEntries(
+					Object.entries(value)
+						.filter(
+							([key]) =>
+								!/signature|thinking|token|secret|password|authorization|api.?key|^data$/i.test(
+									key,
+								),
+						)
+						.map(([key, item]) => [key, publicPayload(item, seen)]),
+				);
+		seen.delete(value);
 		return result;
 	}
 	return null;

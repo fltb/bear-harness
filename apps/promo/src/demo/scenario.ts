@@ -15,13 +15,13 @@ export interface PromoScene {
 /** The audio owner's JSON is the one authoritative script; no duplicate prose is maintained here. */
 export const SCENARIO: readonly PromoScene[] = scenarioData as readonly PromoScene[];
 
-const NIGHT_READING_MARKDOWN = `# 夜读角
-带一本想读的书，来坐一会儿。
+const NIGHT_READING_MARKDOWN = `# 一起来客栈看书
 
-- 自由参加，不安排轮流自我介绍。
-- 想分享的时候再开口，也可以自己安静读书。
-- 日期：待定。
-- 报名方式：待定。
+想约大家带本书来白熊客栈坐坐。我们找张靠窗的桌子，各自看书，读到有意思的地方就聊一会儿。
+
+- 时间：待定，大家一起商量。
+- 地点：白熊客栈。
+- 带上：一本想看的书。
 `;
 
 export { NIGHT_READING_MARKDOWN };
@@ -130,7 +130,7 @@ function baseCharacter(
 			},
 			first_meeting: meeting(name),
 		},
-		system_prompt: "这是白熊客栈私有制作中的预设情景角色，不调用实时模型。",
+		system_prompt: "这是白熊客栈私有制作中的预设情景角色，回复来自预先编排的演示脚本。",
 		scenes: [{ id: sceneId, label: sceneLabel, description: sceneLabel, backgroundUrl: sceneUrl }],
 		visual: {
 			defaultSceneId: sceneId,
@@ -158,7 +158,7 @@ export const DEMO_CHARACTERS: Readonly<Record<string, CharacterDisplay>> = Objec
 		"/local-content/media/jizhou/avatar.png",
 		"presence",
 		"/local-content/media/jizhou/expression-presence.png",
-		"椅子擦干净了。",
+		"晚上好。我在前台。",
 		[
 			media("continuity_light", "极光书桌", "/local-content/media/jizhou/cg-continuity-light.webp"),
 			media(
@@ -179,7 +179,7 @@ export const DEMO_CHARACTERS: Readonly<Record<string, CharacterDisplay>> = Objec
 		"/local-content/media/rj/avatar.webp",
 		"normal",
 		"/local-content/media/rj/expression-normal.webp",
-		"让开点，我来。",
+		"“找我什么事？”",
 		[
 			media("rj_card", "RJ 人物卡", "/local-content/media/rj/card-rj.webp"),
 			media("rj_photo", "RJ 照片", "/local-content/media/rj/photo-rj.webp"),
@@ -188,7 +188,7 @@ export const DEMO_CHARACTERS: Readonly<Record<string, CharacterDisplay>> = Objec
 	volibear: baseCharacter(
 		"volibear",
 		"沃利贝尔",
-		"不灭狂雷",
+		"弗雷尔卓德的风暴之熊",
 		["#07131f", "#0b1b2b", "#132d43", "#77c7ef"],
 		"frozen_river",
 		"冰封河岸",
@@ -196,7 +196,7 @@ export const DEMO_CHARACTERS: Readonly<Record<string, CharacterDisplay>> = Objec
 		"/local-content/media/volibear/avatar-spirit-blossom.png",
 		"presence",
 		"/local-content/media/volibear/expressions/presence.png",
-		"风还没停。",
+		"“说吧。”",
 		[
 			media(
 				"listening_under_ice",

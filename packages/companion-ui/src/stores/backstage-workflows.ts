@@ -301,16 +301,12 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			if (files.length === 0 || !api?.import) return;
 			setImporting(true);
 			setRoleFeedback(undefined);
-			void Promise.all(
-				files.map(async (file) => {
-					const bytes = new Uint8Array(await file.arrayBuffer());
-					let binary = "";
-					for (let offset = 0; offset < bytes.length; offset += 32_768)
-						binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
-					return { path: file.webkitRelativePath || file.name, base64: btoa(binary) };
-				}),
-			)
-				.then((payload) => api.import(payload))
+			void Promise.resolve()
+				.then(() => {
+					if (files.length !== 1 || !files[0]?.name.toLowerCase().endsWith(".zip"))
+						throw new Error("character_archive_invalid");
+					return api.import(files[0]);
+				})
 				.then(() => setRoleFeedback(done))
 				.catch((error) => setRoleFeedback(`${failed}${messageOf(error)}`))
 				.finally(() => setImporting(false));

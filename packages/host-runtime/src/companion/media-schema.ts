@@ -35,7 +35,7 @@ export const CharacterMediaItemSchema = z
 			});
 	});
 
-export const CharacterMediaSchema = z.array(CharacterMediaItemSchema).max(200);
+export const CharacterMediaSchema = z.array(CharacterMediaItemSchema);
 export type CharacterMediaDefinition = z.infer<typeof CharacterMediaSchema>;
 
 const ANIMATION_EXTENSIONS = new Set([".gif", ".webp", ".apng", ".png"]);

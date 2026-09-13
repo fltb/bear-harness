@@ -14,6 +14,8 @@ export default defineConfig({
 	plugins: [solidPlugin()],
 	test: {
 		environment: "jsdom",
+		// Bound concurrent jsdom/coverage workers to avoid CPU and memory starvation.
+		maxWorkers: 2,
 		include: ["tests/**/*.spec.{ts,tsx}"],
 		setupFiles: ["./tests/setup.ts"],
 		coverage: {

@@ -340,6 +340,7 @@ export class HostRuntime {
 			failure ??= error;
 		}
 		this.uninstallFsAudit?.uninstall();
+		await this.characterLoader.closeImports();
 		this.storage.close();
 		if (failure) throw failure;
 	}

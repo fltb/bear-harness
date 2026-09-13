@@ -18,7 +18,6 @@ import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { readCodexSessionCredential } from "./codex-session-credential.ts";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
-import { MAX_RPC_REQUEST_BYTES } from "./http-contract.ts";
 import { collectSoakProcessMetrics } from "./soak-metrics.ts";
 
 // Fail fast on an invalid product identity before serving it: the shared
@@ -213,13 +212,13 @@ const runtime = createHostRuntime({
 });
 diagnostics.setPolicySource(() => runtime.diagnosticsPolicy);
 
-async function readBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
+async function readBody(request: IncomingMessage, maxBytes?: number): Promise<unknown> {
 	const chunks: Buffer[] = [];
 	let bytes = 0;
 	for await (const chunk of request) {
 		const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 		bytes += value.length;
-		if (bytes > maxBytes) {
+		if (maxBytes !== undefined && bytes > maxBytes) {
 			throw new HttpError(413, "body_too_large", "request_body_too_large");
 		}
 		chunks.push(value);
@@ -424,7 +423,7 @@ const server = createServer(async (request, response) => {
 			return;
 		}
 		try {
-			const params = await readBody(request, MAX_RPC_REQUEST_BYTES);
+			const params = await readBody(request);
 			// Dispatch outcomes — success and domain failure alike — resolve as
 			// HTTP 200 with the original validated envelope so the companion
 			// client can distinguish an RPC failure from a transport rejection
@@ -475,7 +474,7 @@ const server = createServer(async (request, response) => {
 	}
 	if (request.method === "POST" && url.pathname === "/diagnostics/renderer-fault") {
 		try {
-			const body = await readBody(request);
+			const body = await readBody(request, 64 * 1024);
 			const parsed = parseRendererFault(body);
 			if (!parsed) {
 				diagnostics.emit("diagnostics.input_rejected", { reason: "shape" });

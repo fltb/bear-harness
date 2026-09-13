@@ -44,7 +44,7 @@ describe("state-gated role Skill resources", () => {
 		expect(loadRoleSkills([directory])).toMatchObject([{ name: "numeric-metadata", priority: 50 }]);
 	});
 
-	it("rejects a resource tree deeper than the bounded traversal contract", () => {
+	it("loads a Skill beyond the former directory-depth quota", () => {
 		const directory = mkdtempSync(join(tmpdir(), "bear-role-skill-depth-"));
 		temporaryDirectories.push(directory);
 		let nested = directory;
@@ -53,7 +53,11 @@ describe("state-gated role Skill resources", () => {
 			mkdirSync(nested);
 		}
 
-		expect(() => loadRoleSkills([directory])).toThrow("role resource tree is too deep");
+		writeFileSync(
+			join(nested, "SKILL.md"),
+			"---\nname: nested-skill\ndescription: A deeply nested Skill.\ntriggers: { include: [Read this resource], exclude: [Unrelated request] }\nallowed-tools: [host_state]\npriority: 50\n---\nRead the supplied resource.\n",
+		);
+		expect(loadRoleSkills([directory])).toMatchObject([{ name: "nested-skill" }]);
 	});
 
 	it("derives Skill activity from package metadata without role-name branches", () => {

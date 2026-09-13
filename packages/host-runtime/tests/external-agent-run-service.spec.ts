@@ -457,7 +457,7 @@ describe("ExternalAgentRunService output capture", () => {
 		}
 	});
 
-	it("fails capture before copying an output tree that exceeds depth or byte limits", async () => {
+	it("captures outputs beyond former depth and total byte quotas", async () => {
 		for (const kind of ["depth", "bytes"] as const) {
 			const fixture = setup({
 				launch: async ({ task, emit }) => {
@@ -488,17 +488,17 @@ describe("ExternalAgentRunService output capture", () => {
 				});
 				await vi.waitFor(() => {
 					expect(fixture.service.list()[0]).toMatchObject({
-						status: "failed",
-						summary: "output_snapshot_failed",
+						status: "completed",
+						summary: "done",
 					});
 				});
-				expect(fixture.service.list()[0]?.artifacts).toEqual([]);
+				expect(fixture.service.list()[0]?.artifacts).toHaveLength(kind === "bytes" ? 3 : 0);
 			} finally {
 				await fixture.service.close();
 				fixture.database.close();
 			}
 		}
-	});
+	}, 30_000);
 
 	it("rejects an output root replaced with a symlink", async () => {
 		const outside = mkdtempSync(join(tmpdir(), "bear-run-outside-"));

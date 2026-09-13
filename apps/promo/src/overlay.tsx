@@ -22,7 +22,7 @@ export function PromoOverlay(props: PromoOverlayProps) {
 				style={{ transform: cursorPosition() }}
 			/>
 			<Show when={props.page === 4}>
-				<p class="promo-import-note">RJ、沃利贝尔：外部角色包导入示例，不随应用提供</p>
+				<p class="promo-import-note">RJ、沃利贝尔：外部角色包导入示例，需单独准备</p>
 			</Show>
 			<Show when={props.page === 9}>
 				<section class="promo-closing-info">
@@ -38,7 +38,7 @@ export function PromoOverlay(props: PromoOverlayProps) {
 					<small>
 						本片为预设情景演示，
 						<br />
-						不代表实时模型输出。
+						对话采用预先编排的内容。
 					</small>
 				</section>
 			</Show>

@@ -10,7 +10,14 @@ function collectTypeScriptFiles(directory) {
 		left.name.localeCompare(right.name),
 	);
 	for (const entry of entries) {
-		if (entry.isDirectory() && (entry.name === "dist" || entry.name === "node_modules")) continue;
+		if (
+			entry.isDirectory() &&
+			(entry.name === "dist" ||
+				entry.name === "node_modules" ||
+				entry.name === ".local-output" ||
+				entry.name === ".local-content")
+		)
+			continue;
 		const path = join(directory, entry.name);
 		if (entry.isDirectory()) {
 			files.push(...collectTypeScriptFiles(path));

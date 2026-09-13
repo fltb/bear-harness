@@ -1,5 +1,5 @@
 export type PromoPhase = "enter" | "input" | "response" | "settled" | "action" | "exit";
-type DemoPhase = PromoPhase | "close";
+type DemoPhase = PromoPhase | "close" | "reveal";
 
 export interface PromoScene {
 	id: number;
@@ -23,6 +23,7 @@ export interface TimelineScene {
 	narrationEnd: number | null;
 	actionStart: number;
 	closeAt?: number;
+	resultOpenAt?: number;
 	exitAt?: number;
 }
 
@@ -96,8 +97,8 @@ function assertTimeline(value: unknown): PromoTimeline {
 	if (!Array.isArray(candidate.scenes) || !Array.isArray(candidate.captions)) {
 		throw new Error("timeline.json must contain scenes and captions arrays");
 	}
-	if (candidate.scenes.length !== 13)
-		throw new Error(`timeline.json must contain 13 scenes, received ${candidate.scenes.length}`);
+	if (candidate.scenes.length !== 15)
+		throw new Error(`timeline.json must contain 15 scenes, received ${candidate.scenes.length}`);
 	const scenes = candidate.scenes.map((raw, index) => {
 		if (!raw || typeof raw !== "object") throw new Error(`timeline scene ${index} is invalid`);
 		const scene = raw as Record<string, unknown>;
@@ -114,19 +115,26 @@ function assertTimeline(value: unknown): PromoTimeline {
 			if (typeof scene[key] !== "number" || !Number.isFinite(scene[key]))
 				throw new Error(`timeline scene ${index} has invalid ${key}`);
 		}
-		if (!Number.isInteger(scene.id) || Number(scene.id) < 0 || Number(scene.id) > 12)
+		if (!Number.isInteger(scene.id) || Number(scene.id) < 0 || Number(scene.id) > 14)
 			throw new Error(`timeline scene ${index} has invalid id`);
 		for (const key of ["narrationStart", "narrationEnd"]) {
 			if (scene[key] !== null && (typeof scene[key] !== "number" || !Number.isFinite(scene[key])))
 				throw new Error(`timeline scene ${index} has invalid ${key}`);
 		}
-		for (const key of ["closeAt", "exitAt"]) {
+		for (const key of ["closeAt", "exitAt", "resultOpenAt"]) {
 			if (
 				scene[key] !== undefined &&
 				(typeof scene[key] !== "number" || !Number.isFinite(scene[key]))
 			)
 				throw new Error(`timeline scene ${index} has invalid ${key}`);
 		}
+		if (
+			scene.resultOpenAt !== undefined &&
+			(scene.id !== 13 ||
+				Number(scene.resultOpenAt) < Number(scene.start) ||
+				Number(scene.resultOpenAt) > Number(scene.actionStart))
+		)
+			throw new Error(`timeline scene ${index} has invalid resultOpenAt`);
 		if (Number(scene.end) < Number(scene.start))
 			throw new Error(`timeline scene ${index} has reversed bounds`);
 		if (scene.closeAt !== undefined && scene.id !== 3)
@@ -147,8 +155,8 @@ function assertTimeline(value: unknown): PromoTimeline {
 		return scene as unknown as TimelineScene;
 	});
 	const ids = scenes.map((scene) => scene.id);
-	if (new Set(ids).size !== 13 || ids.some((id, index) => id !== index))
-		throw new Error("timeline scenes must contain contiguous ids 0 through 12");
+	if (new Set(ids).size !== 15 || ids.some((id, index) => id !== index))
+		throw new Error("timeline scenes must contain contiguous ids 0 through 14");
 	const captions = candidate.captions.map((raw, index) => {
 		if (!raw || typeof raw !== "object") throw new Error(`caption ${index + 1} is invalid`);
 		const caption = raw as Record<string, unknown>;
@@ -349,7 +357,7 @@ export function createPromoDirector(options: PromoDirectorOptions): PromoDirecto
 		if (time < scene.responseStart) return "input";
 		if (time < scene.responseEnd) return "response";
 		if (time < scene.actionStart) return "settled";
-		const exitAt = scene.exitAt ?? ([3, 4, 5].includes(scene.id) ? scene.end - 1.2 : scene.end);
+		const exitAt = scene.exitAt ?? ([3, 5, 7].includes(scene.id) ? scene.end - 1.2 : scene.end);
 		if (time < exitAt) return "action";
 		return "exit";
 	};
@@ -387,8 +395,12 @@ export function createPromoDirector(options: PromoDirectorOptions): PromoDirecto
 	};
 
 	const cameraAt = (scene: TimelineScene | undefined, time: number) => {
-		if (scene?.id !== 11) return { cameraScale: 1, cameraX: 0, cameraY: 0 };
-		const zoomIn = phaseProgress(time, scene.start + 0.5, scene.start + 1.25);
+		if (scene?.id !== 13) return { cameraScale: 1, cameraX: 0, cameraY: 0 };
+		const zoomIn = phaseProgress(
+			time,
+			(scene.resultOpenAt ?? scene.start) + 0.5,
+			(scene.resultOpenAt ?? scene.start) + 1.25,
+		);
 		const zoomOut = 1 - phaseProgress(time, scene.actionStart - 1, scene.actionStart - 0.25);
 		const zoom = Math.min(zoomIn, zoomOut);
 		return { cameraScale: 1 + 0.9 * zoom, cameraX: -760 * zoom, cameraY: -10 * zoom };
@@ -420,10 +432,18 @@ export function createPromoDirector(options: PromoDirectorOptions): PromoDirecto
 			}
 			await invokeProgressively(scene, "response", 1);
 			await invokeOnce(scene, "settled");
+			if (scene.resultOpenAt !== undefined) {
+				if (bounded < scene.resultOpenAt) break;
+				const key = phaseKey(scene, "reveal");
+				if (!phaseMarks.has(key)) {
+					await invokePhase(scene, "reveal");
+					phaseMarks.set(key, 1);
+				}
+			}
 			if (bounded < scene.actionStart) break;
 			await invokeOnce(scene, "action");
 			const closeAt = scene.closeAt ?? Number.POSITIVE_INFINITY;
-			const exitAt = scene.exitAt ?? ([3, 4, 5].includes(scene.id) ? scene.end - 1.2 : scene.end);
+			const exitAt = scene.exitAt ?? ([3, 5, 7].includes(scene.id) ? scene.end - 1.2 : scene.end);
 			if (scene.closeAt !== undefined && bounded < closeAt) break;
 			if (scene.closeAt !== undefined) await invokeClose(scene);
 			if (bounded < exitAt) break;

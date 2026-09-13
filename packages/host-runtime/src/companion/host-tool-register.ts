@@ -89,20 +89,20 @@ const DocumentArgs = z.strictObject({
 });
 const ImageArgs = z.strictObject({ path: z.string().min(1).max(4096) });
 const DelegateArgs = z.strictObject({
-	instruction: z.string().min(1).max(12_000),
-	inputPaths: z.array(z.string().min(1).max(4096)).max(10).default([]),
+	instruction: z.string().min(1),
+	inputPaths: z.array(z.string().min(1)).default([]),
 });
 const RunReadArgs = z.strictObject({ runId: z.string().min(1).max(256).optional() });
 const RunControlArgs = z.discriminatedUnion("action", [
 	z.strictObject({
 		action: z.literal("steer"),
 		runId: z.string().min(1).max(256),
-		instruction: z.string().min(1).max(12_000),
+		instruction: z.string().min(1),
 	}),
 	z.strictObject({
 		action: z.literal("resume"),
 		runId: z.string().min(1).max(256),
-		instruction: z.string().min(1).max(12_000).optional(),
+		instruction: z.string().min(1).optional(),
 	}),
 	z.strictObject({
 		action: z.enum(["interrupt", "cancel", "retryDelivery"]),
@@ -325,11 +325,6 @@ async function readDocument(args: z.infer<typeof DocumentArgs>): Promise<ToolRes
 			extractAttachments: false,
 			ocr: false,
 			includeRawContent: false,
-			decompressionLimits: {
-				maxZipEntries: 20_000,
-				maxUncompressedBytes: 256 * 1024 * 1024,
-				maxTableCells: 1_000_000,
-			},
 		});
 		const markdown = String((await ast.to("md")).value);
 		const offset = Math.min(args.offset ?? 0, markdown.length);

@@ -87,7 +87,7 @@ describe("executor control IPC schemas", () => {
 		).toBe(false);
 	});
 
-	it("accepts bounded continuation instructions and reports steering without claiming completion", () => {
+	it("accepts continuation instructions beyond the former quota and reports steering without claiming completion", () => {
 		expect(
 			schema("run.resume").safeParse({
 				runId: "run-1",
@@ -99,7 +99,7 @@ describe("executor control IPC schemas", () => {
 				runId: "run-1",
 				instruction: "x".repeat(12001),
 			}).success,
-		).toBe(false);
+		).toBe(true);
 		const receipt = CHANNEL_CONTRACTS["run.steer"]!.response;
 		expect(receipt.safeParse({ outcome: "injected" }).success).toBe(true);
 		expect(receipt.safeParse({ outcome: "sent" }).success).toBe(true);

@@ -229,7 +229,7 @@ export interface CharacterApi {
 	characters(): CharacterSummary[];
 	list(): Promise<CharacterListData>;
 	activate(characterId: string): Promise<void>;
-	import(files: Array<{ path: string; base64: string }>): Promise<void>;
+	import(file: File): Promise<void>;
 	pluginTrust(characterId: string): Promise<{
 		origin: "official" | "local" | "imported";
 		pluginHash: string;

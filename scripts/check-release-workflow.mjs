@@ -297,8 +297,12 @@ console.log(
 const publishWorkflow = parse(readFileSync(".github/workflows/release.yml", "utf8"));
 const publishTriggers = publishWorkflow?.on ?? {};
 const publishTags = publishTriggers.push?.tags;
-if (!Array.isArray(publishTags) || !publishTags.includes("v1.0.0-rc.*")) {
-	throw new Error("publish workflow must create RC releases from v1.0.0-rc.* tags");
+if (
+	!Array.isArray(publishTags) ||
+	!publishTags.includes("v1.0.0") ||
+	!publishTags.includes("v1.0.0-rc.*")
+) {
+	throw new Error("publish workflow must support stable and RC release tags");
 }
 if (publishTriggers.push?.branches !== undefined) {
 	throw new Error("publish workflow must not run for branch pushes");
@@ -329,7 +333,10 @@ for (const command of [
 	"config/release-public.asc",
 	"gh release edit",
 	"--draft=false",
-	"--latest=false",
+	'echo "latest=true"',
+	'echo "prerelease=false"',
+	"steps.source.outputs.latest",
+	"steps.source.outputs.prerelease",
 ]) {
 	if (!publishSource.includes(command)) {
 		throw new Error(`publish workflow is missing required command: ${command}`);
@@ -355,5 +362,5 @@ if (publishUses.length !== 1 || publishUses[0] !== "actions/checkout@v7.0.1") {
 }
 
 console.log(
-	"Publish workflow contract passed: green-run artifact reuse and prerelease-only publication present",
+	"Publish workflow contract passed: green-run artifact reuse and stable/RC publication present",
 );

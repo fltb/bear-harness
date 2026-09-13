@@ -1,3 +1,4 @@
+import { CharacterArchiveImport } from "./character-archive-import.js";
 /**
  * Character package loader — reads YAML role packages from
  * `config/characters/<id>/character.yaml`.
@@ -68,9 +69,6 @@ import {
 } from "./state-schema.js";
 
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
-
-const MAX_CHARACTER_TREE_DEPTH = 64;
-const MAX_CHARACTER_TREE_ENTRIES = 10_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -425,6 +423,43 @@ export class CharacterLoader {
 		if (!packageOverride) this.recoverPackageTransactions();
 	}
 
+	private archiveImports?: CharacterArchiveImport<CharacterPackage>;
+	get archives(): CharacterArchiveImport<CharacterPackage> {
+		this.archiveImports ??= new CharacterArchiveImport(
+			join(this.libraryRoot, ".archive-imports"),
+			(directory) => this.installDirectory(directory),
+		);
+		return this.archiveImports;
+	}
+	async closeImports(): Promise<void> {
+		await this.archiveImports?.close();
+	}
+	private installDirectory(directory: string): CharacterPackage {
+		let source = directory;
+		if (!existsSync(join(source, "character.yaml"))) {
+			const roots = readdirSync(source, { withFileTypes: true });
+			if (roots.length !== 1 || !roots[0]?.isDirectory())
+				throw new Error("character_manifest_missing");
+			source = join(source, roots[0].name);
+		}
+		const document = parse(readFileSync(join(source, "character.yaml"), "utf8")) as {
+			id?: unknown;
+		};
+		if (typeof document?.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(document.id))
+			throw new Error("character_id_invalid");
+		const id = document.id;
+		if (this.load(id)) throw { kind: "conflict", reason: "character_package_already_exists" };
+		replaceDurableFileSync({
+			root: this.libraryRoot,
+			target: join(this.libraryRoot, id),
+			stage: (staging) => cpSync(source, staging, { recursive: true, errorOnExist: true }),
+			verify: (candidate) => this.verifyPackageDirectory(id, candidate),
+		});
+		const character = this.load(id);
+		if (!character) throw new Error("character_manifest_missing");
+		return character;
+	}
+
 	bootstrapLibrary(defaultCharacterId: string): void {
 		this.recoverPackageTransactions();
 		const source = join(this.seedRoot, defaultCharacterId);
@@ -568,21 +603,17 @@ export class CharacterLoader {
 		const pending: Array<{ directory: string; depth: number }> = [
 			{ directory: pluginsDir, depth: 0 },
 		];
-		let entriesSeen = 0;
 		while (pending.length > 0) {
 			const current = pending.pop();
 			if (!current) break;
-			if (current.depth > MAX_CHARACTER_TREE_DEPTH)
-				throw new Error(`character package ${characterId}: Pi resource tree is too deep`);
+
 			const entries = readdirSync(current.directory, { withFileTypes: true }).sort((left, right) =>
 				left.name.localeCompare(right.name),
 			);
 			for (let index = entries.length - 1; index >= 0; index -= 1) {
 				const entry = entries[index];
 				if (!entry) continue;
-				entriesSeen += 1;
-				if (entriesSeen > MAX_CHARACTER_TREE_ENTRIES)
-					throw new Error(`character package ${characterId}: Pi resource tree is too large`);
+
 				const path = join(current.directory, entry.name);
 				const stat = lstatSync(path);
 				if (stat.isSymbolicLink())
@@ -1170,19 +1201,14 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 	}
 
 	install(files: Array<{ path: string; base64: string }>): CharacterPackage {
-		let totalBytes = 0;
 		const normalized = files.map((file) => {
 			const path = file.path.replaceAll("\\", "/").replace(/^\.\//, "");
 			if (!path || posix.isAbsolute(path) || path.split("/").includes("..")) {
 				throw { kind: "invalid_request", reason: "character_package_path_invalid" };
 			}
 			const buffer = Buffer.from(file.base64, "base64");
-			totalBytes += buffer.byteLength;
 			return { path, buffer };
 		});
-		if (totalBytes > 25 * 1024 * 1024) {
-			throw { kind: "invalid_request", reason: "character_package_too_large" };
-		}
 		const manifest =
 			normalized.find((file) => file.path === "character.yaml") ??
 			normalized.find(

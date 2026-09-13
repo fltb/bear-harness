@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 const TARGETS = ["mac-x64", "mac-arm64", "win-x64", "linux-x64"];
 
 export function validateReleaseTag(tag, version) {
+	if (tag === `v${version}`) return 0;
 	const prefix = `v${version}-rc.`;
 	if (!tag.startsWith(prefix)) throw new Error(`release tag must start with ${prefix}`);
 	const suffix = tag.slice(prefix.length);

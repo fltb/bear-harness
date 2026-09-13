@@ -438,3 +438,7 @@ export type AuditListRequest = z.infer<typeof schema.AuditListRequest>;
 export type AuditListResponse = z.infer<typeof schema.AuditListResponse>;
 export type AuditExportRequest = z.infer<typeof schema.AuditExportRequest>;
 export type AuditExportResponse = z.infer<typeof schema.AuditExportResponse>;
+
+export type CharacterArchiveBeginRequest = z.infer<typeof schema.CharacterArchiveBeginRequest>;
+export type CharacterArchiveIdentity = z.infer<typeof schema.CharacterArchiveIdentity>;
+export type CharacterArchiveAppendRequest = z.infer<typeof schema.CharacterArchiveAppendRequest>;

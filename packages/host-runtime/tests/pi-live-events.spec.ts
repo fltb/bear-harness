@@ -109,7 +109,7 @@ describe("native Pi conversation projection", () => {
 		expect(detail.branch.latestLeafIds).toEqual([olderLeafId, activeLeafId]);
 	});
 
-	it("bounds projected version leaves while retaining the active Pi leaf", () => {
+	it("preserves all projected Pi version leaves", () => {
 		const current = session();
 		const parentId = current.sessionManager.getLeafId();
 		expect(parentId).toBeTruthy();
@@ -127,7 +127,7 @@ describe("native Pi conversation projection", () => {
 		current.sessionManager.branch(versionLeaves[0]!);
 
 		const detail = projectPiConversationDetail(current);
-		expect(detail.branch.latestLeafIds).toHaveLength(100);
+		expect(detail.branch.latestLeafIds).toEqual(versionLeaves);
 		expect(detail.branch.latestLeafIds).toContain(versionLeaves[0]);
 		expect(detail.branch.latestLeafIds).toContain(versionLeaves[119]);
 	});

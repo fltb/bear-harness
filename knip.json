@@ -53,6 +53,10 @@
 			"entry": ["tests/**/*.ts"],
 			"project": ["src/**/*.ts", "tests/**/*.ts"],
 			"ignoreDependencies": ["@agentclientprotocol/codex-acp"]
+		},
+		"apps/promo": {
+			"entry": ["src/main.tsx", "src/renderer.tsx", "scripts/**/*.mjs", "vite.config.ts"],
+			"project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "vite.config.ts"]
 		}
 	}
 }

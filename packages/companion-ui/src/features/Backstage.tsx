@@ -129,8 +129,8 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 				<div class="role-import">
 					<p class="drawer-note">{t("backstage.roleImportHint")}</p>
 					<FileField
-						multiple
-						maxFiles={Number.POSITIVE_INFINITY}
+						accept=".zip"
+						maxFiles={1}
 						disabled={workflow.importing()}
 						onFileAccept={(files) =>
 							workflow.importPackage(
@@ -144,10 +144,7 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 						<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
 							{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
 						</FileField.Trigger>
-						<FileField.HiddenInput
-							aria-label={t("backstage.roleImportInput")}
-							ref={(element) => element.setAttribute("webkitdirectory", "")}
-						/>
+						<FileField.HiddenInput aria-label={t("backstage.roleImportInput")} />
 					</FileField>
 					<Show when={workflow.roleFeedback()}>
 						<p role="status" class="status-line">
@@ -267,7 +264,7 @@ function RoleRow(props: {
 	const blocked = () => trust()?.pluginsPresent && !trust()?.trusted;
 	let pluginTrustOpener: HTMLElement | undefined;
 	return (
-		<div class="role-row">
+		<article class="role-row" aria-label={props.character.name}>
 			<Show
 				when={avatar()}
 				fallback={
@@ -357,6 +354,6 @@ function RoleRow(props: {
 					</Dialog.Content>
 				</Dialog.Portal>
 			</Dialog>
-		</div>
+		</article>
 	);
 }

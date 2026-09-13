@@ -402,7 +402,6 @@ function RunControls(props: { run: RunInfo }) {
 						<TextField.TextArea
 							class="task-instruction"
 							value={draft.steerText()}
-							maxLength={12000}
 							onInput={(event) => draft.setSteerText(event.currentTarget.value)}
 						/>
 					</TextField>

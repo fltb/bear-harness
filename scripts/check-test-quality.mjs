@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
@@ -44,11 +44,14 @@ collectProductCopy(zhCN);
 
 const files = [];
 function collect(directory) {
-	for (const entry of readdirSync(directory)) {
-		if (entry === "node_modules" || entry === "dist" || entry === "coverage") continue;
-		const path = join(directory, entry);
-		if (statSync(path).isDirectory()) collect(path);
-		else if (testFile.test(path)) files.push(path);
+	for (const entry of readdirSync(directory, { withFileTypes: true })) {
+		if (
+			["node_modules", "dist", "coverage", ".local-output", ".local-content"].includes(entry.name)
+		)
+			continue;
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) collect(path);
+		else if (entry.isFile() && testFile.test(path)) files.push(path);
 	}
 }
 for (const root of roots) collect(root);

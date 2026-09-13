@@ -212,9 +212,9 @@ export const zhCN = {
 		roleSwitchBusyCancel: "继续等待",
 		roleSwitchBusyConfirm: "停止并切换",
 		roleImport: "导入角色包",
-		roleImportInput: "选择角色包文件夹",
+		roleImportInput: "选择角色 ZIP 包",
 		roleImportHint:
-			"选择解压后的角色包文件夹。导入后会保存在本机，并出现在角色列表中。角色包可以包含行为扩展，请只导入你信任的来源。",
+			"选择角色 ZIP 包。导入后会保存在本机，并出现在角色列表中。角色包可以包含行为扩展，请只导入你信任的来源。",
 		roleImportBusy: "正在检查并导入…",
 		roleImportDone: "角色包已导入",
 		roleImportFailed: "角色包导入失败：",

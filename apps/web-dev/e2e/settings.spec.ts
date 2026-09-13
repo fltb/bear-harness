@@ -1,7 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
-import { MAX_RPC_REQUEST_BYTES } from "../server/http-contract";
 import { activeConversationId, ensureReadyForConversation, getBootstrap } from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
@@ -75,14 +74,14 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 		error: { kind: "invalid_request", reason: "request_validation_failed" },
 	});
 
-	const oversized = await page.request.post("/rpc/onboarding.get", {
+	const largePayload = await page.request.post("/rpc/onboarding.get", {
 		headers: { ...headers, "content-type": "application/json" },
-		data: "x".repeat(MAX_RPC_REQUEST_BYTES + 1),
+		data: "x".repeat(36 * 1024 * 1024 + 1),
 	});
-	expect(oversized.status()).toBe(413);
-	expect(await oversized.json()).toEqual({
+	expect(largePayload.status()).toBe(200);
+	expect(await largePayload.json()).toEqual({
 		ok: false,
-		error: { kind: "body_too_large", reason: "request_body_too_large" },
+		error: { kind: "invalid_request", reason: "request_validation_failed" },
 	});
 });
 

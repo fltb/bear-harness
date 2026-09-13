@@ -827,37 +827,31 @@ describe("PiRuntime session registry", () => {
 		);
 	});
 
-	it("rejects a user turn before Pi's native queue can exceed the transport bound", async () => {
+	it("delegates user queue capacity to Pi", async () => {
 		const dataDir = root();
 		const id = persistedSession(dataDir, "Full user queue");
 		const { runtime, built } = setup(dataDir);
 		const session = await runtime.open(id);
-		const prompt = vi.fn(async () => undefined);
+		const prompt = vi.fn(async (_text, options) => {
+			options.preflightResult(true);
+		});
 		Object.assign(session, { pendingMessageCount: 10_000, prompt });
 
-		await expect(runtime.send(id, "one more turn")).rejects.toMatchObject({
-			kind: "unavailable",
-			reason: "pi_message_queue_full",
-		});
-		expect(prompt).not.toHaveBeenCalled();
+		await runtime.send(id, "one more turn");
+		expect(prompt).toHaveBeenCalled();
 		expect(built.get(id)?.sendCustomMessage).not.toHaveBeenCalled();
 		await runtime.closeAll();
 	});
 
-	it("rejects an external result before Pi's native queue can exceed the transport bound", async () => {
+	it("delegates external result queue capacity to Pi", async () => {
 		const dataDir = root();
 		const id = persistedSession(dataDir, "Full result queue");
 		const { runtime, built } = setup(dataDir);
 		const session = await runtime.open(id);
 		Object.assign(session, { pendingMessageCount: 10_000 });
 
-		await expect(
-			runtime.deliverExternalResult(id, "run-full", "one more result"),
-		).rejects.toMatchObject({
-			kind: "unavailable",
-			reason: "pi_message_queue_full",
-		});
-		expect(built.get(id)?.sendCustomMessage).not.toHaveBeenCalled();
+		await runtime.deliverExternalResult(id, "run-full", "one more result");
+		expect(built.get(id)?.sendCustomMessage).toHaveBeenCalled();
 		await runtime.closeAll();
 	});
 

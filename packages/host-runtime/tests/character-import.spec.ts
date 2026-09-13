@@ -106,7 +106,7 @@ describe("character package import", () => {
 		await runtime.close();
 	});
 
-	it("rejects a character plugin tree deeper than the package traversal contract", () => {
+	it("loads deep character plugin trees using iterative traversal", () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-depth-"));
 		roots.push(dataDir);
 		const libraryRoot = join(dataDir, "characters");
@@ -121,7 +121,7 @@ describe("character package import", () => {
 		const character = loader.load("jizhou");
 		if (!character) throw new Error("test character was not loaded");
 
-		expect(() => loader.piResources(character)).toThrow("Pi resource tree is too deep");
+		expect(loader.piResources(character).pluginPaths).toEqual([]);
 	});
 
 	it("edits a local package with revision protection and rejects an immutable id change", async () => {
