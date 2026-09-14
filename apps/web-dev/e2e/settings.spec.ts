@@ -1,7 +1,12 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
-import { activeConversationId, ensureReadyForConversation, getBootstrap } from "./helpers";
+import {
+	activeConversationId,
+	ensureReadyForConversation,
+	getBootstrap,
+	sendMessage,
+} from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
 	page,
@@ -282,5 +287,74 @@ test("bottom actions open distinct character and system settings destinations", 
 			name: zhCN.settings.systemModelSettings,
 			exact: true,
 		}),
+	).toBeVisible();
+});
+
+test("settings re-adds the last provider with the same identity and can chat after reload", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const openSettings = async () => {
+		await page.getByRole("button", { name: zhCN.sidebar.systemSettings, exact: true }).click();
+		await page
+			.getByRole("dialog", { name: zhCN.sidebar.systemSettings })
+			.getByRole("button", { name: zhCN.settings.systemModelSettings })
+			.click();
+	};
+	await openSettings();
+	const settings = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	const remove = settings.getByRole("button", { name: zhCN.settings.deleteProvider });
+	await expect(remove).toHaveCount(1);
+	await remove.click();
+	await expect(remove).toHaveCount(0);
+	await settings.getByRole("button", { name: zhCN.backstage.close }).click();
+	await page.reload();
+	await openSettings();
+	await expect(page.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toHaveCount(0);
+	const { token } = await getBootstrap(page);
+	const headers = { "x-bear-web-dev-token": token };
+	const state = await page.request.post("/rpc/settings.get", { headers, data: {} });
+	expect(await state.json()).toMatchObject({
+		ok: true,
+		data: { settings: { firstRunStage: "role" } },
+	});
+	const defaults = await page.request.post("/rpc/model.defaults.get", { headers, data: {} });
+	expect(await defaults.json()).toMatchObject({ ok: true, data: { onboardingComplete: true } });
+	await settings.getByRole("button", { name: zhCN.settings.addProvider }).click();
+	const add = page.getByRole("dialog", { name: zhCN.settings.addProvider });
+	await add.getByText(zhCN.settings.advancedToggle, { exact: true }).click();
+	await add.getByLabel(zhCN.settings.customProviderId, { exact: true }).fill("e2e-rule");
+	await add.getByLabel(zhCN.settings.customServiceName, { exact: true }).fill("Replacement");
+	await add
+		.getByLabel(zhCN.settings.customBaseUrl, { exact: true })
+		.fill(`http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`);
+	await add
+		.getByLabel(zhCN.settings.customModels, { exact: true })
+		.fill("rule-model, replacement-model");
+	await add.getByLabel(zhCN.settings.apiKeyLabel, { exact: true }).fill("e2e-replacement-key");
+	await add.getByRole("button", { name: zhCN.settings.addProvider, exact: true }).click();
+	await expect(add).not.toBeVisible();
+	await expect(settings.getByText("Replacement", { exact: true })).toBeVisible();
+	await settings.getByRole("button", { name: zhCN.settings.systemDefaultReplyModel }).click();
+	await page.getByRole("option", { name: /rule-model/ }).click();
+	await settings.getByRole("button", { name: zhCN.backstage.close }).click();
+	await page.getByRole("button", { name: zhCN.composer.modelLabel }).click();
+	const [selection] = await Promise.all([
+		page.waitForResponse((response) => response.url().includes("/rpc/model.route.set")),
+		page.getByRole("option", { name: /replacement-model/ }).click(),
+	]);
+	expect(await selection.json()).toEqual({ ok: true, data: expect.anything() });
+	await expect(page.getByRole("button", { name: zhCN.composer.modelLabel })).toContainText(
+		"Replacement",
+	);
+	await page.reload();
+	await expect(page.getByRole("button", { name: zhCN.composer.modelLabel })).toContainText(
+		"Replacement",
+	);
+	await sendMessage(page, "E2E_MODEL_ID");
+	await expect(
+		page
+			.getByRole("article", { name: "极昼", exact: true })
+			.getByText("E2E_MODEL_ID:replacement-model", { exact: true }),
 	).toBeVisible();
 });

@@ -7,6 +7,7 @@ import {
 	activeConversationId,
 	ensureReadyForConversation,
 	providerHold,
+	selectKobalteOption,
 	sendMessage,
 } from "./helpers";
 
@@ -279,4 +280,48 @@ test("two characters isolate conversations and warn before an active-reply switc
 		await hold.release();
 	}
 	expect(pageErrors).toEqual([]);
+});
+
+test("a fresh character can select and confirm a re-added provider model", async ({ page }) => {
+	await ensureReadyForConversation(page);
+	const { token } = await (await page.request.get("/bootstrap")).json();
+	await rpc(page, token, "provider.remove", { providerId: "e2e-rule" });
+	await rpc(page, token, "provider.customUpsert", {
+		providerId: "e2e-rule",
+		name: "E2E Rule Provider",
+		baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
+		models: [{ id: "rule-model" }],
+		apiKey: "e2e-rule-key",
+	});
+	await rpc(page, token, "model.systemDefaults.set", {
+		reply: { providerId: "e2e-rule", modelId: "rule-model" },
+		vision: { mode: "auto" },
+	});
+	await rpc(page, token, "model.defaults.setReply", {
+		reply: { providerId: "e2e-rule", modelId: "rule-model" },
+	});
+	const character = testCharacters[0];
+	await rpc(page, token, "character.import", {
+		files: packageFiles(character.id, character.name, character.accent),
+	});
+	await page.reload();
+	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	await dialog
+		.getByRole("article", { name: character.name, exact: true })
+		.getByRole("button", { name: zhCN.backstage.roleSwitch, exact: true })
+		.click();
+	await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+	const setup = page.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+	await expect(setup.getByRole("heading", { name: zhCN.modelSetup.roleTitle })).toBeVisible();
+	await expect(setup.getByText(zhCN.modelSetup.noModels)).toHaveCount(0);
+	await selectKobalteOption(
+		page,
+		setup.getByRole("button", { name: zhCN.modelSetup.modelLabel }),
+		/rule-model/,
+	);
+	await expect(setup.getByRole("button", { name: zhCN.modelSetup.confirmRole })).toBeEnabled();
+	await setup.getByRole("button", { name: zhCN.modelSetup.confirmRole }).click();
+	await expect(setup).toBeHidden();
+	await expect(page.getByRole("dialog", { name: "开始相处" })).toBeVisible();
 });

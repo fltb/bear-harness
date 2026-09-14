@@ -68,7 +68,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore, platform: stri
 		() =>
 			store.characterSetupReady &&
 			firstRunStage() === "role" &&
-			(!modelDefaults()?.reply || modelDefaults()?.onboardingComplete !== true),
+			modelDefaults()?.onboardingComplete !== true,
 	);
 	const selectedReplyModel = createMemo(() => {
 		const reply = modelRequired()

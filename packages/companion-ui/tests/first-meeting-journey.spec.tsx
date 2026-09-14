@@ -285,62 +285,69 @@ describe("Host-backed first-run setup", () => {
 		);
 	});
 
-	it("never mounts onboarding while completed role projections arrive separately", async () => {
-		const setup = firstRunHost({
-			stage: "role",
-			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: true },
-		});
-		let releaseDefaults!: () => void;
-		let releaseOnboarding!: () => void;
-		const defaultsPending = new Promise<void>((resolve) => {
-			releaseDefaults = resolve;
-		});
-		const onboardingPending = new Promise<void>((resolve) => {
-			releaseOnboarding = resolve;
-		});
-		const getDefaults = setup.client.model.defaultsGet;
-		setup.client.model.defaultsGet = vi.fn(async () => {
-			await defaultsPending;
-			return getDefaults();
-		});
-		setup.client.onboarding.get = vi.fn(async () => {
-			await onboardingPending;
-			return {
-				ok: true as const,
-				data: { status: "complete" as const, stateData: { answers: {} } },
-			};
-		});
-		const mountedDialogs: Element[] = [];
-		const observer = new MutationObserver((records) => {
-			for (const record of records) {
-				for (const node of record.addedNodes) {
-					if (!(node instanceof HTMLElement)) continue;
-					// Include the added root and detached transient dialogs, not only
-					// descendants that remain mounted when this callback is delivered.
-					const addedTree = document.createElement("div");
-					addedTree.append(node.cloneNode(true));
-					mountedDialogs.push(...within(addedTree).queryAllByRole("dialog", { hidden: true }));
+	it.each([replyRoute, undefined])(
+		"never restarts completed onboarding when the reply route is %s",
+		async (reply) => {
+			const setup = firstRunHost({
+				stage: "role",
+				roleDefaults: {
+					...(reply ? { reply } : {}),
+					vision: { mode: "auto" },
+					onboardingComplete: true,
+				},
+			});
+			let releaseDefaults!: () => void;
+			let releaseOnboarding!: () => void;
+			const defaultsPending = new Promise<void>((resolve) => {
+				releaseDefaults = resolve;
+			});
+			const onboardingPending = new Promise<void>((resolve) => {
+				releaseOnboarding = resolve;
+			});
+			const getDefaults = setup.client.model.defaultsGet;
+			setup.client.model.defaultsGet = vi.fn(async () => {
+				await defaultsPending;
+				return getDefaults();
+			});
+			setup.client.onboarding.get = vi.fn(async () => {
+				await onboardingPending;
+				return {
+					ok: true as const,
+					data: { status: "complete" as const, stateData: { answers: {} } },
+				};
+			});
+			const mountedDialogs: Element[] = [];
+			const observer = new MutationObserver((records) => {
+				for (const record of records) {
+					for (const node of record.addedNodes) {
+						if (!(node instanceof HTMLElement)) continue;
+						// Include the added root and detached transient dialogs, not only
+						// descendants that remain mounted when this callback is delivered.
+						const addedTree = document.createElement("div");
+						addedTree.append(node.cloneNode(true));
+						mountedDialogs.push(...within(addedTree).queryAllByRole("dialog", { hidden: true }));
+					}
 				}
+			});
+			observer.observe(document.body, { childList: true, subtree: true });
+			try {
+				const { store } = setup.mount();
+				await waitFor(() => expect(store.settings.data()?.firstRunStage).toBe("role"));
+				expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+				releaseDefaults();
+				await waitFor(() => expect(store.model.data().defaults.onboardingComplete).toBe(true));
+				expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+				releaseOnboarding();
+				await waitFor(() => expect(store.characterSetupReady).toBe(true));
+				expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+				expect(mountedDialogs).toEqual([]);
+			} finally {
+				observer.disconnect();
+				releaseDefaults();
+				releaseOnboarding();
 			}
-		});
-		observer.observe(document.body, { childList: true, subtree: true });
-		try {
-			const { store } = setup.mount();
-			await waitFor(() => expect(store.settings.data()?.firstRunStage).toBe("role"));
-			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-			releaseDefaults();
-			await waitFor(() => expect(store.model.data().defaults.onboardingComplete).toBe(true));
-			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-			releaseOnboarding();
-			await waitFor(() => expect(store.characterSetupReady).toBe(true));
-			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-			expect(mountedDialogs).toEqual([]);
-		} finally {
-			observer.disconnect();
-			releaseDefaults();
-			releaseOnboarding();
-		}
-	});
+		},
+	);
 
 	it("waits for system authority before showing the required setup layer", async () => {
 		const setup = firstRunHost({
@@ -511,15 +518,15 @@ describe("Host-backed first-run setup", () => {
 		expect(store.model.data()?.systemDefaults.reply).toBeUndefined();
 	});
 
-	it("reuses an existing Host provider and exposes synced models without provider setup", async () => {
+	it("reuses an existing Host provider while keeping provider management accessible", async () => {
 		const user = userEvent.setup();
 		const setup = firstRunHost({ providers: [addedProvider], models: [replyModel, imageModel] });
 		setup.mount();
 		const dialog = await continuePastLicense(user);
 		await selectReply(user, dialog);
 		expect(
-			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
-		).not.toBeInTheDocument();
+			within(dialog).getByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		).toBeVisible();
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		await screen.findByRole("dialog", { name: zhCN.settings.memoryVectorSection });
 		expect(setup.client.provider.setApiKey).not.toHaveBeenCalled();
@@ -643,8 +650,8 @@ describe("Host-backed first-run setup", () => {
 		await addProvider(user, dialog);
 		await selectReply(user, dialog);
 		expect(
-			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
-		).not.toBeInTheDocument();
+			within(dialog).getByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		).toBeVisible();
 		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.settings.visionModel), {
 			label: "Image Reader · OpenAI",
 		});

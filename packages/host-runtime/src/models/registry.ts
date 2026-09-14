@@ -167,7 +167,6 @@ export class ModelRegistry {
 					.update(appSettings)
 					.set({
 						systemModelDefaultsJson: JSON.stringify(emptySystemDefaults()),
-						systemModelOnboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})
 					.where(eq(appSettings.id, 1))
@@ -203,7 +202,6 @@ export class ModelRegistry {
 					.update(appSettings)
 					.set({
 						systemModelDefaultsJson: JSON.stringify(emptySystemDefaults()),
-						systemModelOnboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})
 					.where(eq(appSettings.id, 1))
@@ -226,10 +224,20 @@ export class ModelRegistry {
 	}
 
 	finalizeProviderRemoval(providerId: string): void {
-		const removed = this.systemDb
-			.delete(providerRemovalJournal)
-			.where(eq(providerRemovalJournal.providerId, providerId))
-			.run();
+		const removed = this.systemDb.transaction((transaction) => {
+			const result = transaction
+				.delete(providerRemovalJournal)
+				.where(eq(providerRemovalJournal.providerId, providerId))
+				.run();
+			if (result.changes) {
+				// Removal owns these routes; retaining disabled rows would poison a later re-add.
+				transaction
+					.delete(configuredModels)
+					.where(eq(configuredModels.providerId, providerId))
+					.run();
+			}
+			return result;
+		});
 		if (removed.changes) this.invalidations.invalidate(CacheKey.modelPool());
 	}
 
@@ -342,7 +350,7 @@ export class ModelRegistry {
 				manualVision?.supportsImages === true
 					? { mode: "manual", route: manualVision }
 					: { mode: "auto" },
-			onboardingComplete: row?.onboardingComplete === 1 && reply?.readiness === "ready",
+			onboardingComplete: row?.onboardingComplete === 1,
 			...(row?.textThinkingLevel ? { thinkingLevel: row.textThinkingLevel } : {}),
 		};
 	}
@@ -365,7 +373,6 @@ export class ModelRegistry {
 				textProviderId: model?.providerId ?? null,
 				textModelId: model?.modelId ?? null,
 				textThinkingLevel: model ? (thinkingLevel ?? null) : null,
-				...(model ? {} : { onboardingComplete: 0 }),
 			})
 			.onConflictDoUpdate({
 				target: modelRouteSettings.companionId,
@@ -373,7 +380,6 @@ export class ModelRegistry {
 					textProviderId: model?.providerId ?? null,
 					textModelId: model?.modelId ?? null,
 					textThinkingLevel: model ? (thinkingLevel ?? null) : null,
-					...(model ? {} : { onboardingComplete: 0 }),
 					updatedAt: sql`datetime('now')`,
 				},
 			})
@@ -536,7 +542,6 @@ export class ModelRegistry {
 						textProviderId: null,
 						textModelId: null,
 						textThinkingLevel: null,
-						onboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})
 					.where(
@@ -578,7 +583,6 @@ export class ModelRegistry {
 						textProviderId: null,
 						textModelId: null,
 						textThinkingLevel: null,
-						onboardingComplete: 0,
 						updatedAt: sql`datetime('now')`,
 					})
 					.where(eq(modelRouteSettings.textProviderId, providerId))

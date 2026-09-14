@@ -297,11 +297,7 @@ console.log(
 const publishWorkflow = parse(readFileSync(".github/workflows/release.yml", "utf8"));
 const publishTriggers = publishWorkflow?.on ?? {};
 const publishTags = publishTriggers.push?.tags;
-if (
-	!Array.isArray(publishTags) ||
-	!publishTags.includes("v1.0.0") ||
-	!publishTags.includes("v1.0.0-rc.*")
-) {
+if (!Array.isArray(publishTags) || !publishTags.includes("v*.*.*")) {
 	throw new Error("publish workflow must support stable and RC release tags");
 }
 if (publishTriggers.push?.branches !== undefined) {

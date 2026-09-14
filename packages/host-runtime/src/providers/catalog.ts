@@ -439,7 +439,8 @@ export class ProviderCatalog {
 				return true;
 			},
 		});
-		this.retireRuntime();
+		// Live AgentSessions retain this Pi runtime; reload its provider configuration in place.
+		await (await this.getRuntime()).refresh({ allowNetwork: false });
 		return activatedModels ?? [];
 	}
 
@@ -526,7 +527,6 @@ export class ProviderCatalog {
 				},
 			},
 		});
-		this.retireRuntime();
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
 		else await this.refreshModelProjectionFacts();
 	}
@@ -576,7 +576,6 @@ export class ProviderCatalog {
 			await this.refreshModelProjectionFacts();
 			return imported;
 		} catch (error) {
-			this.retireRuntime();
 			if (error instanceof DurableFileTransactionError && error.code === "verification-failed") {
 				throw { kind: "invalid_request", reason: "pi_model_config_rejected" };
 			}
@@ -606,7 +605,6 @@ export class ProviderCatalog {
 				},
 			},
 		});
-		this.retireRuntime();
 		await this.refreshModelProjectionFacts();
 	}
 
@@ -713,8 +711,8 @@ export class ProviderCatalog {
 	/**
 	 * Remove every local trace of a provider while preserving the immutable
 	 * builtin catalog entry. Credentials and Pi config are independent
-	 * projections, so both are cleared before the cached Pi runtime is
-	 * invalidated.
+	 * projections, so both are cleared before the shared Pi runtime is
+	 * refreshed.
 	 */
 	async removeProvider(providerId: string): Promise<void> {
 		assertAllowedProvider(providerId);
@@ -738,7 +736,6 @@ export class ProviderCatalog {
 				await this.replaceModelsDocument({ ...document, providers: remainingProviders });
 			}
 		}
-		this.retireRuntime();
 		await this.refreshModelProjectionFacts();
 	}
 	/** Local logout: clear runtime + host credentials; never revoke tokens. */

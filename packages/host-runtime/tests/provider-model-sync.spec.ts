@@ -135,13 +135,7 @@ describe("provider catalog model synchronization", () => {
 		const removedProviderModels = afterRemove.models.filter(
 			(model) => model.providerId === "sync-relay",
 		);
-		expect(removedProviderModels).toHaveLength(2);
-		expect(removedProviderModels).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ modelId: "vision", enabled: false, readiness: "disabled" }),
-				expect.objectContaining({ modelId: "text", enabled: false, readiness: "disabled" }),
-			]),
-		);
+		expect(removedProviderModels).toHaveLength(0);
 		const defaults = (await data(runtime, "model.defaults.get", {})) as {
 			reply?: { providerId: string; modelId: string };
 			vision: { mode: string };
@@ -153,6 +147,14 @@ describe("provider catalog model synchronization", () => {
 		};
 		expect(afterProviderRemove.providers.some((provider) => provider.id === "sync-relay")).toBe(
 			false,
+		);
+		await data(runtime, "provider.customUpsert", { ...input, apiKey: "replacement-secret" });
+		const readded = (await data(runtime, "model.pool.get", {})) as typeof pool;
+		expect(readded.models.filter((model) => model.providerId === "sync-relay")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ modelId: "vision", enabled: true, readiness: "ready" }),
+				expect.objectContaining({ modelId: "text", enabled: true, readiness: "ready" }),
+			]),
 		);
 	}, 15_000);
 

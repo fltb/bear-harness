@@ -334,86 +334,113 @@ describe("PiRuntime session registry", () => {
 		);
 	});
 
-	it("corrects an assistant answer with exact original text, images, and one-turn guidance", async () => {
-		const dataDir = root();
-		const originalText = "  /literal\n保留空白  ";
-		const image = {
-			type: "image" as const,
-			data: "aW1hZ2U=",
-			mimeType: "image/png" as const,
-		};
-		const persisted = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
-		const userId = persisted.appendMessage({
-			role: "user",
-			content: [
-				{ type: "text", text: "  /literal\n" },
-				image,
-				{ type: "text", text: "保留空白  " },
-			],
-			timestamp: 1,
-		});
-		const assistantId = persisted.appendMessage(assistantMessage());
-		const sessionId = persisted.getSessionId();
-		const { runtime } = setup(dataDir);
-		const session = await runtime.open(sessionId);
-		const manager = session.sessionManager;
-		const systemPrompts: string[] = [];
-		const consumeGuidance = responseGuidanceConsumer(runtime);
-		const navigateTree = vi.fn(async (targetId: string) => {
-			const target = manager.getEntry(targetId);
-			if (target?.type === "message" && target.message.role === "user") {
-				if (target.parentId) manager.branch(target.parentId);
-				else manager.resetLeaf();
-			} else if (target) {
-				manager.branch(target.id);
+	it.each([0, 2])(
+		"corrects an answer after %i tool calls with exact text, images, and one-turn guidance",
+		async (toolCount) => {
+			const dataDir = root();
+			const originalText = "  /literal\n保留空白  ";
+			const image = {
+				type: "image" as const,
+				data: "aW1hZ2U=",
+				mimeType: "image/png" as const,
+			};
+			const persisted = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
+			const userId = persisted.appendMessage({
+				role: "user",
+				content: [
+					{ type: "text", text: "  /literal\n" },
+					image,
+					{ type: "text", text: "保留空白  " },
+				],
+				timestamp: 1,
+			});
+			for (let index = 0; index < toolCount; index++) {
+				const toolCallId = `call-${index}`;
+				persisted.appendMessage({
+					...assistantMessage(),
+					stopReason: "toolUse",
+					content: [{ type: "toolCall", id: toolCallId, name: "host_state", arguments: {} }],
+				});
+				persisted.appendMessage({
+					role: "toolResult",
+					toolCallId,
+					toolName: "host_state",
+					content: [{ type: "text", text: "updated" }],
+					isError: false,
+					timestamp: 2,
+				});
+				persisted.appendSessionInfo("metadata between tools and answer");
 			}
-			return { cancelled: false };
-		});
-		let resolveCorrectionTurn!: () => void;
-		const correctionTurn = new Promise<void>((resolve) => {
-			resolveCorrectionTurn = resolve;
-		});
-		const prompt = vi.fn(
-			(
-				text: string,
-				options: { images?: (typeof image)[]; preflightResult(ok: boolean): void },
-			) => {
-				const guidance = consumeGuidance(sessionId, text);
-				systemPrompts.push(guidance ? `base\n\n${guidance}` : "base");
-				manager.appendMessage({ role: "user", content: text, timestamp: 3 });
-				Object.assign(session, { isStreaming: true });
-				options.preflightResult(true);
-				return prompt.mock.calls.length === 1 ? correctionTurn : Promise.resolve();
-			},
-		);
-		const abort = vi.fn(async () => {
-			Object.assign(session, { isStreaming: false });
-			resolveCorrectionTurn();
-		});
-		Object.assign(session, { sessionName: "Named", navigateTree, prompt, abort });
-		let turnFinished = false;
-		void correctionTurn.then(() => {
-			turnFinished = true;
-		});
+			const assistantId = persisted.appendMessage(assistantMessage());
+			persisted.appendMessage({
+				role: "user",
+				content: "a later unrelated question",
+				timestamp: 4,
+			});
+			persisted.appendMessage(assistantMessage("a later unrelated answer"));
+			const sessionId = persisted.getSessionId();
+			const { runtime } = setup(dataDir);
+			const session = await runtime.open(sessionId);
+			const manager = session.sessionManager;
+			const systemPrompts: string[] = [];
+			const consumeGuidance = responseGuidanceConsumer(runtime);
+			const navigateTree = vi.fn(async (targetId: string) => {
+				const target = manager.getEntry(targetId);
+				if (target?.type === "message" && target.message.role === "user") {
+					if (target.parentId) manager.branch(target.parentId);
+					else manager.resetLeaf();
+				} else if (target) {
+					manager.branch(target.id);
+				}
+				return { cancelled: false };
+			});
+			let resolveCorrectionTurn!: () => void;
+			const correctionTurn = new Promise<void>((resolve) => {
+				resolveCorrectionTurn = resolve;
+			});
+			const prompt = vi.fn(
+				(
+					text: string,
+					options: { images?: (typeof image)[]; preflightResult(ok: boolean): void },
+				) => {
+					const guidance = consumeGuidance(sessionId, text);
+					systemPrompts.push(guidance ? `base\n\n${guidance}` : "base");
+					manager.appendMessage({ role: "user", content: text, timestamp: 3 });
+					Object.assign(session, { isStreaming: true });
+					options.preflightResult(true);
+					return prompt.mock.calls.length === 1 ? correctionTurn : Promise.resolve();
+				},
+			);
+			const abort = vi.fn(async () => {
+				Object.assign(session, { isStreaming: false });
+				resolveCorrectionTurn();
+			});
+			Object.assign(session, { sessionName: "Named", navigateTree, prompt, abort });
+			let turnFinished = false;
+			void correctionTurn.then(() => {
+				turnFinished = true;
+			});
 
-		await runtime.correct(sessionId, assistantId, "这不像极昼");
-		expect(turnFinished).toBe(false);
-		await expect(runtime.send(sessionId, "too early")).rejects.toMatchObject({
-			reason: "pi_session_busy",
-		});
-		await runtime.abort(sessionId);
-		expect(turnFinished).toBe(true);
-		await runtime.send(sessionId, "later");
+			await runtime.correct(sessionId, assistantId, "这不像极昼");
+			expect(turnFinished).toBe(false);
+			await expect(runtime.send(sessionId, "too early")).rejects.toMatchObject({
+				reason: "pi_session_busy",
+			});
+			await runtime.abort(sessionId);
+			expect(turnFinished).toBe(true);
+			await runtime.send(sessionId, "later");
 
-		expect(session.sessionId).toBe(sessionId);
-		expect(prompt.mock.calls[0]?.[0]).toBe(originalText);
-		expect(prompt).toHaveBeenCalledTimes(2);
-		expect(prompt.mock.calls[1]?.[0]).toBe("later");
-		expect(prompt.mock.calls[0]?.[1]?.images).toEqual([image]);
-		expect(manager.getBranch().some(({ id }) => id === userId || id === assistantId)).toBe(false);
-		expect(systemPrompts[0]).toContain(JSON.stringify("这不像极昼"));
-		expect(systemPrompts[1]).toBe("base");
-	});
+			expect(session.sessionId).toBe(sessionId);
+			expect(navigateTree).toHaveBeenCalledWith(userId, { summarize: false });
+			expect(prompt.mock.calls[0]?.[0]).toBe(originalText);
+			expect(prompt).toHaveBeenCalledTimes(2);
+			expect(prompt.mock.calls[1]?.[0]).toBe("later");
+			expect(prompt.mock.calls[0]?.[1]?.images).toEqual([image]);
+			expect(manager.getBranch().some(({ id }) => id === userId || id === assistantId)).toBe(false);
+			expect(systemPrompts[0]).toContain(JSON.stringify("这不像极昼"));
+			expect(systemPrompts[1]).toBe("base");
+		},
+	);
 
 	it("rejects invalid edit and correction roles before navigating the Session tree", async () => {
 		const dataDir = root();

@@ -263,7 +263,7 @@ describe("ModelRegistry", () => {
 
 			second.disable("relay", "c");
 			expect(second.defaults("second-character", facts)).toMatchObject({
-				onboardingComplete: false,
+				onboardingComplete: true,
 			});
 			expect(second.defaults("second-character", facts).reply).toBeUndefined();
 			expect(models.defaults("character", facts).reply?.modelId).toBe("a");
@@ -272,7 +272,7 @@ describe("ModelRegistry", () => {
 		}
 	});
 
-	it("clears a disabled system reply default and returns setup to fail-closed model selection", () => {
+	it("clears a disabled system reply default without resetting completed onboarding", () => {
 		models.enable(
 			{ providerId: "relay", modelId: "reply", label: "Reply", supportsImages: false },
 			facts,
@@ -288,6 +288,69 @@ describe("ModelRegistry", () => {
 		models.disable("relay", "reply");
 
 		expect(models.systemDefaults(facts).reply).toBeUndefined();
-		expect(new AppSettingsStore(systemDatabase.orm).load().firstRunStage).toBe("model");
+		expect(new AppSettingsStore(systemDatabase.orm).load().firstRunStage).toBe("embedding");
+	});
+	it.each(["remove", "disable", "clear", "credentials"] as const)(
+		"preserves completed onboarding across %s and database reopen",
+		(action) => {
+			models.enable(
+				{ providerId: "relay", modelId: "reply", label: "Reply", supportsImages: false },
+				facts,
+			);
+			models.completeSystemModelOnboarding(
+				{ reply: { providerId: "relay", modelId: "reply" }, vision: { mode: "auto" } },
+				facts,
+			);
+			models.setDefaultReply("character", { providerId: "relay", modelId: "reply" }, facts);
+			models.completeOnboarding("character", facts);
+			const unavailableFacts = {
+				...facts,
+				providers: facts.providers.map((provider) => ({ ...provider, authenticated: false })),
+			};
+			if (action === "remove") {
+				models.prepareProviderRemoval("relay");
+				models.prepareProviderRemoval("relay");
+			} else if (action === "disable") models.disable("relay", "reply");
+			else if (action === "clear") models.setDefaultReply("character", null, facts);
+			const projection = action === "credentials" ? unavailableFacts : facts;
+			expect(models.defaults("character", projection).onboardingComplete).toBe(true);
+			if (action !== "credentials")
+				expect(models.defaults("character", projection).reply).toBeUndefined();
+			companionDatabase.close();
+			systemDatabase.close();
+			systemDatabase = new SystemDatabase(join(root, "system", "settings.db"));
+			companionDatabase = new CompanionDatabase(
+				join(root, "companions", "character", "runtime.db"),
+				"character",
+			);
+			const settings = new AppSettingsStore(systemDatabase.orm);
+			const reopened = new ModelRegistry(
+				systemDatabase.orm,
+				companionDatabase.orm,
+				{ invalidate: publish } as never,
+				settings,
+				(visit) => visit(companionDatabase.orm),
+			);
+			expect(settings.load()).toMatchObject({
+				systemModelOnboardingComplete: true,
+				firstRunStage: "embedding",
+			});
+			expect(reopened.defaults("character", projection).onboardingComplete).toBe(true);
+			if (action === "remove" || action === "disable")
+				expect(reopened.systemDefaults(projection).reply).toBeUndefined();
+		},
+	);
+	it("does not remove re-added routes when finalization is repeated", () => {
+		const route = { providerId: "relay", modelId: "reply", label: "Reply", supportsImages: false };
+		models.enable(route, facts);
+		models.prepareProviderRemoval("relay");
+		models.finalizeProviderRemoval("relay");
+		expect(models.list(facts)).toEqual([]);
+		models.enable(route, facts);
+		models.finalizeProviderRemoval("relay");
+		expect(models.get("relay", "reply", facts)).toMatchObject({
+			enabled: true,
+			readiness: "ready",
+		});
 	});
 });

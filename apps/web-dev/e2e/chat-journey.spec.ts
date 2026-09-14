@@ -418,3 +418,40 @@ test("latest assistant reply branches through the UI and activates the native fo
 		"page",
 	);
 });
+
+test("correction accepts an answer after native skill and state tool calls", async ({ page }) => {
+	await ensureReadyForConversation(page);
+	const conversationId = await activeConversationId(page);
+	const prompt = "E2E_TOOL_TRIGGER_DAMAGED_LOG";
+	const answer = "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE";
+	await sendMessage(page, prompt);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	const assistant = thread
+		.getByRole("article", { name: "极昼", exact: true })
+		.filter({ hasText: answer });
+	await expect(assistant.getByText(answer, { exact: true })).toBeVisible();
+	const before = await nativeEntries(page, conversationId);
+	const originalId = before.findLast((entry) => entry.role === "assistant")?.id;
+	expect(originalId).toBeDefined();
+	expect(before.filter((entry) => entry.role === "toolResult")).toHaveLength(2);
+	await assistant.getByRole("button", { name: "这不像极昼" }).click();
+	const accepted = page.waitForResponse("**/rpc/message.correct");
+	await page.getByRole("button", { name: "语气不像他" }).click();
+	expect(await (await accepted).json()).toMatchObject({ ok: true });
+	await expect
+		.poll(async () => {
+			const latest = (await nativeEntries(page, conversationId)).findLast(
+				(entry) => entry.role === "assistant",
+			);
+			return latest?.id !== originalId && latest?.text.trim() === answer;
+		})
+		.toBe(true);
+	await page.reload();
+	await expect(assistant.getByText(answer, { exact: true })).toBeVisible();
+	const corrected = await nativeEntries(page, conversationId);
+	expect(corrected.filter((entry) => entry.role === "user").map((entry) => entry.text)).toEqual([
+		prompt,
+	]);
+	expect(corrected.filter((entry) => entry.role === "toolResult")).toHaveLength(2);
+	expect(thread.getByText("语气不像他", { exact: true })).toHaveCount(0);
+});

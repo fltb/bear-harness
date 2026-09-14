@@ -3,8 +3,7 @@ name: bear-harness-release
 on:
   push:
     tags:
-      - "v1.0.0"
-      - "v1.0.0-rc.*"
+      - "v*.*.*"
 
 permissions:
   actions: read
@@ -99,6 +98,12 @@ jobs:
 
           Packages are not Apple Developer ID signed/notarized or Windows Authenticode signed. GPG verifies package integrity and provenance; it does not remove Gatekeeper or SmartScreen warnings. macOS may require approval in Privacy & Security; Windows may show an unknown publisher warning. Managed devices may block installation.
           NOTES
+          version=$(jq --raw-output '.version' package.json)
+          version_notes="docs/releases/${version}.md"
+          if [ -f "$version_notes" ]; then
+            cat "$version_notes" release-notes.md > combined-release-notes.md
+            mv combined-release-notes.md release-notes.md
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "${assets[@]}" \
             release-downloads/SHA256SUMS.txt \

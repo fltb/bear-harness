@@ -243,7 +243,10 @@ export class PiRuntime {
 			if (entry?.type !== "message" || entry.message.role !== "assistant") {
 				throw { kind: "not_found", reason: "pi_assistant_message_not_found" };
 			}
-			const user = entry.parentId ? session.sessionManager.getEntry(entry.parentId) : undefined;
+			// Tool calls/results and native metadata can separate an answer from its user prompt.
+			const user = session.sessionManager
+				.getBranch(entry.id)
+				.findLast((ancestor) => ancestor.type === "message" && ancestor.message.role === "user");
 			if (user?.type !== "message" || user.message.role !== "user") {
 				throw { kind: "not_found", reason: "pi_user_message_not_found" };
 			}

@@ -163,7 +163,9 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 					{store.setupLoadError}
 				</p>
 			</Show>
-			<Show when={workflow.modelRequired() || workflow.roleModelRequired()}>
+			<Show
+				when={workflow.modelRequired() || (workflow.roleModelRequired() && !shell.backstageOpen())}
+			>
 				<Dialog open={workflow.modelRequired() || workflow.roleModelRequired()}>
 					<Dialog.Content class="intro model-setup" aria-label={t("modelSetup.dialogLabel")}>
 						<article class="intro-card">
@@ -176,7 +178,7 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 									? t("modelSetup.roleDescription")
 									: t("modelSetup.description")}
 							</p>
-							<Show when={workflow.modelRequired() && !hasConfiguredModels()}>
+							<Show when={workflow.modelRequired()}>
 								<ProviderSetup class="first-meeting-provider-setup" />
 							</Show>
 							<Show when={hasConfiguredModels() || workflow.roleModelRequired()}>
@@ -196,6 +198,14 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 									}
 								>
 									<p class="field-hint">{t("modelSetup.noModels")}</p>
+									<Show when={workflow.roleModelRequired()}>
+										<Button
+											type="button"
+											onClick={() => shell.openBackstage("settings", "providers")}
+										>
+											{t("sidebar.systemSettings")}
+										</Button>
+									</Show>
 								</Show>
 								<ModelSelector
 									models={workflow.configuredModels()}
