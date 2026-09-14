@@ -175,6 +175,15 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			},
 		},
 	});
+	// Provider-removal cases clear the character route. System defaults only seed
+	// a new character, so reset this shared fixture's role default explicitly.
+	const setRoleModel = await (
+		await page.request.post("/rpc/model.defaults.setReply", {
+			headers,
+			data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
+		})
+	).json();
+	expect(setRoleModel).toMatchObject({ ok: true });
 	const completeRoleModel = await (
 		await page.request.post("/rpc/model.defaults.completeOnboarding", {
 			headers,
