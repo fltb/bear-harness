@@ -71,6 +71,20 @@ export class TraceIndex {
 				row.modifiedAt,
 			);
 	}
+	/** One bounded replay page, committed synchronously without holding a
+	 * transaction across filesystem awaits or concurrent live-event writes. */
+	addPage(rows: TraceIndexRow[]): void {
+		if (rows.length > 200) throw new RangeError("diagnostic index page exceeds 200 records");
+		if (rows.length === 0) return;
+		this.db.exec("BEGIN");
+		try {
+			for (const row of rows) this.add(row);
+			this.db.exec("COMMIT");
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+	}
 	remove(traceId: string): void {
 		this.db.prepare("DELETE FROM trace_search WHERE trace_id=?").run(traceId);
 	}

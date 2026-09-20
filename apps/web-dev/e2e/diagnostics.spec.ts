@@ -31,10 +31,14 @@ test("diagnostics settings persist and expose real Pi trace payloads without cre
 	await rpc("diagnostics.set", {
 		policy: { ...policy, level: "debug", payload: "full", traceUntil: 0 },
 	});
-	await sendMessage(page, "Hello diagnostic trace");
 	// Do not scan the latest 100 unrelated traces: work grows with suite history
 	// and another Session's completed turn could also make this falsely pass.
 	const completed = { conversationId, event: "pi.agent.end" };
+	// Cold history replay is a setup operation under the journey's 60s deadline.
+	// The 5s assertion below measures only new-event visibility, not disk replay
+	// of every earlier journey. Prove there is no old evidence to falsely pass.
+	expect((await rpc("diagnostics.list", completed)).traces).toHaveLength(0);
+	await sendMessage(page, "Hello diagnostic trace");
 	await expect
 		.poll(async () => (await rpc("diagnostics.list", completed)).traces.length)
 		.toBeGreaterThan(0);

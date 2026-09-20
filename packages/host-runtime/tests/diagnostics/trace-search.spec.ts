@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CharacterTrace, DEFAULT_TRACE_POLICY } from "../../src/diagnostics/character-trace.js";
+import { TraceIndex } from "../../src/storage/database.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -13,6 +14,61 @@ async function make() {
 	roots.push(root);
 	return new CharacterTrace(root, "a");
 }
+
+it("rolls back a failed bounded index batch and remains usable for live writes", () => {
+	const index = new TraceIndex(":memory:");
+	const row = {
+		traceId: "a".repeat(32),
+		modifiedAt: "2026-09-20T00:00:00Z",
+		event: "pi.agent.end",
+		level: "info",
+		conversationId: "target",
+	};
+	try {
+		const add = index.add.bind(index);
+		const spy = vi
+			.spyOn(index, "add")
+			.mockImplementationOnce(add)
+			.mockImplementationOnce(() => {
+				throw new Error("injected batch failure");
+			});
+		expect(() => index.addPage([row, { ...row, traceId: "b".repeat(32) }])).toThrow(
+			"injected batch failure",
+		);
+		expect(index.query().traces).toHaveLength(0);
+		spy.mockRestore();
+		expect(() => index.addPage(Array.from({ length: 201 }, () => row))).toThrow("200");
+		index.add(row);
+		expect(index.query({ conversationId: "target" }).traces).toHaveLength(1);
+	} finally {
+		index.close();
+	}
+});
+
+it("replays many short traces in bounded batches instead of one transaction per record", async () => {
+	const recorder = await make();
+	for (let i = 0; i < 120; i++) {
+		await recorder.operation("test.replay", { conversationId: `c${i}` }, undefined, async () => {});
+		if (i % 20 === 19) await recorder.flush();
+	}
+	await recorder.flush();
+	const batchSizes: number[] = [];
+	const addPage = TraceIndex.prototype.addPage;
+	const replay = vi.spyOn(TraceIndex.prototype, "addPage").mockImplementation(function (rows) {
+		batchSizes.push(rows.length);
+		return addPage.call(this, rows);
+	});
+	try {
+		expect(
+			(await recorder.query({ conversationId: "c119", event: "test.replay.end" })).traces,
+		).toHaveLength(1);
+		expect(batchSizes).toEqual([200, 40]);
+		expect(recorder.health()).toMatchObject({ dropped: 0, writeFailures: 0 });
+	} finally {
+		replay.mockRestore();
+		await recorder.close();
+	}
+});
 
 it("fails shutdown within its deadline without reporting a clean flush", async () => {
 	const recorder = await make();
@@ -73,6 +129,58 @@ it("reads bounded UTF-8 pages and rejects unaligned cursors", async () => {
 	expect(remaining.next).toBeUndefined();
 	await expect(recorder.page(span.context.traceId, 1)).rejects.toThrow("record boundary");
 	await recorder.close();
+});
+
+it("skips malformed index fields without discarding the valid replay batch", async () => {
+	const recorder = await make();
+	const span = recorder.span("test.valid", { conversationId: "valid" });
+	span.end("ok");
+	await recorder.flush();
+	await appendFile(
+		join(recorder.root, "traces", span.context.traceId, "events.jsonl"),
+		`${JSON.stringify({ traceId: span.context.traceId, companionId: "a", event: {} })}\n`,
+	);
+	try {
+		expect((await recorder.query({ conversationId: "valid" })).traces).toHaveLength(1);
+		expect(recorder.health().writeFailures).toBe(1);
+	} finally {
+		await recorder.close();
+	}
+});
+
+it("finds a Session's completed Pi trace beyond the unfiltered history window", async () => {
+	const recorder = await make();
+	try {
+		recorder.native("target-session", { type: "agent_start" });
+		recorder.native("target-session", { type: "message_end" });
+		recorder.native("target-session", { type: "agent_end" });
+		const target = await recorder.query({
+			conversationId: "target-session",
+			event: "pi.agent.end",
+		});
+		expect(target.traces).toHaveLength(1);
+		const targetId = target.traces[0]!.traceId;
+		// Production RPCs create independent root traces. More than one list page
+		// can accumulate without another Pi turn; scanning the default page must
+		// not be used to decide whether this Session has diagnostic evidence.
+		for (let index = 0; index < 120; index++) {
+			await recorder.operation("rpc.request", {}, { channel: "conversation.list" }, async () => {});
+			if (index % 20 === 19) await recorder.flush();
+		}
+		const recent = await recorder.query();
+		expect(recent.traces).toHaveLength(100);
+		expect(recent.next).toBeDefined();
+		expect(recent.traces.map((trace) => trace.traceId)).not.toContain(targetId);
+		const scoped = await recorder.query({
+			conversationId: "target-session",
+			event: "pi.agent.end",
+		});
+		expect(scoped.traces.map((trace) => trace.traceId)).toEqual([targetId]);
+		expect(await recorder.read(targetId)).toContain('"event":"pi.agent.end"');
+		expect(recorder.health()).toMatchObject({ dropped: 0, writeFailures: 0 });
+	} finally {
+		await recorder.close();
+	}
 });
 
 it("retains pinned incidents and records duration histograms independently of level", async () => {

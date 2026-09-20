@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { TraceIndex, type TraceQuery } from "../storage/database.js";
+import { TraceIndex, type TraceIndexRow, type TraceQuery } from "../storage/database.js";
 import type { DiagnosticLevel } from "./contracts.js";
 import { diagnosticLevelEnabled } from "./levels.js";
 import { redactCredentials } from "./redaction.js";
@@ -702,6 +702,7 @@ export class CharacterTrace {
 			try {
 				index.clear();
 				this.index = index;
+				const rows: TraceIndexRow[] = [];
 				for (const entry of await readdir(join(this.root, "traces"), { withFileTypes: true })) {
 					if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue;
 					let offset = 0;
@@ -713,18 +714,33 @@ export class CharacterTrace {
 							},
 						);
 						for (const line of page.content.split("\n").filter(Boolean)) {
+							let record: TraceRecord;
 							try {
-								const record = JSON.parse(line) as TraceRecord;
+								record = JSON.parse(line) as TraceRecord;
 								if (record.traceId !== entry.name || record.companionId !== this.companionId)
 									throw new Error("foreign diagnostic record");
-								index.add({ ...record, modifiedAt: record.at });
+								if (
+									typeof record.event !== "string" ||
+									typeof record.level !== "string" ||
+									typeof record.at !== "string" ||
+									(record.conversationId != null && typeof record.conversationId !== "string") ||
+									(record.runId != null && typeof record.runId !== "string")
+								)
+									throw new Error("invalid diagnostic index fields");
 							} catch {
 								this.healthState.writeFailures++;
+								continue;
+							}
+							rows.push({ ...record, modifiedAt: record.at });
+							if (rows.length === 200) {
+								index.addPage(rows);
+								rows.length = 0;
 							}
 						}
 						offset = page.next ?? 0;
 					} while (offset);
 				}
+				index.addPage(rows);
 				this.index = index;
 				return index;
 			} catch (error) {
