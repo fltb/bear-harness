@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { ensureReadyForConversation, getBootstrap, sendMessage } from "./helpers";
+import {
+	activeConversationId,
+	ensureReadyForConversation,
+	getBootstrap,
+	sendMessage,
+} from "./helpers";
 
 test("diagnostics settings persist and expose real Pi trace payloads without credentials", async ({
 	page,
@@ -9,7 +14,7 @@ test("diagnostics settings persist and expose real Pi trace payloads without cre
 	test.setTimeout(60_000);
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await ensureReadyForConversation(page);
-	await sendMessage(page, "Hello diagnostic trace");
+	const conversationId = await activeConversationId(page);
 	const { token } = await getBootstrap(page);
 	const rpc = async (channel: string, data = {}) => {
 		const response = await page.request.post(`/rpc/${channel}`, {
@@ -21,27 +26,37 @@ test("diagnostics settings persist and expose real Pi trace payloads without cre
 		expect(envelope.ok).toBe(true);
 		return envelope.data;
 	};
+	// Establish our policy even when this journey is repeated on the same Host.
+	const { policy } = await rpc("diagnostics.get");
+	await rpc("diagnostics.set", {
+		policy: { ...policy, level: "debug", payload: "full", traceUntil: 0 },
+	});
+	await sendMessage(page, "Hello diagnostic trace");
+	// Do not scan the latest 100 unrelated traces: work grows with suite history
+	// and another Session's completed turn could also make this falsely pass.
+	const completed = { conversationId, event: "pi.agent.end" };
 	await expect
-		.poll(async () => {
-			const list = await rpc("diagnostics.list");
-			for (const trace of list.traces) {
-				const result = await rpc("diagnostics.read", { traceId: trace.traceId });
-				if (result.content.includes('"event":"pi.agent.end"')) return true;
-			}
-			return false;
-		})
-		.toBe(true);
-	const list = await rpc("diagnostics.list");
+		.poll(async () => (await rpc("diagnostics.list", completed)).traces.length)
+		.toBeGreaterThan(0);
+	const list = await rpc("diagnostics.list", completed);
 	let inspected: { traceId: string; eventId: string; conversationId: string } | undefined;
 	for (const trace of list.traces) {
-		const { content } = await rpc("diagnostics.read", { traceId: trace.traceId });
+		let content = "";
+		let offset: number | undefined;
+		do {
+			const page = await rpc("diagnostics.read", { traceId: trace.traceId, offset });
+			content += page.content;
+			offset = page.next;
+		} while (offset !== undefined);
 		expect(content).not.toContain("e2e-rule-key");
+		expect(content).toContain('"event":"pi.agent.end"');
 		const event = content
 			.trim()
 			.split("\n")
 			.map((line: string) => JSON.parse(line))
 			.find((item: { event: string }) => item.event === "pi.message_end");
 		if (!event?.payload) continue;
+		expect(event.conversationId).toBe(conversationId);
 		const body = await rpc("diagnostics.payload", {
 			traceId: trace.traceId,
 			sha256: event.payload.sha256,
