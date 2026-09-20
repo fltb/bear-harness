@@ -181,7 +181,11 @@ function requestShutdown(exitCode: number): void {
 function nativeRecoveryInterface(): NativeRecoveryInterface {
 	return {
 		chooseAction: (prompt: RecoveryPrompt) =>
-			chooseRecoveryAction(productConfig.productName, prompt),
+			chooseRecoveryAction(
+				productConfig.productName,
+				prompt,
+				windowPresentation({ sourceE2E: isSourceE2E, packagedE2E: isPackagedE2E }),
+			),
 		chooseDestination: async (request: RecoveryDestinationRequest) => {
 			const result = await dialog.showSaveDialog({
 				title:

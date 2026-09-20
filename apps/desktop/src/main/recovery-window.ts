@@ -1,5 +1,6 @@
 import { BrowserWindow } from "electron";
 import type { RecoveryAction, RecoveryPrompt } from "./recovery-controller.js";
+import type { WindowPresentation } from "./window-presentation.js";
 
 const LABELS: Record<RecoveryAction, string> = {
 	retry: "重试启动",
@@ -38,6 +39,7 @@ function recoveryHtml(productName: string, prompt: RecoveryPrompt): string {
 export function chooseRecoveryAction(
 	productName: string,
 	prompt: RecoveryPrompt,
+	presentation: WindowPresentation = "active",
 ): Promise<RecoveryAction | null> {
 	return new Promise((resolve) => {
 		let settled = false;
@@ -47,6 +49,7 @@ export function chooseRecoveryAction(
 			minWidth: 480,
 			minHeight: 480,
 			show: false,
+			focusable: presentation === "active",
 			title: `${productName} 恢复`,
 			backgroundColor: "#07171c",
 			autoHideMenuBar: true,
@@ -80,7 +83,10 @@ export function chooseRecoveryAction(
 			}
 		});
 		window.once("closed", () => finish(null));
-		window.webContents.once("did-finish-load", () => window.show());
+		window.webContents.once("did-finish-load", () => {
+			if (presentation === "inactive") window.showInactive();
+			else window.show();
+		});
 		void window.loadURL(
 			`data:text/html;charset=utf-8,${encodeURIComponent(recoveryHtml(productName, prompt))}`,
 		);

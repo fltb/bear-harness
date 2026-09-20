@@ -21,6 +21,8 @@ test("fatal settings corruption opens isolated recovery and rebuilds on explicit
 		).toBeVisible();
 		const nativeRecovery = await first.browserWindow(recovery);
 		await expect.poll(() => nativeRecovery.evaluate((window) => window.isVisible())).toBe(true);
+		expect(await nativeRecovery.evaluate((window) => window.isFocusable())).toBe(false);
+		expect(await nativeRecovery.evaluate((window) => window.isFocused())).toBe(false);
 		await nativeRecovery.dispose();
 		await Promise.all([
 			first.waitForEvent("close", { timeout: 30_000 }),
@@ -31,6 +33,10 @@ test("fatal settings corruption opens isolated recovery and rebuilds on explicit
 		({ app: restarted } = await launchSourceAppAt(appDataRoot));
 		const setup = await restarted.firstWindow();
 		await expect(setup.getByRole("dialog", { name: zhCN.licenseNotice.dialogLabel })).toBeVisible();
+		const nativeSetup = await restarted.browserWindow(setup);
+		expect(await nativeSetup.evaluate((window) => window.isFocusable())).toBe(false);
+		expect(await nativeSetup.evaluate((window) => window.isFocused())).toBe(false);
+		await nativeSetup.dispose();
 	} finally {
 		await first?.close().catch(() => undefined);
 		await restarted?.close().catch(() => undefined);

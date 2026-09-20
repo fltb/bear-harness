@@ -170,7 +170,13 @@ describe("electron-builder production boundary", () => {
 			expect(command).toContain(`verify-package-boundary.mjs ${target}`);
 			expect(command).toContain(`verify-native-bindings.mjs ${target}`);
 			if (target.startsWith("mac ")) {
-				expect(command).toContain(`BEAR_PACKAGE_ARCH=${target.slice(4)} electron-builder`);
+				expect(command).toContain(`node scripts/package-mac.mjs ${target.slice(4)}`);
+				const launcher = readFileSync(
+					resolve(repositoryRoot, "apps/desktop/scripts/package-mac.mjs"),
+					"utf8",
+				);
+				expect(launcher).toContain("BEAR_PACKAGE_ARCH: arch");
+				expect(launcher).toContain("`--${arch}`");
 			}
 		}
 	});
