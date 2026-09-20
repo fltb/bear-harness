@@ -177,6 +177,8 @@ async function nativeSetup(
 	overrides: {
 		memory?: Partial<PiRuntimeOptions["memory"]>;
 		context?: PiRuntimeOptions["context"];
+		configureModels?(models: ModelRuntime): void;
+		defaultModel?: { providerId: string; modelId: string };
 	} = {},
 ) {
 	const dataDir = root();
@@ -201,6 +203,7 @@ async function nativeSetup(
 			},
 		],
 	});
+	overrides.configureModels?.(models);
 	const stream = vi.spyOn(models, "streamSimple").mockImplementation(() => {
 		const events = new AssistantMessageEventStream();
 		events.push({ type: "done", reason: "stop", message: assistantMessage() });
@@ -212,7 +215,7 @@ async function nativeSetup(
 		paths: { runtime: join(dataDir, "runtime"), sessions: join(dataDir, "sessions") },
 		models: { getModels: async () => models },
 		character: () => ({ id: "test-character" }),
-		defaultModel: () => ({ providerId: "test", modelId: "test-model" }),
+		defaultModel: () => overrides.defaultModel ?? { providerId: "test", modelId: "test-model" },
 		multimodalFallback: () => undefined,
 		context: overrides.context ?? (() => "turn context"),
 		memory: {
@@ -233,6 +236,7 @@ async function nativeSetup(
 }
 
 afterEach(() => {
+	vi.unstubAllGlobals();
 	for (const directory of roots.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -1040,6 +1044,105 @@ describe("PiRuntime session registry", () => {
 });
 
 describe("PiRuntime native stage lifecycle", () => {
+	it("routes isolated native search through the model selected at execution time", async () => {
+		const requests: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string | URL | Request) => {
+				const value = String(url);
+				requests.push(value);
+				if (value.includes("generativelanguage.googleapis.com")) {
+					return new Response(
+						JSON.stringify({
+							modelVersion: "gemini-2.5-flash",
+							candidates: [
+								{
+									content: { parts: [{ text: "Google answer" }] },
+									groundingMetadata: {
+										webSearchQueries: ["second query"],
+										groundingChunks: [{ web: { title: "Google", uri: "https://google.example/" } }],
+									},
+								},
+							],
+						}),
+					);
+				}
+				return new Response(
+					JSON.stringify({
+						model: "gpt-5.4",
+						output: [
+							{ type: "web_search_call", action: { sources: [] } },
+							{ type: "message", content: [{ type: "output_text", text: "OpenAI answer" }] },
+						],
+					}),
+				);
+			}),
+		);
+		const { runtime, session } = await nativeSetup({
+			configureModels: (models) => {
+				models.registerProvider("openai", {
+					baseUrl: "https://api.openai.com/v1",
+					api: "openai-responses",
+					apiKey: "openai-test-only",
+					models: [
+						{
+							id: "gpt-5.4",
+							name: "OpenAI Search",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				});
+				models.registerProvider("google", {
+					baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+					api: "google-generative-ai",
+					apiKey: "google-test-only",
+					models: [
+						{
+							id: "gemini-2.5-flash",
+							name: "Gemini Search",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				});
+			},
+			defaultModel: { providerId: "test", modelId: "test-model" },
+			memory: { enabled: () => false },
+		});
+		expect(session.state.tools.some(({ name }) => name === "web_search")).toBe(false);
+		const otherTools = session.getActiveToolNames();
+		await runtime.setModel(session.sessionId, "openai", "gpt-5.4");
+		const webSearch = session.state.tools.find(({ name }) => name === "web_search");
+		if (!webSearch) throw new Error("web_search was not registered");
+
+		const first = await webSearch.execute("search-openai", { query: "first query", limit: 3 });
+		await runtime.setModel(session.sessionId, "google", "gemini-2.5-flash");
+		expect(session.getActiveToolNames()).toContain("web_search");
+		const second = await webSearch.execute("search-google", { query: "second query", limit: 3 });
+
+		expect(requests).toEqual([
+			"https://api.openai.com/v1/responses",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+		]);
+		expect(first.content[0]).toEqual({ type: "text", text: "OpenAI answer" });
+		expect(second.content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("Google answer"),
+		});
+		await runtime.setModel(session.sessionId, "test", "test-model");
+		expect(session.getActiveToolNames()).toEqual(otherTools);
+		await runtime.setModel(session.sessionId, "openai", "gpt-5.4");
+		expect(session.getActiveToolNames().filter((name) => name === "web_search")).toHaveLength(1);
+		await runtime.closeAll();
+	});
+
 	it("delivers a busy native follow-up once, only after the native custom entry is appended", async () => {
 		const { runtime, session, stream } = await nativeSetup({ memory: { enabled: () => false } });
 		const pending = new AssistantMessageEventStream();

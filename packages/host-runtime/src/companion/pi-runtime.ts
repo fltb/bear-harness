@@ -19,6 +19,11 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import PQueue from "p-queue";
+import {
+	formatNativeWebSearchResult,
+	modelSupportsNativeWebSearch,
+	searchNativeWeb,
+} from "../network/native-web-search.js";
 import type { CharacterPackage } from "./character-loader.js";
 import type { CompanionStateStore } from "./companion-store.js";
 import { type HostToolInput, registerHostTools } from "./host-tool-register.js";
@@ -685,6 +690,12 @@ export class PiRuntime {
 			systemPrompt: baseSystemPrompt,
 			extensionFactories: [
 				(pi) => {
+					pi.on("model_select", (event) => {
+						if (!session) return; // Initial creation already filters tools below.
+						const names = session.getActiveToolNames().filter((name) => name !== "web_search");
+						if (modelSupportsNativeWebSearch(event.model)) names.push("web_search");
+						session.setActiveToolsByName(names);
+					});
 					pi.on("tool_result", (event) => {
 						if (!Object.hasOwn(hostTools, event.toolName)) return;
 						const details = event.details;
@@ -755,6 +766,21 @@ export class PiRuntime {
 			memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
 			conversationSearch: (query, limit) =>
 				this.options.memory.searchConversations(companionId, sessionId, query, limit),
+			webSearch: async (query, limit, signal) => {
+				const activeModel = session.model;
+				if (!modelSupportsNativeWebSearch(activeModel))
+					throw { kind: "unavailable", reason: "native_web_search_model_unsupported" };
+				if (!activeModel)
+					throw { kind: "unavailable", reason: "native_web_search_model_unavailable" };
+				const result = await searchNativeWeb({
+					models,
+					model: activeModel,
+					query,
+					limit,
+					signal,
+				});
+				return { message: formatNativeWebSearchResult(result), data: result };
+			},
 			...(model.input?.includes("image")
 				? {}
 				: { imageRead: (path: string) => this.readImage(session, companionId, path) }),
@@ -797,6 +823,12 @@ export class PiRuntime {
 			tools: allTools.map((tool) => tool.name),
 		});
 		session = created.session;
+		// SDK `tools` is a registry allowlist. Retain the definition so a later
+		// model switch can enable it, but never expose it on an unsupported turn.
+		if (!modelSupportsNativeWebSearch(session.model))
+			session.setActiveToolsByName(
+				session.getActiveToolNames().filter((name) => name !== "web_search"),
+			);
 		return session;
 	}
 
