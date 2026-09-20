@@ -1,6 +1,6 @@
 {
 	"name": "@bear-harness/tdai-core",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"private": true,
 	"type": "module",
 	"description": "Host-neutral TencentDB Agent Memory core for Bear Harness.",
