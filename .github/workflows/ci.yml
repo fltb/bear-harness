@@ -159,7 +159,34 @@ jobs:
         run: |
           sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
           sudo apt-get --option Acquire::Retries=3 install --yes libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
-      - run: xvfb-run -a npm run test:e2e:electron
+      - name: Run Electron E2E
+        id: electron_e2e
+        shell: bash
+        run: |
+          set -o pipefail
+          xvfb-run -a npm run test:e2e:electron 2>&1 | tee electron-e2e.log
+      - name: Publish Electron E2E failure
+        if: failure() && steps.electron_e2e.outcome == 'failure'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const encoded = readFileSync("electron-e2e.log", "utf8")
+            .slice(-8_000)
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.stdout.write(`::error title=Electron E2E failure::${encoded}\n`);
+          NODE
+      - name: Preserve Electron E2E diagnostics
+        if: always() && steps.electron_e2e.outcome != 'skipped'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: electron-e2e-diagnostics
+          path: |
+            electron-e2e.log
+            test-results/electron/
+          if-no-files-found: error
       - run: node scripts/release-attestation.mjs electron-e2e
       - uses: actions/upload-artifact@v7.0.1
         with:
