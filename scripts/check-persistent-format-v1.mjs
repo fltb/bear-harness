@@ -50,7 +50,7 @@ for (const [path, expected] of contracts) requireText(path, expected);
 for (const forbidden of ["upgradeSystemSchema", "upgradeCompanionSchema"]) {
 	forbidText("packages/host-runtime/src/storage/database.ts", forbidden);
 }
-// The nullable thinking preference is the sole approved additive extension of existing v1 data.
+// Approved v1 changes are explicit one-way conversions, never a version migration ladder.
 const thinkingColumn = source("packages/host-runtime/src/storage/schema-sql.ts").match(
 	/\n\t(text_thinking_level TEXT CHECK \([^\n]+\)),\n/,
 )?.[1];
@@ -60,7 +60,21 @@ const databaseSource = source("packages/host-runtime/src/storage/database.ts");
 const thinkingExtension = `ALTER TABLE model_route_settings ADD COLUMN ${thinkingColumn}`;
 if (!databaseSource.includes(thinkingExtension))
 	throw new Error("existing v1 characters must receive the current nullable thinking preference");
-if (databaseSource.replaceAll(thinkingExtension, "").includes("ALTER TABLE"))
+const artifactConversion = "ALTER TABLE artifacts_converted RENAME TO artifacts";
+for (const expected of [
+	artifactConversion,
+	"DROP TABLE artifacts;",
+	"CASE status WHEN 'verified' THEN 'verified' WHEN 'verification_failed' THEN 'failed' ELSE 'pending' END",
+	"status = 'saved', producer_run_id, created_at FROM artifacts",
+])
+	requireText("packages/host-runtime/src/storage/database.ts", expected);
+if (
+	databaseSource
+		.replaceAll(thinkingExtension, "")
+		.replaceAll(artifactConversion, "")
+		.replaceAll("ALTER TABLE executor_profiles_current RENAME TO executor_profiles", "")
+		.includes("ALTER TABLE")
+)
 	throw new Error("unapproved database schema changes are forbidden");
 for (const forbidden of [
 	"session_states",

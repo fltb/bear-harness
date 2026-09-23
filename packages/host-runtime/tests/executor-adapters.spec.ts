@@ -17,8 +17,9 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AcpProcessSpec } from "../src/executors/acp-client.js";
+import { AcpExecutorController } from "../src/executors/acp-executor.js";
 import {
 	CodexAdapter,
 	codexCodeModeHost,
@@ -56,7 +57,7 @@ function createDatabases() {
 		CREATE TABLE executor_profiles (
 			id TEXT PRIMARY KEY,
 			profile_type TEXT NOT NULL,
-			capability_json TEXT NOT NULL DEFAULT '{}',
+			config_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`);
@@ -110,7 +111,7 @@ describe("ACP executor adapters", () => {
 			const input = request(cwd, { id: "pi-default", type: "pi", capabilities: {} });
 			input.task.readOnlyPaths = [join(root, "input.txt")];
 			const spec = new InspectablePiAdapter(runDb, join(root, "auth"), worker).spec(input);
-			expect(spec.readOnlyPaths).toEqual([...grants, join(root, "input.txt")]);
+			expect(spec.readOnlyPaths).toEqual([join(root, "auth"), ...grants, join(root, "input.txt")]);
 		} finally {
 			run.close();
 			system.close();
@@ -180,6 +181,84 @@ describe("ACP executor adapters", () => {
 		},
 	);
 
+	it("keeps registration stable across upgrades and verifies old Run snapshots separately", async () => {
+		const cwd = fixtureDirectory();
+		const oldBinary = join(cwd, "codex-old");
+		const newBinary = join(cwd, "codex-new");
+		for (const [binary, version] of [
+			[oldBinary, "0.149.1"],
+			[newBinary, "0.156.0"],
+		] as const) {
+			writeFileSync(binary, `#!/bin/sh\necho 'codex ${version}'\n`);
+			chmodSync(binary, 0o755);
+		}
+		const candidate = (binary: string, version: string) => ({
+			candidatePath: binary,
+			canonicalPath: binary,
+			version,
+			sha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
+			status: "usable" as const,
+		});
+		let current = candidate(oldBinary, "0.149.1");
+		const { system, run: runDatabase, systemDb, runDb, invalidations } = createDatabases();
+		class Adapter extends CodexAdapter {
+			override async discover() {
+				return [current];
+			}
+			verify(value: ExecutorLaunchRequest) {
+				return this.prepareLaunch(value);
+			}
+		}
+		const adapter = new Adapter(systemDb, runDb, invalidations);
+		const launch = vi.spyOn(AcpExecutorController.prototype, "launch").mockResolvedValue();
+		try {
+			const first = await adapter.consent(current);
+			const stored = () =>
+				JSON.parse(
+					(
+						system
+							.prepare("SELECT config_json FROM executor_profiles WHERE id = ?")
+							.get(first.profileId) as { config_json: string }
+					).config_json,
+				);
+			expect(stored()).not.toHaveProperty("canonicalPath");
+			const input = request(cwd, { id: first.profileId, type: "codex", capabilities: stored() });
+			await adapter.launch(input);
+			const oldSnapshot = launch.mock.calls[0]?.[0];
+			if (!oldSnapshot) throw new Error("missing launch snapshot");
+			current = candidate(newBinary, "0.156.0");
+			expect(await adapter.status()).toMatchObject({
+				available: true,
+				profileId: first.profileId,
+				version: "0.156.0",
+			});
+			await adapter.launch(input);
+			expect(launch.mock.calls[1]?.[0].profile.capabilities).toMatchObject({
+				canonicalPath: newBinary,
+				version: "0.156.0",
+			});
+			expect(oldSnapshot.profile.capabilities).toMatchObject({
+				canonicalPath: oldBinary,
+				version: "0.149.1",
+			});
+			expect(input.profile.capabilities).not.toHaveProperty("canonicalPath");
+			expect((await adapter.consent(current)).profileId).toBe(first.profileId);
+			expect(system.prepare("SELECT count(*) AS count FROM executor_profiles").get()).toMatchObject(
+				{ count: 1 },
+			);
+			await adapter.verify(oldSnapshot);
+			rmSync(oldBinary);
+			await expect(adapter.verify(oldSnapshot)).rejects.toMatchObject({
+				kind: "executor_binary_changed",
+			});
+		} finally {
+			launch.mockRestore();
+			await adapter.close();
+			system.close();
+			runDatabase.close();
+		}
+	});
+
 	it.skipIf(!macOSConfinementAvailable)(
 		"keeps the consented Codex ACP adapter functional under confinement",
 		async () => {
@@ -198,6 +277,18 @@ describe("ACP executor adapters", () => {
 				.digest("hex");
 			const { system, run: runDatabase, systemDb, runDb, invalidations } = createDatabases();
 			class FixtureCodexAdapter extends CodexAdapter {
+				override async discover() {
+					return [
+						{
+							candidatePath: binary,
+							canonicalPath: binary,
+							version: "0.149.1",
+							sha256: hash,
+							status: "usable" as const,
+						},
+					];
+				}
+
 				protected override processSpec(): AcpProcessSpec {
 					return fixtureSpec(cwd);
 				}

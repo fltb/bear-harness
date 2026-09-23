@@ -36,6 +36,7 @@ const detail: RunGetResponse = {
 	run,
 	instruction: "Inspect the project",
 	inputPaths: [],
+	provenance: { entries: [], unavailableCount: 0, hasMore: false },
 	evidence: [],
 };
 
@@ -73,7 +74,10 @@ function createHarness(
 function createWorkflow() {
 	return createRoot((dispose) => {
 		disposers.push(dispose);
-		const [character, setCharacter] = createSignal(THEMED_CHARACTER);
+		const [character, setCharacter] = createSignal<typeof THEMED_CHARACTER | undefined>(
+			THEMED_CHARACTER,
+		);
+		const [selectedCharacterId, setSelectedCharacterId] = createSignal(THEMED_CHARACTER.id);
 		const [conversationId, setConversationId] = createSignal<string | null>("conversation-two");
 		const [runs, setRuns] = createSignal<RunInfo[]>([run]);
 		const selectConversation = vi.fn(async (id: string) => {
@@ -81,6 +85,9 @@ function createWorkflow() {
 		});
 		const sendMessage = vi.fn(async (_text: string) => undefined);
 		const store = {
+			get selectedCharacterId() {
+				return selectedCharacterId();
+			},
 			get character() {
 				return character();
 			},
@@ -100,7 +107,15 @@ function createWorkflow() {
 			currentLocale: () => "en",
 			translate: ((key: string) => key) as never,
 		});
-		return { workflow, setCharacter, setConversationId, setRuns, selectConversation, sendMessage };
+		return {
+			workflow,
+			setCharacter,
+			setSelectedCharacterId,
+			setConversationId,
+			setRuns,
+			selectConversation,
+			sendMessage,
+		};
 	});
 }
 
@@ -242,43 +257,57 @@ describe("task workflow scope", () => {
 		expect(workflow.selectedTaskId()).toBeNull();
 	});
 
-	it("opens an older task artifact only after original-conversation navigation succeeds", async () => {
+	it("keeps only artifact identity after source navigation and clears it on an empty conversation", async () => {
 		const { workflow, selectConversation, setConversationId, setRuns } = createWorkflow();
-		const historic: RunInfo = {
-			...run,
-			artifacts: [
-				{
-					id: "artifact-one",
-					name: "result.txt",
-					mime: "text/plain",
-					bytes: 10,
-					status: "verified",
-					sha256: "a".repeat(64),
-					createdAt: "2026-09-06T00:00:00.000Z",
-				},
-			],
-		};
 		setRuns([]);
 		const { promise, resolve } = Promise.withResolvers<void>();
 		selectConversation.mockImplementation(async (id) => {
 			await promise;
 			setConversationId(id);
 		});
-		const pending = workflow.openRunArtifact(historic, "artifact-one");
-		expect(workflow.selectedArtifact()).toBeUndefined();
+		const pending = workflow.openRunArtifact(run, "artifact-one");
+		expect(workflow.selectedArtifact()).toBeNull();
 		resolve();
 		await pending;
-		expect(workflow.selectedArtifact()?.run.id).toBe(run.id);
-		setRuns([{ ...historic, artifacts: [] }]);
-		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
-		setRuns([historic]);
-		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
+		expect(workflow.selectedArtifact()).toEqual({
+			characterId: THEMED_CHARACTER.id,
+			conversationId: run.conversationId,
+			runId: run.id,
+			artifactId: "artifact-one",
+		});
+		workflow.selectArtifact("artifact-two");
+		expect(workflow.selectedArtifact()?.artifactId).toBe("artifact-two");
 		setConversationId(null);
-		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
+		expect(workflow.selectedArtifact()).toBeNull();
 		setConversationId(run.conversationId);
-		expect(workflow.selectedArtifact()?.artifact.id).toBe("artifact-one");
-		setConversationId("another-conversation");
-		expect(workflow.selectedArtifact()).toBeUndefined();
+		expect(workflow.selectedArtifact()).toBeNull();
+	});
+
+	it("uses local character selection even when the character snapshot is loading", async () => {
+		const { workflow, setCharacter, setSelectedCharacterId, setConversationId } = createWorkflow();
+		await workflow.openRunArtifact(run, "artifact-one");
+		setCharacter(undefined);
+		expect(workflow.selectedArtifact()?.artifactId).toBe("artifact-one");
+		setSelectedCharacterId("other-character");
+		expect(workflow.selectedArtifact()).toBeNull();
+		setConversationId(null);
+		setSelectedCharacterId(THEMED_CHARACTER.id);
+		setConversationId(run.conversationId);
+		expect(workflow.selectedArtifact()).toBeNull();
+	});
+
+	it("does not reopen a result closed before conversation navigation completes", async () => {
+		const { workflow, selectConversation, setConversationId } = createWorkflow();
+		const { promise, resolve } = Promise.withResolvers<void>();
+		selectConversation.mockImplementation(async (id) => {
+			await promise;
+			setConversationId(id);
+		});
+		const pending = workflow.openRunArtifact(run, "artifact-one");
+		workflow.closeArtifact();
+		resolve();
+		await pending;
+		expect(workflow.selectedArtifact()).toBeNull();
 	});
 
 	it("retains failed instruction drafts and never sends to the wrong conversation after failed navigation", async () => {

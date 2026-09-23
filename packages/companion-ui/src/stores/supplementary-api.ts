@@ -204,13 +204,13 @@ export interface ArtifactApi {
 	saveAs(identity: ArtifactIdentity): Promise<ArtifactActionResponse>;
 }
 
-export interface ExternalAgentApi {
-	status(): Promise<import("./ipc.js").ExternalAgentStatusData>;
-	discover(): Promise<import("./ipc.js").ExternalAgentCandidate[]>;
-	connect(params: { canonicalPath: string; version: string; sha256: string }): Promise<void>;
-}
+export type ExternalAgentApi = ReturnType<
+	typeof import("./external-agent-api.js").createExternalAgentApi
+>;
 
 export interface CharacterApi {
+	memoryGet(characterId: string): Promise<{ enabled: boolean }>;
+	memorySet(characterId: string, enabled: boolean): Promise<{ enabled: boolean }>;
 	inspectMemory(request: MemoryInspectRequest): Promise<MemoryInspectResponse>;
 	observeTrust(
 		characterId: Accessor<string>,

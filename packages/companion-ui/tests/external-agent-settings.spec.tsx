@@ -10,7 +10,7 @@ import { createTestClient } from "./fixtures.js";
 function renderSettings(client: ReturnType<typeof createTestClient>["client"]) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const Harness = () => {
-		const store = createCompanionStore(client);
+		const store = createCompanionStore(client, "jizhou");
 		return (
 			<DesktopProvider store={store}>
 				<ExternalAgentSettings />

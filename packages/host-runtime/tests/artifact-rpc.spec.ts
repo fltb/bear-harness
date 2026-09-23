@@ -10,13 +10,15 @@ import type {
 	ArtifactPresentationAccess,
 	ArtifactPresenter,
 } from "../src/artifacts/presentation.js";
-import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
+import { type HostCompositionContext, wireCharacterHandlers } from "../src/composition.js";
 import { Dispatcher } from "../src/dispatcher.js";
 import { ExternalAgentRunService } from "../src/external-agents/run-service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
+import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 import { artifacts, conversations, evidence, runs } from "../src/storage/schema.js";
 
 interface ArtifactIdentity {
+	characterId: string;
 	conversationId: string;
 	runId: string;
 	artifactId: string;
@@ -41,18 +43,19 @@ describe("run-owned Artifact RPC", () => {
 		second = seedRunArtifact("conversation-b", "run-b", "artifact-b.txt", "other data");
 		context = compositionContext();
 		dispatcher = new Dispatcher();
-		wireHostHandlers(dispatcher, context);
+		wireCharacterHandlers(dispatcher, context);
 	});
 
 	afterEach(async () => {
 		await context.externalAgentRuns.close();
+		await store.close();
 		database.close();
 		rmSync(root, { recursive: true, force: true });
 	});
 
 	it("reads bounded ranges with authoritative metadata and EOF offsets", async () => {
 		await expect(
-			dispatcher.dispatch("artifact.read", { ...first, offset: 2, length: 4 }),
+			dispatcher.dispatch("artifact.read", { characterId: "bear", ...first, offset: 2, length: 4 }),
 		).resolves.toEqual({
 			ok: true,
 			data: {
@@ -62,7 +65,9 @@ describe("run-owned Artifact RPC", () => {
 					mime: "text/plain",
 					bytes: 10,
 					sha256: store.get(first.artifactId)?.sha256,
-					status: "created",
+					verification: "verified",
+					saved: false,
+					adopted: false,
 					createdAt: expect.any(String),
 				},
 				offset: 2,
@@ -72,7 +77,12 @@ describe("run-owned Artifact RPC", () => {
 			},
 		});
 		await expect(
-			dispatcher.dispatch("artifact.read", { ...first, offset: 8, length: 100 }),
+			dispatcher.dispatch("artifact.read", {
+				characterId: "bear",
+				...first,
+				offset: 8,
+				length: 100,
+			}),
 		).resolves.toMatchObject({
 			ok: true,
 			data: {
@@ -83,13 +93,22 @@ describe("run-owned Artifact RPC", () => {
 			},
 		});
 		await expect(
-			dispatcher.dispatch("artifact.read", { ...first, offset: 12, length: 1 }),
+			dispatcher.dispatch("artifact.read", {
+				characterId: "bear",
+				...first,
+				offset: 12,
+				length: 1,
+			}),
 		).resolves.toMatchObject({
 			ok: true,
 			data: { offset: 12, nextOffset: 12, eof: true, base64: "" },
 		});
 		await expect(
-			dispatcher.dispatch("artifact.read", { ...first, length: 1024 * 1024 + 1 }),
+			dispatcher.dispatch("artifact.read", {
+				characterId: "bear",
+				...first,
+				length: 1024 * 1024 + 1,
+			}),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "invalid_request", reason: "request_validation_failed" },
@@ -128,7 +147,7 @@ describe("run-owned Artifact RPC", () => {
 			.where(eq(runs.id, first.runId))
 			.run();
 
-		const response = await dispatcher.dispatch("run.list", {});
+		const response = await dispatcher.dispatch("run.list", { characterId: "bear" });
 		if (!response.ok) throw new Error("expected successful Run projection");
 		const projected = (
 			response.data as { runs: Array<{ id: string; evidence: unknown[] }> }
@@ -167,21 +186,30 @@ describe("run-owned Artifact RPC", () => {
 			})
 			.where(eq(runs.id, second.runId))
 			.run();
-		const page = await dispatcher.dispatch("run.list", { scope: "history", limit: 1 });
+		const page = await dispatcher.dispatch("run.list", {
+			characterId: "bear",
+			scope: "history",
+			limit: 1,
+		});
 		expect(page).toMatchObject({
 			ok: true,
 			data: { runs: [{ id: second.runId }], nextCursor: expect.any(String) },
 		});
-		expect(await dispatcher.dispatch("run.get", { runId: first.runId })).toMatchObject({
+		expect(
+			await dispatcher.dispatch("run.get", { characterId: "bear", runId: first.runId }),
+		).toMatchObject({
 			ok: true,
 			data: { run: { id: first.runId, status: "completed" }, instruction: "test" },
 		});
 	});
 
 	it("rejects another character's Run reads and controls before executing them", async () => {
-		vi.mocked(context.characterLoader.getActiveCharacterId).mockReturnValue("other");
+		Reflect.set(context, "characterId", "other");
 		expect(
-			await dispatcher.dispatch("run.list", { conversationId: first.conversationId }),
+			await dispatcher.dispatch("run.list", {
+				characterId: "bear",
+				conversationId: first.conversationId,
+			}),
 		).toMatchObject({ ok: false, error: { kind: "not_found" } });
 		for (const channel of [
 			"run.get",
@@ -198,7 +226,9 @@ describe("run-owned Artifact RPC", () => {
 					: channel === "run.respondPermission"
 						? { runId: first.runId, requestId: "request", optionId: "allow" }
 						: { runId: first.runId };
-			expect(await dispatcher.dispatch(channel, request)).toMatchObject({
+			expect(
+				await dispatcher.dispatch(channel, { characterId: "other", ...request }),
+			).toMatchObject({
 				ok: false,
 				error: { kind: "not_found" },
 			});
@@ -216,6 +246,7 @@ describe("run-owned Artifact RPC", () => {
 
 		await expect(
 			dispatcher.dispatch("artifact.open", {
+				characterId: "bear",
 				conversationId: first.conversationId,
 				runId: second.runId,
 				artifactId: second.artifactId,
@@ -226,6 +257,7 @@ describe("run-owned Artifact RPC", () => {
 		});
 		await expect(
 			dispatcher.dispatch("artifact.open", {
+				characterId: "bear",
 				...first,
 				artifactId: second.artifactId,
 			}),
@@ -235,6 +267,7 @@ describe("run-owned Artifact RPC", () => {
 		});
 		await expect(
 			dispatcher.dispatch("artifact.open", {
+				characterId: "bear",
 				...first,
 				conversationId: "missing-conversation",
 			}),
@@ -263,11 +296,11 @@ describe("run-owned Artifact RPC", () => {
 		expect(presenter.open).not.toHaveBeenCalled();
 		expect(
 			database.orm
-				.select({ status: artifacts.status })
+				.select({ verification: artifacts.verification })
 				.from(artifacts)
 				.where(eq(artifacts.id, first.artifactId))
-				.get()?.status,
-		).toBe("verification_failed");
+				.get()?.verification,
+		).toBe("failed");
 
 		context.artifactPresenter = undefined;
 		await expect(dispatcher.dispatch("artifact.reveal", first)).resolves.toEqual({
@@ -287,7 +320,7 @@ describe("run-owned Artifact RPC", () => {
 					logicalName: "artifact-a.txt",
 					producerRunId: first.runId,
 				});
-				expect(access.read(1, 3).buffer).toEqual(Buffer.from("123"));
+				expect((await access.read(1, 3)).buffer).toEqual(Buffer.from("123"));
 				return access.withMaterializedFile((path: string) => {
 					materializedPath = path;
 					expect(readFileSync(path)).toEqual(Buffer.from("0123456789"));
@@ -330,12 +363,86 @@ describe("run-owned Artifact RPC", () => {
 			ok: true,
 			data: { outcome: "cancelled" },
 		});
-		expect(store.get(first.artifactId)?.status).toBe("created");
+		expect(store.get(first.artifactId)?.saved).toBe(false);
 		await expect(dispatcher.dispatch("artifact.saveAs", first)).resolves.toEqual({
 			ok: true,
 			data: { outcome: "completed" },
 		});
-		expect(store.get(first.artifactId)?.status).toBe("saved");
+		expect(store.get(first.artifactId)?.saved).toBe(true);
+	});
+
+	it("notifies every window after a completed save without replacing verification or adoption", async () => {
+		await store.markVerifiedAsync(first.artifactId);
+		store.markAdopted(first.artifactId, first.runId);
+		const firstWindow = vi.fn();
+		const secondWindow = vi.fn();
+		const unsubscribe = [
+			context.invalidations.subscribe(firstWindow),
+			context.invalidations.subscribe(secondWindow),
+		];
+		context.artifactPresenter = {
+			saveAs: vi
+				.fn()
+				.mockResolvedValueOnce({ outcome: "cancelled" })
+				.mockResolvedValueOnce({ outcome: "completed" }),
+		};
+		try {
+			await dispatcher.dispatch("artifact.saveAs", first);
+			expect(firstWindow).not.toHaveBeenCalled();
+			await expect(dispatcher.dispatch("artifact.saveAs", first)).resolves.toMatchObject({
+				ok: true,
+				data: { outcome: "completed" },
+			});
+			for (const listener of [firstWindow, secondWindow])
+				expect(listener).toHaveBeenCalledWith({
+					scope: "character",
+					characterId: "bear",
+					keys: [["runs"]],
+				});
+			expect(store.get(first.artifactId)).toMatchObject({
+				verification: "verified",
+				saved: true,
+				adopted: true,
+			});
+		} finally {
+			for (const stop of unsubscribe) stop();
+		}
+	});
+
+	it("holds the exact Run while a native presentation is in flight and keeps other Runs readable", async () => {
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		context.artifactPresenter = {
+			saveAs: async () => {
+				entered.resolve();
+				await release.promise;
+				return { outcome: "completed" };
+			},
+		};
+		const saving = dispatcher.dispatch("artifact.saveAs", first);
+		await entered.promise;
+		let removed = false;
+		const deletion = store.withRunDeletion([first.runId], async () => {
+			expect(store.get(first.artifactId)?.saved).toBe(true);
+			database.orm.delete(artifacts).where(eq(artifacts.id, first.artifactId)).run();
+			removed = true;
+		});
+		try {
+			expect(removed).toBe(false);
+			await expect(dispatcher.dispatch("artifact.read", first)).resolves.toMatchObject({
+				ok: false,
+				error: { kind: "conflict" },
+			});
+			await expect(dispatcher.dispatch("artifact.read", second)).resolves.toMatchObject({
+				ok: true,
+			});
+		} finally {
+			release.resolve();
+		}
+		await expect(saving).resolves.toMatchObject({ ok: true });
+		await deletion;
+		expect(removed).toBe(true);
+		expect(store.get(second.artifactId)).not.toBeNull();
 	});
 
 	it("returns unsupported for every action when no presenter exists", async () => {
@@ -345,7 +452,7 @@ describe("run-owned Artifact RPC", () => {
 				data: { outcome: "unsupported" },
 			});
 		}
-		expect(store.get(first.artifactId)?.status).toBe("created");
+		expect(store.get(first.artifactId)?.saved).toBe(false);
 	});
 
 	function seedRunArtifact(
@@ -372,16 +479,17 @@ describe("run-owned Artifact RPC", () => {
 			mime: "text/plain",
 			producerRunId: runId,
 		});
-		return { conversationId, runId, artifactId: artifact.id };
+		return { characterId: "bear", conversationId, runId, artifactId: artifact.id };
 	}
 
 	function compositionContext(): HostCompositionContext {
 		const character = { id: "bear", state: { type: "object" }, canon: {} };
 		return {
+			characterId: "bear",
 			signal: new AbortController().signal,
 			systemOrm: {} as never,
 			orm: database.orm,
-			invalidations: { invalidate: vi.fn() } as never,
+			invalidations: new InvalidationHub({ scope: "character", characterId: "bear" }),
 			onboarding: {
 				initialize: vi.fn(),
 				getState: vi.fn(() => ({ status: "completed", stateData: { decisions: {} } })),
@@ -399,6 +507,7 @@ describe("run-owned Artifact RPC", () => {
 					validateProfile: vi.fn(),
 					runtime: () => ({ controller: "unknown", actions: [] }),
 					close: vi.fn(),
+					suspend: async () => [],
 					cancel: vi.fn(),
 					stop: vi.fn(),
 				} as never,

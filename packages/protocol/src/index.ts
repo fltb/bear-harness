@@ -66,6 +66,7 @@ export type LivePushBatch = z.infer<typeof schema.LivePushBatch>;
 // ---------------------------------------------------------------------------
 // Snapshot
 // ---------------------------------------------------------------------------
+export type BootstrapResponse = z.infer<typeof schema.BootstrapResponse>;
 export type SnapshotGetResponse = z.infer<typeof schema.SnapshotResponse>;
 
 export type SnapshotGetRequest = z.infer<typeof schema.SnapshotGetRequest>;
@@ -94,7 +95,6 @@ export type CharacterResponse = z.infer<typeof schema.CharacterResponse>;
 export type CharacterDisplay = z.infer<typeof schema.CharacterDisplay>;
 export type CharacterTheme = z.infer<typeof schema.CharacterTheme>;
 export type CharacterOnboardingFlow = z.infer<typeof schema.CharacterOnboardingFlow>;
-export type CharacterActivateRequest = z.infer<typeof schema.CharacterActivateRequest>;
 export type CharacterPackageDocument = z.infer<typeof schema.CharacterPackageDocument>;
 export type CharacterPackageGetRequest = z.infer<typeof schema.CharacterPackageGetRequest>;
 export type CharacterPackageUpdateRequest = z.infer<typeof schema.CharacterPackageUpdateRequest>;
@@ -113,7 +113,6 @@ export type CharacterRuntimeDeleteResponse = z.infer<typeof schema.CharacterRunt
 export type CharacterPackageDeleteResponse = z.infer<typeof schema.CharacterPackageDeleteResponse>;
 export type CharacterDraft = z.infer<typeof schema.CharacterDraft>;
 export type CharacterGetResponse = z.infer<typeof schema.CharacterResponse>;
-export type CharacterActivateResponse = z.infer<typeof schema.CharacterResponse>;
 export type CharacterImportRequest = z.infer<typeof schema.CharacterImportRequest>;
 export type CharacterImportResponse = z.infer<typeof schema.CharacterResponse>;
 export type CharacterPluginTrustGetRequest = z.infer<typeof schema.CharacterPluginTrustGetRequest>;
@@ -165,9 +164,6 @@ export type ConversationListRequest = z.infer<typeof schema.ConversationListRequ
 export type ConversationListResponse = z.infer<typeof schema.ConversationListResponse>;
 export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreateRequest>;
 export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
-export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationActiveGetRequest>;
-export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
-export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
 export type ConversationOpenRequest = z.infer<typeof schema.ConversationOpenRequest>;
 export type ConversationOpenResponse = z.infer<typeof schema.ConversationOpenResponse>;
 export type ConversationDetail = z.infer<typeof schema.ConversationDetail>;
@@ -183,9 +179,9 @@ export type ConversationHistoryResponse = z.infer<typeof schema.ConversationHist
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
-export type ConversationArchiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
+export type ConversationArchiveResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationDeleteRequest = z.infer<typeof schema.ConversationDeleteRequest>;
-export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiveResponse>;
+export type ConversationDeleteResponse = z.infer<typeof schema.EmptyResponse>;
 
 // ---------------------------------------------------------------------------
 // Message
@@ -377,7 +373,8 @@ export type RunRetryDeliveryResponse = z.infer<typeof schema.RunRetryDeliveryRes
 export type RunStatus = z.infer<typeof schema.RunStatus>;
 export type ExecutorRecovery = z.infer<typeof schema.ExecutorRecovery>;
 export type RunAction = z.infer<typeof schema.RunAction>;
-export type ArtifactStatus = z.infer<typeof schema.ArtifactStatus>;
+export type ArtifactVerification = z.infer<typeof schema.ArtifactVerification>;
+export type RunProvenance = z.infer<typeof schema.RunProvenance>;
 export type RunEvidenceSummary = z.infer<typeof schema.RunEvidenceSummary>;
 export type RunPermission = z.infer<typeof schema.RunPermission>;
 export type Run = z.infer<typeof schema.Run>;
@@ -442,3 +439,15 @@ export type AuditExportResponse = z.infer<typeof schema.AuditExportResponse>;
 export type CharacterArchiveBeginRequest = z.infer<typeof schema.CharacterArchiveBeginRequest>;
 export type CharacterArchiveIdentity = z.infer<typeof schema.CharacterArchiveIdentity>;
 export type CharacterArchiveAppendRequest = z.infer<typeof schema.CharacterArchiveAppendRequest>;
+
+export type RunnerKind = z.infer<typeof schema.RunnerKind>;
+export type RunnerInfo = z.infer<typeof schema.RunnerInfo>;
+export type RunnerEnvironment = z.infer<typeof schema.RunnerEnvironment>;
+export type CustomRunnerConfiguration = z.infer<typeof schema.CustomRunnerConfiguration>;
+export type RunnerProfile = z.infer<typeof schema.RunnerProfile>;
+export type RunnerListRequest = z.infer<typeof schema.RunnerListRequest>;
+export type RunnerListResponse = z.infer<typeof schema.RunnerListResponse>;
+export type RunnerSaveRequest = z.infer<typeof schema.RunnerSaveRequest>;
+export type RunnerSaveResponse = z.infer<typeof schema.RunnerSaveResponse>;
+export type RunnerIdRequest = z.infer<typeof schema.RunnerIdRequest>;
+export type RunnerTestResponse = z.infer<typeof schema.RunnerTestResponse>;

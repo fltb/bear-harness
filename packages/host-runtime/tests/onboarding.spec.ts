@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
-import { CacheKey } from "@bear-harness/protocol/schema";
+import { CacheKey, CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CharacterRuntime } from "../src/character-runtime.js";
 import {
 	type CredentialVault,
 	createHostRuntime,
@@ -14,6 +15,7 @@ import {
 	type HostRuntime,
 } from "../src/index.js";
 import type { LocalEmbeddingAcquisitionOptions } from "../src/memory/local-embedding-acquisition.js";
+import type { ProviderCatalog } from "../src/providers/catalog.js";
 import type { CompanionDatabase, SystemDatabase } from "../src/storage/database.js";
 
 const temporaryDirectories: string[] = [];
@@ -36,29 +38,17 @@ function runtimeForTest(existingDataDir?: string, credentialVault: CredentialVau
 	});
 }
 
-function runtimeDatabases(runtime: HostRuntime): {
+async function runtimeDatabases(runtime: HostRuntime): Promise<{
 	system: SystemDatabase;
 	companion: CompanionDatabase;
-} {
+}> {
 	const storage = Reflect.get(runtime, "storage") as { system: SystemDatabase };
-	const role = roleRuntime(runtime);
+	const role = await roleRuntime(runtime);
 	return { system: storage.system, companion: role.db };
 }
 
-function roleRuntime(runtime: HostRuntime): {
-	companionId: string;
-	db: CompanionDatabase;
-	memoryRuntime: HostRuntime["memoryRuntime"];
-	externalAgentRuns: object;
-	invalidations: import("../src/storage/invalidation-hub.js").InvalidationHub;
-	pi: { closeAll(): Promise<void> };
-	auditStore: { flush(): Promise<void> };
-	close(): Promise<void>;
-} {
-	const lifecycle = Reflect.get(runtime, "lifecycle") as {
-		active(): { runtime: unknown };
-	};
-	return lifecycle.active().runtime as ReturnType<typeof roleRuntime>;
+async function roleRuntime(runtime: HostRuntime): Promise<CharacterRuntime> {
+	return runtime.useCharacter(productConfig.defaultCharacterId, (role) => role);
 }
 
 function acquisitionForTest(runtime: HostRuntime) {
@@ -73,7 +63,11 @@ async function data(
 	channel: string,
 	params: unknown,
 ) {
-	const response = await runtime.dispatch(channel, params);
+	const scoped =
+		CHANNEL_CONTRACTS[channel]?.scope === "character"
+			? { characterId: productConfig.defaultCharacterId, ...(params as object) }
+			: params;
+	const response = await runtime.dispatch(channel, scoped);
 	if (!response.ok) throw new Error(`${response.error.kind}: ${response.error.reason}`);
 	return response.data;
 }
@@ -115,16 +109,38 @@ describe("role-defined onboarding", () => {
 			rmSync(directory, { recursive: true, force: true });
 	});
 
+	it("deduplicates startup and drains it before closing the installation database", async () => {
+		const runtime = runtimeForTest();
+		const pending = Promise.withResolvers<void>();
+		const providers = Reflect.get(runtime, "providers") as ProviderCatalog;
+		const original = providers.listProviders.bind(providers);
+		const listing = vi.spyOn(providers, "listProviders").mockImplementationOnce(async () => {
+			await pending.promise;
+			return original();
+		});
+		const started = runtime.start();
+		expect(runtime.start()).toBe(started);
+		const failed = expect(started).rejects.toThrow("Host runtime is closed");
+		await vi.waitFor(() => expect(listing).toHaveBeenCalledOnce());
+		const closed = runtime.close();
+		pending.resolve();
+		await failed;
+		await closed;
+		await expect(runtime.start()).rejects.toThrow("Host runtime is closed");
+	});
+
 	it("pushes only live invalidations until disposed", async () => {
 		const runtime = runtimeForTest();
 		try {
-			const bus = roleRuntime(runtime).invalidations;
+			const bus = (await roleRuntime(runtime)).invalidations;
 			bus.invalidate(CacheKey.providers());
 			const receive = vi.fn();
 			const stop = runtime.subscribeInvalidations(receive);
 			expect(receive).not.toHaveBeenCalled();
 			bus.invalidate(CacheKey.settings());
 			expect(receive).toHaveBeenLastCalledWith({
+				scope: "character",
+				characterId: productConfig.defaultCharacterId,
 				keys: [["settings"]],
 			});
 			stop();
@@ -156,14 +172,17 @@ describe("role-defined onboarding", () => {
 		});
 		await expect(data(runtime, "conversation.list", {})).resolves.toEqual({ conversations: [] });
 		await configureConversationModel(runtime);
+		await data(runtime, "model.defaults.setReply", {
+			reply: { providerId: "conversation-test", modelId: "test-model" },
+		});
 		const created = (await data(runtime, "conversation.create", {
 			title: "与极昼",
 		})) as { conversationId: string };
 		await expect(
 			data(runtime, "conversation.open", { conversationId: created.conversationId }),
 		).resolves.toMatchObject({ conversationId: created.conversationId });
-		const nickname = runtimeDatabases(runtime)
-			.companion.connection.prepare("SELECT nickname FROM runtime_identity WHERE id = 1")
+		const nickname = (await runtimeDatabases(runtime)).companion.connection
+			.prepare("SELECT nickname FROM runtime_identity WHERE id = 1")
 			.get();
 		expect(nickname).toEqual({ nickname: "林" });
 		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
@@ -384,7 +403,7 @@ describe("role-defined onboarding", () => {
 		expect(JSON.stringify(projected)).not.toContain("test-key");
 		expect(JSON.stringify(projected)).not.toContain("apiKey");
 
-		const databases = runtimeDatabases(runtime);
+		const databases = await runtimeDatabases(runtime);
 		const persistedConfig = databases.system.connection
 			.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
 			.get() as { memory_vector_service: string };
@@ -401,7 +420,10 @@ describe("role-defined onboarding", () => {
 			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'")
 			.get();
 		expect(eventTable).toBeUndefined();
-		const runtimeConfig = Reflect.get(Reflect.get(runtime.memoryRuntime, "core"), "cfg");
+		const runtimeConfig = Reflect.get(
+			Reflect.get((await roleRuntime(runtime)).memoryRuntime, "core"),
+			"cfg",
+		);
 		expect(runtimeConfig.embedding.apiKey).toBe("test-key");
 
 		configureRemote.mockClear();
@@ -426,13 +448,13 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		const dataDir = temporaryDirectories.at(-1)!;
 		await runtime.start();
-		const role = roleRuntime(runtime);
-		const dormant = runtime.memoryRuntime;
+		const role = await roleRuntime(runtime);
+		const dormant = (await roleRuntime(runtime)).memoryRuntime;
 		expect(dormant.isStarted()).toBe(false);
 		expect(existsSync(join(dataDir, "memory"))).toBe(false);
 		expect(existsSync(join(dataDir, "companions", "jizhou", "memory", "tdai"))).toBe(true);
 
-		const first = runtime.memoryRuntime;
+		const first = (await roleRuntime(runtime)).memoryRuntime;
 		expect(first).toBe(dormant);
 		await first.start();
 		expect(first.isStarted()).toBe(true);
@@ -452,7 +474,7 @@ describe("role-defined onboarding", () => {
 		expect(validate).toHaveBeenCalledOnce();
 		expect(Reflect.get(role, "memory")).toBeUndefined();
 		await expect(first.start()).rejects.toThrow(/closed/);
-		const nextFirst = runtime.memoryRuntime;
+		const nextFirst = (await roleRuntime(runtime)).memoryRuntime;
 		expect(nextFirst).not.toBe(first);
 		const config = Reflect.get(Reflect.get(nextFirst, "core"), "cfg");
 		expect(config.embedding).toMatchObject({
@@ -461,8 +483,8 @@ describe("role-defined onboarding", () => {
 			model: "global-embedding",
 			dimensions: 768,
 		});
-		const storedSystemConfig = runtimeDatabases(runtime)
-			.system.connection.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
+		const storedSystemConfig = (await runtimeDatabases(runtime)).system.connection
+			.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
 			.get() as { memory_vector_service: string };
 		expect(JSON.parse(storedSystemConfig.memory_vector_service)).toMatchObject({
 			provider: "remote",
@@ -519,9 +541,12 @@ describe("role-defined onboarding", () => {
 			settings: { memoryVectorService: { provider: "remote", hasCredential: true } },
 		});
 		expect(JSON.stringify(projection)).not.toContain("persistent-embedding-secret");
-		const config = Reflect.get(Reflect.get(restarted.memoryRuntime, "core"), "cfg");
+		const config = Reflect.get(
+			Reflect.get((await roleRuntime(restarted)).memoryRuntime, "core"),
+			"cfg",
+		);
 		expect(config.embedding.apiKey).toBe("persistent-embedding-secret");
-		const databases = runtimeDatabases(restarted);
+		const databases = await runtimeDatabases(restarted);
 		const settingsRow = databases.system.connection
 			.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
 			.get() as { memory_vector_service: string };
@@ -536,7 +561,7 @@ describe("role-defined onboarding", () => {
 	it("keeps character Run diagnostics out of the installation diagnostics sink", async () => {
 		const runtime = runtimeForTest();
 		try {
-			const role = roleRuntime(runtime) as {
+			const role = (await roleRuntime(runtime)) as {
 				externalAgentRuns: object;
 				db: { path: string };
 			};
@@ -547,25 +572,28 @@ describe("role-defined onboarding", () => {
 		}
 	});
 
-	it("closes every character resource even when one close operation fails", async () => {
+	it("retains downstream character resources after producer failure and retries disposal", async () => {
 		const runtime = runtimeForTest();
-		const role = roleRuntime(runtime) as {
+		const role = (await roleRuntime(runtime)) as {
 			externalAgentRuns: { close(): Promise<void> };
-			pi: { closeAll(): Promise<void> };
+			pi: { shutdown(): Promise<void> };
 			memoryRuntime: { close(): Promise<void> };
 			auditStore: { flush(): Promise<void> };
 			close(): Promise<void>;
 		};
 		const firstFailure = new Error("run close failed");
 		vi.spyOn(role.externalAgentRuns, "close").mockRejectedValueOnce(firstFailure);
-		const closePi = vi.spyOn(role.pi, "closeAll");
+		const closePi = vi.spyOn(role.pi, "shutdown");
 		const closeMemory = vi.spyOn(role.memoryRuntime, "close");
 		const flushAudit = vi.spyOn(role.auditStore, "flush");
-		await expect(role.close()).rejects.toBe(firstFailure);
+		await expect(role.close()).rejects.toMatchObject({ errors: [firstFailure] });
 		expect(closePi).toHaveBeenCalledOnce();
+		expect(closeMemory).not.toHaveBeenCalled();
+		expect(flushAudit).not.toHaveBeenCalled();
+		await runtime.close();
+		expect(closePi).toHaveBeenCalledTimes(2);
 		expect(closeMemory).toHaveBeenCalledOnce();
 		expect(flushAudit).toHaveBeenCalledOnce();
-		await runtime.close();
 	});
 
 	it("reports embedding download bytes and cancels without saving the candidate", async () => {
@@ -786,14 +814,16 @@ describe("role-defined onboarding", () => {
 
 	it("resets invalid persisted onboarding state", async () => {
 		const runtime = runtimeForTest();
-		const database = runtimeDatabases(runtime).companion;
+		const database = (await runtimeDatabases(runtime)).companion;
 		database.connection
 			.prepare(
 				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",
 			)
 			.run(productConfig.defaultCharacterId, "welcome", JSON.stringify({ answers: "invalid" }));
 
-		await expect(runtime.dispatch("onboarding.get", {})).resolves.toMatchObject({
+		await expect(
+			runtime.dispatch("onboarding.get", { characterId: productConfig.defaultCharacterId }),
+		).resolves.toMatchObject({
 			ok: true,
 			data: {
 				stateData: {
@@ -813,7 +843,11 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 
 		await expect(
-			runtime.dispatch("onboarding.submit", { stepId: "welcome", answer: "invalid" }),
+			runtime.dispatch("onboarding.submit", {
+				characterId: productConfig.defaultCharacterId,
+				stepId: "welcome",
+				answer: "invalid",
+			}),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "invalid_request", reason: "onboarding_answer_unexpected" },

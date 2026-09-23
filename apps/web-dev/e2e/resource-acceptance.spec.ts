@@ -12,9 +12,12 @@ test("10,000 loaded authoritative entries keep a bounded virtual DOM and stable 
 	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const activeEnvelope = await (
-		await page.request.post("/rpc/conversation.activeGet", { headers, data: {} })
+		await page.request.post("/rpc/conversation.open", {
+			headers,
+			data: { characterId: "jizhou", conversationId },
+		})
 	).json();
-	const original = activeEnvelope.data.activeConversation;
+	const original = activeEnvelope.data;
 	if (!original) throw new Error("expected an active conversation");
 	const entries = Array.from({ length: 10_000 }, (_, index) => ({
 		type: "message",
@@ -37,14 +40,6 @@ test("10,000 loaded authoritative entries keep a bounded virtual DOM and stable 
 	};
 	await page.route("**/rpc/**", async (route) => {
 		const url = route.request().url();
-		if (url.endsWith("/rpc/conversation.activeGet")) {
-			await route.fulfill({ json: { ok: true, data: { activeConversation: detail } } });
-			return;
-		}
-		if (url.endsWith("/rpc/conversation.select")) {
-			await route.fulfill({ json: { ok: true, data: { activeConversation: detail } } });
-			return;
-		}
 		if (url.endsWith("/rpc/conversation.open")) {
 			await route.fulfill({ json: { ok: true, data: detail } });
 			return;

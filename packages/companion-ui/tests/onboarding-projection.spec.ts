@@ -24,7 +24,7 @@ function createStoreWithCleanup(client: CompanionClient) {
 		createComponent(QueryClientProvider, {
 			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 			get children() {
-				store = createCompanionStore(client);
+				store = createCompanionStore(client, "jizhou");
 				return undefined;
 			},
 		});

@@ -1,4 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
+import { CHANNEL_CONTRACTS, type Channel } from "@bear-harness/protocol/schema";
 import { expect, type Locator, type Page } from "playwright/test";
 import { parseWebDevBootstrap, type WebDevBootstrap } from "../src/http-client";
 
@@ -86,9 +87,7 @@ export async function selectKobalteOption(
 }
 
 export async function ensureReadyForConversation(page: Page): Promise<void> {
-	// Establish the canonical Host state before mounting a renderer. Mounting the
-	// previous default first can legitimately publish that selection back to Host
-	// while this helper is resetting the shared E2E fixture.
+	// Prepare the default test character before mounting this window.
 	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const characters = (await (
@@ -180,14 +179,14 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	const setRoleModel = await (
 		await page.request.post("/rpc/model.defaults.setReply", {
 			headers,
-			data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
+			data: { characterId: "jizhou", reply: { providerId: "e2e-rule", modelId: "rule-model" } },
 		})
 	).json();
 	expect(setRoleModel).toMatchObject({ ok: true });
 	const completeRoleModel = await (
 		await page.request.post("/rpc/model.defaults.completeOnboarding", {
 			headers,
-			data: {},
+			data: { characterId: "jizhou" },
 		})
 	).json();
 	expect(completeRoleModel).toMatchObject({
@@ -196,7 +195,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	});
 
 	let onboardingState = await (
-		await page.request.post("/rpc/onboarding.get", { headers, data: {} })
+		await page.request.post("/rpc/onboarding.get", { headers, data: { characterId: "jizhou" } })
 	).json();
 	const onboardingAnswers: Record<string, string | undefined> = {
 		welcome: undefined,
@@ -208,7 +207,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		onboardingState = await (
 			await page.request.post("/rpc/onboarding.submit", {
 				headers,
-				data: { stepId, answer: onboardingAnswers[stepId] },
+				data: { characterId: "jizhou", stepId, answer: onboardingAnswers[stepId] },
 			})
 		).json();
 	}
@@ -220,14 +219,14 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		const previous = (await (
 			await page.request.post("/rpc/conversation.list", {
 				headers,
-				data: archived ? { archived: true } : {},
+				data: archived ? { characterId: "jizhou", archived: true } : { characterId: "jizhou" },
 			})
 		).json()) as { data: { conversations: Array<{ conversationId: string }> } };
 		for (const conversation of previous.data.conversations) {
 			const deleted = await (
 				await page.request.post("/rpc/conversation.delete", {
 					headers,
-					data: { conversationId: conversation.conversationId },
+					data: { characterId: "jizhou", conversationId: conversation.conversationId },
 				})
 			).json();
 			expect(deleted).toMatchObject({ ok: true });
@@ -248,7 +247,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			? await (
 					await page.request.post("/rpc/conversation.create", {
 						headers,
-						data: {},
+						data: { characterId: "jizhou" },
 					})
 				).json()
 			: await (
@@ -278,6 +277,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		await page.request.post("/rpc/model.route.set", {
 			headers,
 			data: {
+				characterId: "jizhou",
 				conversationId,
 				selected: { providerId: "e2e-rule", modelId: "rule-model" },
 			},
@@ -356,4 +356,11 @@ export function providerHold(page: Page) {
 
 export default async function globalTeardown(): Promise<void> {
 	// Scoped-data cleanup is owned by the dev supervisor after Playwright stops it.
+}
+
+/** Bind fixture commands to the explicitly chosen test character. */
+export function characterRequest(channel: string, data: unknown, characterId: string): unknown {
+	return CHANNEL_CONTRACTS[channel as Channel]?.scope === "character"
+		? { ...(data as object), characterId }
+		: data;
 }

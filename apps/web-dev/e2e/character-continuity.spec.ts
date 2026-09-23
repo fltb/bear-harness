@@ -6,7 +6,12 @@ import { expect, type Page, test } from "playwright/test";
 
 const providerUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}`;
 
-import { ensureReadyForConversation, projectPiEntries, sendMessage } from "./helpers";
+import {
+	characterRequest,
+	ensureReadyForConversation,
+	projectPiEntries,
+	sendMessage,
+} from "./helpers";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters/jizhou", import.meta.url));
 const storyScreenshotRoot = resolve(
@@ -21,7 +26,7 @@ async function rpc<T>(page: Page, token: string, channel: string, data: unknown)
 			: data;
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 		headers: { "x-bear-web-dev-token": token },
-		data: requestData,
+		data: characterRequest(channel, requestData, "jizhou"),
 	});
 	const envelope = await response.json();
 	if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);

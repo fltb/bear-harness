@@ -1,0 +1,819 @@
+{
+	"date": "2026-09-23",
+	"branch": "codex/execution-core-audit",
+	"baseCommit": "bf3cbfb0d94f39acb54e250695a29a47e176c4c3",
+	"reviewedState": "Existing uncommitted core redesign plus this Artifact implementation; no commit or release created.",
+	"baselineEvidence": "artifact-wiring-audit-2026-09-22.json",
+	"coreBaselineEvidence": "core-registry-implementation-2026-09-22.json",
+	"implementationComplete": true,
+	"releaseApproved": false,
+	"codexExecutionChainModified": false,
+	"immutableCoreChecks": [
+		{
+			"path": "packages/host-runtime/src/character-runtime-registry.ts",
+			"sha256": "5afe5cc1f07f2bc2b86021ad8bef6aa170f029611cc2b8f793163fd31f93ec40",
+			"unchangedSinceCoreImplementation": true
+		},
+		{
+			"path": "packages/host-runtime/src/dispatcher.ts",
+			"sha256": "b0f80ab0f4f0e15feebf193ca4e9fe17e6a37a39ee1669d074bce65c3384b02a",
+			"unchangedSinceCoreImplementation": true
+		},
+		{
+			"path": "packages/host-runtime/src/companion/pi-runtime.ts",
+			"sha256": "6d9bb974f3bd124f6861d5ba241ebfab0277b5ee548fcb37df0b537486d6ce11",
+			"unchangedSinceCoreImplementation": true
+		}
+	],
+	"codexAdapter": {
+		"path": "packages/host-runtime/src/executors/codex-adapter.ts",
+		"sha256": "22652bc74900a67e0a17ec248f6ae925bafd05b3f4f6649359925fa80543808d",
+		"unchangedSinceArtifactAudit": true
+	},
+	"scope": {
+		"moduleCount": 6,
+		"beforeFileCount": 22,
+		"fileCount": 24,
+		"beforeLines": 18076,
+		"lines": 18607,
+		"netLines": 531,
+		"countingNote": "Same full-file production scope as the audit, plus capture.ts and rpc.ts. Includes non-Artifact code; supporting changes are listed separately and not folded into this count.",
+		"modules": [
+			{
+				"module": "Artifact 存储与呈现",
+				"fileCount": 4,
+				"lines": 1566,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/artifacts/index.ts",
+						"lines": 1088,
+						"sha256": "fe65988e5f3b5162534c305497caebc935b7f88b464de4f6122cbc56750a71cd",
+						"beforeLines": 792
+					},
+					{
+						"path": "packages/host-runtime/src/artifacts/presentation.ts",
+						"lines": 155,
+						"sha256": "b39a0843b138a4f5d52a5a787468768a6489127458983702ef1478881a36b243",
+						"beforeLines": 133
+					},
+					{
+						"path": "packages/host-runtime/src/artifacts/capture.ts",
+						"beforeLines": 0,
+						"lines": 175,
+						"sha256": "a38c4cad64edce724eb6fa1d457e2628291a1eaf74304dc76ca979d222e7ccd7"
+					},
+					{
+						"path": "packages/host-runtime/src/artifacts/rpc.ts",
+						"beforeLines": 0,
+						"lines": 148,
+						"sha256": "6063bd6c5e82ffabbb3468d168f75a0fe9b54197190ed5e6c67d7b4988ef3626"
+					}
+				],
+				"beforeFileCount": 2,
+				"beforeLines": 925
+			},
+			{
+				"module": "Run 与执行器",
+				"fileCount": 3,
+				"lines": 2423,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/external-agents/run-service.ts",
+						"lines": 1725,
+						"sha256": "7ca61faecce43806491edd211f82d12fbedfb037c44b0128c863d70866c5dad7",
+						"beforeLines": 1838
+					},
+					{
+						"path": "packages/host-runtime/src/executors/pi-adapter.ts",
+						"lines": 146,
+						"sha256": "b1afdb7e91cb32646f03434fce5344e7977c062daf355b15e3a058b4a6dc310f",
+						"beforeLines": 146
+					},
+					{
+						"path": "packages/host-runtime/src/executors/codex-adapter.ts",
+						"lines": 552,
+						"sha256": "22652bc74900a67e0a17ec248f6ae925bafd05b3f4f6649359925fa80543808d",
+						"beforeLines": 552
+					}
+				],
+				"beforeFileCount": 3,
+				"beforeLines": 2536
+			},
+			{
+				"module": "Host 装配与会话",
+				"fileCount": 5,
+				"lines": 3550,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/composition.ts",
+						"lines": 1202,
+						"sha256": "b5febeb2a6c233013592ff745978df833ff07d364078e082838d7748d2800336",
+						"beforeLines": 1299
+					},
+					{
+						"path": "packages/host-runtime/src/character-runtime.ts",
+						"lines": 477,
+						"sha256": "3fd2a799705b34fab85328848adb092c5beb17e7837cb2957310d39bf7ee2347",
+						"beforeLines": 476
+					},
+					{
+						"path": "packages/host-runtime/src/companion/host-tool-register.ts",
+						"lines": 433,
+						"sha256": "58a508b19291880eeab65ea898241781cf246fab89af40993aeee6837d7b0347",
+						"beforeLines": 433
+					},
+					{
+						"path": "packages/host-runtime/src/companion/pi-runtime.ts",
+						"lines": 1194,
+						"sha256": "6d9bb974f3bd124f6861d5ba241ebfab0277b5ee548fcb37df0b537486d6ce11",
+						"beforeLines": 1194
+					},
+					{
+						"path": "packages/host-runtime/src/companion/session-catalog.ts",
+						"lines": 244,
+						"sha256": "441838bf02118424228a2ce35f2e6fb3f6b6415ac0bce991cb92bca69d14a380",
+						"beforeLines": 234
+					}
+				],
+				"beforeFileCount": 5,
+				"beforeLines": 3636
+			},
+			{
+				"module": "协议与数据结构",
+				"fileCount": 2,
+				"lines": 3232,
+				"files": [
+					{
+						"path": "packages/protocol/src/schema.ts",
+						"lines": 2754,
+						"sha256": "9e6dd52459aeefc22c22a0f5d19371302ece8ccbd0e5eeeb0cf89d9ea0c8f9c1",
+						"beforeLines": 2734
+					},
+					{
+						"path": "packages/host-runtime/src/storage/schema.ts",
+						"lines": 478,
+						"sha256": "b721615ef1c0e455404772925b3f06e2c4f5e11bdc2df3e535071b912671db25",
+						"beforeLines": 477
+					}
+				],
+				"beforeFileCount": 2,
+				"beforeLines": 3211
+			},
+			{
+				"module": "UI 与客户端投影",
+				"fileCount": 7,
+				"lines": 6381,
+				"files": [
+					{
+						"path": "packages/companion-ui/src/WorkPanel.tsx",
+						"lines": 924,
+						"sha256": "30b0f41b25ff1ca9d079404838fa522621bde33b99bedbf0bab1f965b7c87f4f",
+						"beforeLines": 842
+					},
+					{
+						"path": "packages/companion-ui/src/ConversationPanel.tsx",
+						"lines": 1768,
+						"sha256": "a5f5e0ceca61c0d4d4d88067dc7a7fcebf308226ff24b8ee4544cb2e0efaa48c",
+						"beforeLines": 1774
+					},
+					{
+						"path": "packages/companion-ui/src/RunTaskPanel.tsx",
+						"lines": 472,
+						"sha256": "22f106f22c55833f8121690a56f47ccfe3cab582bdc1a5d0a432bd4f28b3102f",
+						"beforeLines": 468
+					},
+					{
+						"path": "packages/companion-ui/src/stores/shell-workflows.tsx",
+						"lines": 423,
+						"sha256": "87bb5e94d7eec9db0f67fe6fb11f90390e5fc00340b21c0920cfae5e5bff1b4b",
+						"beforeLines": 438
+					},
+					{
+						"path": "packages/companion-ui/src/stores/companion.tsx",
+						"lines": 2374,
+						"sha256": "615137d736e5c425e4679456f0d587eb3862ba09531d5cf25be43bb3a4f4dec7",
+						"beforeLines": 2371
+					},
+					{
+						"path": "packages/companion-ui/src/stores/run-api.ts",
+						"lines": 127,
+						"sha256": "09cb56a6e3db37576e345ee0f68b52c65e7db0244b310c58baf4e5948873fca5",
+						"beforeLines": 127
+					},
+					{
+						"path": "packages/companion-ui/src/stores/supplementary-api.ts",
+						"lines": 293,
+						"sha256": "15d679070950e3e1cf66fc2b3c59c2b76f4925280174594f12bb6acc47803b9c",
+						"beforeLines": 293
+					}
+				],
+				"beforeFileCount": 7,
+				"beforeLines": 6313
+			},
+			{
+				"module": "桌面与 Web 入口",
+				"fileCount": 3,
+				"lines": 1455,
+				"files": [
+					{
+						"path": "apps/desktop/src/main/artifact-presenter.ts",
+						"lines": 244,
+						"sha256": "3a90d46e8f008c5d36f809b5bec21b8b4b3468e95c3951ef236bbd1a7e8c687d",
+						"beforeLines": 244
+					},
+					{
+						"path": "apps/desktop/src/main/index.ts",
+						"lines": 630,
+						"sha256": "df8401059c0c9791bb84a8d191ac63ef4e22e723f2d51fe0e96960cb4c303b9f",
+						"beforeLines": 630
+					},
+					{
+						"path": "apps/web-dev/server/index.ts",
+						"lines": 581,
+						"sha256": "6ad71b592aa49e452dcbafad7d1056b51c9e5b683164c9275cbc70936f2f70d5",
+						"beforeLines": 581
+					}
+				],
+				"beforeFileCount": 3,
+				"beforeLines": 1455
+			}
+		]
+	},
+	"artifactPhaseChangedFiles": [
+		{
+			"path": "apps/desktop/tests/artifact-presenter.spec.ts",
+			"sha256": "da14d92b7edfb2e568b92421470ba210c61fabcfb468dc311d91787f2f3f7040",
+			"lines": 335,
+			"baselineSha256": "3c1021b7449515d8b7330852d60e1928f357bd94c977f196839415a1ae6bd6ba",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "apps/promo/src/demo/transport.ts",
+			"sha256": "27ef9db0547b37a33e84e0e1bf9c132e1b96582da148e05b91539a8719faf634",
+			"lines": 761,
+			"baselineSha256": "4c37a3163be18998be0834410b92c8adb2b43ce53fa4e6ef4844e435bc051aab",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "apps/web-dev/e2e/run-artifact.spec.ts",
+			"sha256": "5f07785b473fcced96598985cb6ae4c215981a2a554f502d28df8e0ef09b38a7",
+			"lines": 464,
+			"baselineSha256": "f6d43f5af41c1baf6967ff74b8d141bc60938e63b4ab77f5c5fb4f981e31081e",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/companion-ui/src/ConversationPanel.tsx",
+			"sha256": "a5f5e0ceca61c0d4d4d88067dc7a7fcebf308226ff24b8ee4544cb2e0efaa48c",
+			"lines": 1768,
+			"baselineSha256": "24de1785fa2347763c7de4a7f013653cfde53dbef702671684f2ddc81b988957",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/companion-ui/src/RunTaskPanel.tsx",
+			"sha256": "22f106f22c55833f8121690a56f47ccfe3cab582bdc1a5d0a432bd4f28b3102f",
+			"lines": 472,
+			"baselineSha256": "81bc20fba9231261199698fa152bf11c0174c0c53ce2097a588598270651cacf",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/companion-ui/src/WorkPanel.tsx",
+			"sha256": "30b0f41b25ff1ca9d079404838fa522621bde33b99bedbf0bab1f965b7c87f4f",
+			"lines": 924,
+			"baselineSha256": "31e51d93a7fb10f77b994e88e4e0c79aaf31427ea6d2f56872809b2f89b8b2a7",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/companion-ui/src/stores/companion.tsx",
+			"sha256": "615137d736e5c425e4679456f0d587eb3862ba09531d5cf25be43bb3a4f4dec7",
+			"lines": 2374,
+			"baselineSha256": "ccf8f1df1b47a90fb1b1ce11910184b5d70d10b72d8af99778cb4f73cc1e0039",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/companion-ui/src/stores/shell-workflows.tsx",
+			"sha256": "87bb5e94d7eec9db0f67fe6fb11f90390e5fc00340b21c0920cfae5e5bff1b4b",
+			"lines": 423,
+			"baselineSha256": "8013a8a0c739ef708bdc9a562f4653d678ed49ef0b2b51953156117c38d711e1",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/companion-ui/tests/conversation-local-active.spec.ts",
+			"sha256": "e27de8089e60b169940866357d2ddd6776ae724d98eb6dfb13fb7015bc5e0708",
+			"lines": 2291,
+			"baselineSha256": "b5c750bdb6c9c6489dcd44d5e4c531a28d226f93f81cf12b5bd38ada862f10e4",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/companion-ui/tests/fixtures.ts",
+			"sha256": "5878606128eddf621854dffc5417cf815d4969ad2a12ec0a798087a7233a7d2c",
+			"lines": 869,
+			"baselineSha256": "5c2b1dcb7bf0edc7af91b4cea873b96ba8125d12c274014ad04b5dbd05ba3f30",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/companion-ui/tests/run-api.spec.ts",
+			"sha256": "dba8bea1bc29f5fb1d7166782c8f5a1071389234643dd53537f9aec1ea33b05a",
+			"lines": 326,
+			"baselineSha256": "8478933918f5a4b833f918d0244593e29dc1483d700c55853440683130ba7d55",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/companion-ui/tests/tool-activity.spec.tsx",
+			"sha256": "b6fa9a6a846722053bac65ff62077685ffaed7187b51cda9f2c2df0fb538f345",
+			"lines": 994,
+			"baselineSha256": "0f2cc81b28025157d789fff43feb45c20fb8aa1ec5754ff051efe37badf01512",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/companion-ui/tests/work-panel.spec.tsx",
+			"sha256": "d23c5aabf8a4f87f9673c4502261ceeb7dac790392df5dcc831a4bfdc2ff7421",
+			"lines": 945,
+			"baselineSha256": "9a17d2a9b7357ccbecc94ea26c65625e1eacf5563c56d342fc20425767666f62",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/src/artifacts/capture.ts",
+			"sha256": "a38c4cad64edce724eb6fa1d457e2628291a1eaf74304dc76ca979d222e7ccd7",
+			"lines": 175,
+			"baselineSha256": null,
+			"baselineAuthority": "new-file",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/artifacts/index.ts",
+			"sha256": "fe65988e5f3b5162534c305497caebc935b7f88b464de4f6122cbc56750a71cd",
+			"lines": 1088,
+			"baselineSha256": "b0992a4291eeb4b24866a0ebeae474b0d3d2b6be0e3f6a765608a9b2fb56a99e",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/artifacts/presentation.ts",
+			"sha256": "b39a0843b138a4f5d52a5a787468768a6489127458983702ef1478881a36b243",
+			"lines": 155,
+			"baselineSha256": "821079c8721ceca731ed40e0031d4b156ab98946f3f6079bfd9105e8b6787d2d",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/artifacts/rpc.ts",
+			"sha256": "6063bd6c5e82ffabbb3468d168f75a0fe9b54197190ed5e6c67d7b4988ef3626",
+			"lines": 148,
+			"baselineSha256": null,
+			"baselineAuthority": "new-file",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/character-runtime.ts",
+			"sha256": "3fd2a799705b34fab85328848adb092c5beb17e7837cb2957310d39bf7ee2347",
+			"lines": 477,
+			"baselineSha256": "37c99b6f86a966a254d1427cd961be72a96a0aa0207d0e9ac5bae2d0acf5b17c",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/companion/session-catalog.ts",
+			"sha256": "441838bf02118424228a2ce35f2e6fb3f6b6415ac0bce991cb92bca69d14a380",
+			"lines": 244,
+			"baselineSha256": "424069a81121ffedafaab173abff4e148c1d26abdf268ea7cd47edcd0596c2ab",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/composition.ts",
+			"sha256": "b5febeb2a6c233013592ff745978df833ff07d364078e082838d7748d2800336",
+			"lines": 1202,
+			"baselineSha256": "b434dedd6cbddd93b50623801ae5926a4bdc9ef081006c9b927fcbf932c7fcd8",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/external-agents/run-service.ts",
+			"sha256": "7ca61faecce43806491edd211f82d12fbedfb037c44b0128c863d70866c5dad7",
+			"lines": 1725,
+			"baselineSha256": "e909470e2e253d30154580eec56c6adfcd446d6ed45c84213d70f3ca935d6a3b",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/src/runtime.ts",
+			"sha256": "cc6d93cea395f48e3c5fcfd3092c5282f09b3ca2e4b8b2f14347459feeb03899",
+			"lines": 690,
+			"baselineSha256": "915780de6c41a71fd1859a821de154ca01e51811ecd0ea1649464742fd669218",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/src/storage/database.ts",
+			"sha256": "7a04d81cc5eb79ea70d475e8c9630b5ce77cb8bdc76b5c9b67ecb5b90f7c5308",
+			"lines": 444,
+			"baselineSha256": "74d98b0b26a9c8ba5fcbd1fba1127ba1cd150416da53848c39649eca0a866f32",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/src/storage/schema-sql.ts",
+			"sha256": "0954a5f3512de825f2aa8166c9de443b4bf43d3eeee23ba1e91f9e5ae0190b26",
+			"lines": 282,
+			"baselineSha256": "1005d007ca2d3c07a2b62552c05c9b270e9303f20b514003727623fb76286bc1",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/src/storage/schema.ts",
+			"sha256": "b721615ef1c0e455404772925b3f06e2c4f5e11bdc2df3e535071b912671db25",
+			"lines": 478,
+			"baselineSha256": "a04d190f7d5dcdd72ea59b999a4ec1ad1aa2993ea399ea653bcbedf4798a8dc8",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/host-runtime/tests/artifact-integrity.spec.ts",
+			"sha256": "66702f7f9c083c01b4d3d9f8614552169a69efa84e3711c69fe3e22e0dfdcfa6",
+			"lines": 634,
+			"baselineSha256": "9bea8fc421db5fc132021bbcc51cdc6dd01ec8b9a8cae62661cfbcff396751fa",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/artifact-rpc.spec.ts",
+			"sha256": "0763656c409b27da67099f0bad6748c4cc3a4cad42acc1c485c1ba8ad440effc",
+			"lines": 531,
+			"baselineSha256": "c29ea6fe273e26a17665e6a18ff5aed75855e645dfd021fef140dfb76bb69eb2",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/character-deletion.spec.ts",
+			"sha256": "c928bbe4d3a20325b136478b598946bbd7a4a77f6fa129dc24931892be3a3e89",
+			"lines": 288,
+			"baselineSha256": "2dffb04a0d3391eebf049c207299f8ae47d6c344ea229886057108e1659bc83a",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/database-contract.spec.ts",
+			"sha256": "c319421257e1b3834cb6fafcc2ef2f4ed6c2f8f437e4bb835c34f1937116c4ba",
+			"lines": 235,
+			"baselineSha256": "e3c9e8bd2b71aea0ae1de7f603815f43ea96c8cadf71f92c750071b53a403b70",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/external-agent-run-service.spec.ts",
+			"sha256": "15878e5515cfe4d06e3d05d6c05232bfe089a53feed49c32dd39e9d59cc3ea1c",
+			"lines": 1484,
+			"baselineSha256": "c3b70f830cae632b4cc83843e8721c6604f2193a80b0fedad5d627d4049b6984",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/external-agent-runtime.spec.ts",
+			"sha256": "90703aea1337d471918e6046bb364f3d66820c1d70da1073f3796e3196297579",
+			"lines": 325,
+			"baselineSha256": "084b8140a66fce03087ecd882e0d3195988e81fc5879cecb74fb3d7a9f7b4162",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/host-runtime/tests/session-catalog.spec.ts",
+			"sha256": "121a3b9cc33ca30be6e4553d641d9e8e88fc27e9332a414b40ccbe33fe155588",
+			"lines": 470,
+			"baselineSha256": "d30499cd8214d5ed156bd794f1fea0fc5032651e9d295b8a7523835b2014d89b",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/i18n/src/locales/en.ts",
+			"sha256": "e8417ec8b6b14548a84d0ca6b92979a10e5220fd9a0b0f8efe08c314db72edbe",
+			"lines": 949,
+			"baselineSha256": "1c01dd7bc735536292f812628d6c8363d875c7dfa9435faa9d90ac05455e1e8f",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/i18n/src/locales/zh-CN.ts",
+			"sha256": "412751c235d37c3c22f28722377c03fff9c94f36637ed26bd6e2d8f8187995e3",
+			"lines": 900,
+			"baselineSha256": "e2c74f7ca72e05e6e90998c095e848834695215724c33b20305e0dd38cadf225",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/i18n/src/locales/zh-TW.generated.ts",
+			"sha256": "f391099c642a934a7381d27d5641dcbbad2a955957b3e9658e92835363e557a9",
+			"lines": 889,
+			"baselineSha256": "73dc2309d21ef065376fe22a858906174769230c8805db9da1ee042beafffbf0",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/protocol/src/index.ts",
+			"sha256": "ebc24562395a993cb859c1b95d87fa1166939937af3781e0877ea5a6c70e8887",
+			"lines": 441,
+			"baselineSha256": "6fccb09bc62c5ded93d01eb9c63a677d148ca20c1add6340dd7ccd1692578058",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "packages/protocol/src/schema.ts",
+			"sha256": "9e6dd52459aeefc22c22a0f5d19371302ece8ccbd0e5eeeb0cf89d9ea0c8f9c1",
+			"lines": 2754,
+			"baselineSha256": "580d07edf687b8d5b9070e11e4d0ba75bbb49d0ba7ea90e30eded08cb420babc",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": true
+		},
+		{
+			"path": "packages/protocol/tests/schema.spec.ts",
+			"sha256": "0169439be9f7b3b8d4cfbb8eb746549a15e0d8ee0addc8320c9a8b1145c8409a",
+			"lines": 343,
+			"baselineSha256": "b2196133b3c04bbd06628846aa405d73f3262a04bc59b600fd2a4cce3ab040c1",
+			"baselineAuthority": "prior-core-evidence",
+			"includedInOriginalScopeCount": false
+		},
+		{
+			"path": "scripts/check-persistent-format-v1.mjs",
+			"sha256": "9356fb6e37f5defbea0d392440be622edd4b16755833e22f5b7e964d42288c74",
+			"lines": 89,
+			"baselineSha256": "7a05ee7df7728a331da877c772e973b548c68b8642f99ef01c9eca769ca923e7",
+			"baselineAuthority": "base-commit",
+			"includedInOriginalScopeCount": false
+		}
+	],
+	"artifactPhaseChangeCount": 39,
+	"ownership": {
+		"store": "Per-character CAS/metadata, async verification and ranges, real IO resource leases, publication exclusion and startup maintenance.",
+		"capture": "Run output path/MIME/size/count checks and capture.",
+		"rpc": "Explicit character/conversation/run/artifact routing, ownership validation, entire-operation lease and transient query invalidation.",
+		"presentation": "Temporary scoped capability for trusted desktop presenters, drained and invalidated on completion.",
+		"runService": "Capture scheduling, durable result set and idempotent delivery to the explicit target Session.",
+		"renderer": "Window-local identity selection and reactive authoritative run detail projection.",
+		"forbiddenStateAdded": false
+	},
+	"findings": [
+		{
+			"id": "A1",
+			"title": "空会话/角色作用域保留旧 Artifact 选择",
+			"fixed": true
+		},
+		{
+			"id": "A2",
+			"title": "历史 Run 文件标签切换丢失 Run 详情来源",
+			"fixed": true
+		},
+		{
+			"id": "A3",
+			"title": "分块读取间保存状态变化误报文件损坏",
+			"fixed": true
+		},
+		{
+			"id": "A4",
+			"title": "保存后缺少元数据失效通知",
+			"fixed": true
+		},
+		{
+			"id": "A5",
+			"title": "冷范围读取同步完整校验阻塞 Host",
+			"fixed": true
+		},
+		{
+			"id": "A6",
+			"title": "部分捕获失败首次交付与重试附件不一致",
+			"fixed": true
+		},
+		{
+			"id": "A7",
+			"title": "历史结果消息缺少 Run 详情补查",
+			"fixed": true
+		}
+	],
+	"additionalResourceFixes": [
+		{
+			"name": "capture-purge",
+			"status": "passed",
+			"assertion": "CAS remains available to the new metadata owner while the old Run is purged.",
+			"output": "old Run purge removed= 0\nnew metadata present= true CAS exists= true\nread succeeded",
+			"logSha256": "0d20c1e82cee786fb1f12140ab1f743cb667648a1857c13eb3fe4c2c8901033c"
+		},
+		{
+			"name": "verifier-deletion",
+			"status": "passed",
+			"assertion": "Last-waiter cancellation holds deletion until the verifier descriptor closes.",
+			"output": "while verifier IO blocked: lease settled= false deletion entered= false\nlease rejected= AbortError\ndeletion entered with verifier FD still open= false\npurge removed= 1\nafter deletion verifier FD still open= false CAS exists= false",
+			"logSha256": "785837d904664e186aba4c450c90f81fff5aa486cbf51380984bb28286be3e40"
+		},
+		{
+			"name": "settled-presentation-promises",
+			"status": "fixed-and-tested",
+			"assertion": "Completed read promises are removed; successful chunk Buffers are not retained for the presenter lifetime."
+		}
+	],
+	"dataModel": {
+		"verification": ["pending", "verified", "failed"],
+		"saved": "Desktop-confirmed Save As boolean; no destination path persisted.",
+		"adopted": "Derived from artifact_adoptions existence; no duplicate boolean authority.",
+		"conversion": "One-time old artifacts table rebuild retaining IDs/FKs/adoptions; no legacy dual read/write.",
+		"adoptionProductEntry": "Deferred as agreed; no new RPC or UI."
+	},
+	"otherWiring": {
+		"provenance": "run.get exposes at most 20 validated, whitelisted executor/profile/timestamp/version/hash summaries; unavailableCount and hasMore are explicit.",
+		"startupMaintenance": "Before admission/recovery, delete only unreferenced legal CAS names older than 7 days and legal tmp names older than 24 hours; skip symlinks, directories, unknown names and recent files.",
+		"webSaveSemantics": "Download started only, saved remains false; desktop can confirm native Save As."
+	},
+	"validation": {
+		"toolchain": {
+			"node": "24.19.0",
+			"npm": "11.17.0",
+			"runner": "fnm exec --using=.nvmrc"
+		},
+		"lint": "passed",
+		"typecheck": "passed",
+		"build": "desktop and Web passed",
+		"unit": {
+			"passed": 1216,
+			"skipped": 3,
+			"suites": [
+				{
+					"name": "host",
+					"files": 71,
+					"passed": 653,
+					"skipped": 2,
+					"coverage": {
+						"statements": 79.66,
+						"branches": 69.76,
+						"functions": 81.39,
+						"lines": 83.12
+					}
+				},
+				{
+					"name": "ui",
+					"files": 37,
+					"passed": 280,
+					"skipped": 1,
+					"coverage": {
+						"statements": 80.56,
+						"branches": 70.23,
+						"functions": 80.72,
+						"lines": 83.9
+					}
+				},
+				{
+					"name": "desktop",
+					"files": 23,
+					"passed": 207,
+					"coverage": {
+						"statements": 86.18,
+						"branches": 76.08,
+						"functions": 92.93,
+						"lines": 89.52
+					}
+				},
+				{
+					"name": "protocol",
+					"passed": 19
+				},
+				{
+					"name": "i18n",
+					"passed": 12
+				},
+				{
+					"name": "tdai",
+					"passed": 8
+				},
+				{
+					"name": "repository-scripts",
+					"passed": 24
+				},
+				{
+					"name": "web-dev",
+					"passed": 13
+				}
+			]
+		},
+		"webRequired": {
+			"profile": "hosted",
+			"passed": 67,
+			"skipped": 2,
+			"skipReason": "live-model opt-in absent",
+			"notes": "Includes final manifest visibility and Web download-without-saved assertions; does not replace performance/visual baseline or live-model acceptance."
+		},
+		"targetedWeb": {
+			"passed": 9,
+			"includedInRequiredCoverage": true
+		},
+		"electron": {
+			"passed": 4
+		},
+		"recovery": {
+			"hostPassed": 51,
+			"desktopPassed": 24,
+			"totalPassed": 75,
+			"overlapsUnitCoverage": true
+		},
+		"liveModel": {
+			"status": "not-run",
+			"preflight": "BEAR_E2E_LIVE_MODEL=1 is required by the release gate"
+		},
+		"securityAudit": {
+			"status": "deferred-by-user"
+		},
+		"logs": {
+			"hostCoverage": {
+				"localPath": "/private/tmp/bear-artifact-host-coverage.log",
+				"sha256": "a6cf4af0bbea621114993166ae240c2ab94f7894258d62d79b4f575b86b54c8a"
+			},
+			"uiCoverage": {
+				"localPath": "/private/tmp/bear-projection-audit/artifact-ui-final.log",
+				"sha256": "91ef77f352dcd2b3bf4083078ecfd839b66c44a08c1f4ba7f78877a76ad884a8"
+			},
+			"uiResults": {
+				"localPath": "/private/tmp/bear-projection-audit/artifact-ui-final.json",
+				"sha256": "7f0d0dea2e30d57d0d013c01e9e6e05e5c46d9a47eb632da1045b37c35b5c9f8"
+			},
+			"desktopCoverage": {
+				"localPath": "/private/tmp/bear-artifact-desktop-coverage.log",
+				"sha256": "58d29062bb0b69eb521d1a4677a2ffb24d5d95f94dea7b3895d38f3754192e57"
+			},
+			"lint": {
+				"localPath": "/private/tmp/bear-artifact-lint.log",
+				"sha256": "303e5572cdfa1757b7c4a8e9c2c77b0b6c0581a0acf35a15caaa6b994ef60901"
+			},
+			"typecheck": {
+				"localPath": "/private/tmp/bear-artifact-typecheck.log",
+				"sha256": "66346f62db2dc92eff4ccdd5e107b663a96b450d2763b04c77494cf80dece91c"
+			},
+			"build": {
+				"localPath": "/private/tmp/bear-artifact-build.log",
+				"sha256": "0d760b5a7a5680d48c0a8289e49809efd8f1a27ff497d8d045b00ea490c9e7f1"
+			},
+			"webRequired": {
+				"localPath": "/private/tmp/bear-artifact-web-required.log",
+				"sha256": "9e2a553ae860a42ddc78c13f3b6e4b502576254a052b185bf514f2a91dbd3ed7"
+			},
+			"electron": {
+				"localPath": "/private/tmp/bear-artifact-electron.log",
+				"sha256": "e6c905a190fc8186ab79c07b8165fb712a74ea0d2800339d7d62a08ac0edaad4"
+			},
+			"recovery": {
+				"localPath": "/private/tmp/bear-artifact-recovery.log",
+				"sha256": "dce66a468c530f14bce22008ee269be407de08c1296cbbe8a675423d3226b705"
+			},
+			"tdai": {
+				"localPath": "/private/tmp/bear-artifact-tdai-tests.log",
+				"sha256": "c091b50518b1e7c6d34c34adaa3de9902828259d3fc9cbaad3c3459bb13f6623"
+			},
+			"repositoryScripts": {
+				"localPath": "/private/tmp/bear-artifact-script-tests.log",
+				"sha256": "4aa2cd01064ecbfa8c000e3ef659c8bb78c8bf6a367d0e0a649e135a21ec8aef"
+			},
+			"webUnit": {
+				"localPath": "/private/tmp/bear-artifact-web-tests.log",
+				"sha256": "dfeb1f2d16909eda6f0c8c821af1166afc204b625bbfab8ce3fbc1880df494da"
+			},
+			"targetedWeb": {
+				"localPath": "/private/tmp/bear-artifact-e2e.log",
+				"sha256": "b52266d1623e5295453b50ac3c72228ff0526e622462326baea75d6b7e7b196e"
+			},
+			"storeTargeted": {
+				"localPath": "/private/tmp/bear-artifact-store-tests.log",
+				"sha256": "f9ce9ef9e340a9605b3fa5b0a64766153ff4ac692e19d4ba5a7dcba0cff3f793"
+			},
+			"captureTargeted": {
+				"localPath": "/private/tmp/bear-artifact-capture-tests.log",
+				"sha256": "1037a097fbc0bf8c1813e060517ce7fbe761f922df64035a58e15607d9a6c845"
+			},
+			"livePreflight": {
+				"localPath": "/private/tmp/bear-artifact-live-preflight.log",
+				"sha256": "53daf79793c0dcd34a6ce7befcb5c868adec56a2506232295b28eff632fb5394"
+			}
+		},
+		"notes": [
+			"Sandbox loopback restriction was resolved by rerunning local integration/browser tests with required permissions.",
+			"Only final passing runs are reported; tests executed during ongoing edits were rerun after fixes.",
+			"Protocol/i18n terminal test outputs were inspected during the task; no dedicated standalone log file retained.",
+			"Log paths are local temporary evidence; summaries, scope hashes and independent reproduction outputs are retained in this file."
+		]
+	},
+	"residualLimits": [
+		"Adoption product RPC/UI remains deferred.",
+		"Codex execution chain remains for later user-directed work.",
+		"GC runs at character startup, not periodically.",
+		"Web cannot attest final user save to disk.",
+		"No live-model acceptance, new full-platform packages, clean-commit release evidence or packaged smoke was completed.",
+		"Hosted functional tests do not replace unresolved visual/performance baseline work from the prior core report."
+	],
+	"releaseDecision": "Source implementation and regression evidence delivered; not release approval."
+}

@@ -87,7 +87,7 @@ describe("companion storage registry", () => {
 				{ id: "existing-session", companion_id: "role-a" },
 			]);
 			connection.exec("UPDATE model_route_settings SET text_thinking_level = 'max'");
-			reopened.closeCompanion("role-a");
+			reopened.release(reopened.peek("role-a")!);
 			expect(
 				reopened
 					.open("role-a")

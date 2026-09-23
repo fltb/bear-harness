@@ -49,7 +49,6 @@ const productionExcludes = [
 	"!dist/**/*.d.ts",
 	"!dist/**/*.tsbuildinfo",
 	"!node_modules/@openai/codex*/**/*",
-	"!node_modules/@agentclientprotocol/codex-acp/**/*",
 	"!node_modules/@tencentdb-agent-memory/**/*",
 	"!node_modules/tesseract.js/**/*",
 	"!node_modules/tesseract.js-core/**/*",
@@ -149,6 +148,7 @@ const config: Configuration = {
 	// Native modules and dependent shared libraries cannot be loaded from ASAR.
 	// node-llama-cpp chooses the target binding from the production dependency tree.
 	asarUnpack: [
+		"node_modules/@agentclientprotocol/codex-acp/**/*",
 		"node_modules/node-llama-cpp/**/*",
 		"node_modules/@node-llama-cpp/**/*",
 		"node_modules/@napi-rs/canvas*/**/*",

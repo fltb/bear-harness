@@ -12,6 +12,11 @@ type Viewport = (typeof viewports)[number];
 
 const settingsPages = [
 	{
+		id: "agents",
+		label: zhCN.settings.workAgent,
+		landmark: (dialog: Locator) => dialog.getByText(zhCN.settings.runnerProfiles, { exact: true }),
+	},
+	{
 		id: "general",
 		label: zhCN.settings.language,
 		landmark: (dialog: Locator) =>
@@ -333,7 +338,6 @@ async function visitSystemSettings(page: Page, viewport: Viewport): Promise<void
 	await page.getByRole("button", { name: zhCN.sidebar.systemSettings, exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await expect(dialog).toBeVisible();
-	await expect(dialog.getByRole("button", { name: zhCN.settings.workAgent })).toHaveCount(0);
 	await expect(dialog.getByText(zhCN.settings.optionalCodexAgent, { exact: true })).toHaveCount(0);
 
 	for (const settingsPage of settingsPages) {

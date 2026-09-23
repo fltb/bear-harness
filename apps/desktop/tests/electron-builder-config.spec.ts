@@ -97,7 +97,6 @@ describe("electron-builder production boundary", () => {
 			"!node_modules/pdfjs-dist/build/**/*",
 			"!node_modules/pdfjs-dist/web/**/*",
 			"!node_modules/@openai/codex*/**/*",
-			"!node_modules/@agentclientprotocol/codex-acp/**/*",
 			"!node_modules/@tencentdb-agent-memory/**/*",
 			"!node_modules/tesseract.js/**/*",
 			"!node_modules/tesseract.js-core/**/*",
@@ -109,11 +108,11 @@ describe("electron-builder production boundary", () => {
 		}
 	});
 
-	it("keeps disabled executors and sparse-vector data out of production dependencies", () => {
+	it("ships the ACP adapter and keeps sparse-vector data out of production dependencies", () => {
 		const host = manifest("packages/host-runtime/package.json");
 		const tdai = manifest("packages/tdai-core/package.json");
-		expect(host.dependencies).not.toHaveProperty("@agentclientprotocol/codex-acp");
-		expect(host.devDependencies).toHaveProperty("@agentclientprotocol/codex-acp");
+		expect(host.dependencies).toHaveProperty("@agentclientprotocol/codex-acp");
+		expect(host.devDependencies).not.toHaveProperty("@agentclientprotocol/codex-acp");
 		expect(tdai.dependencies).not.toHaveProperty("@tencentdb-agent-memory/tcvdb-text");
 		expect(tdai.devDependencies).toHaveProperty("@tencentdb-agent-memory/tcvdb-text");
 	});

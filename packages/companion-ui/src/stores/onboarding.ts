@@ -1,4 +1,4 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type { CharacterClient as CompanionClient } from "@bear-harness/companion-client";
 import { QueryClient } from "@tanstack/solid-query";
 import { IpcInvocationError } from "../lib/ipc.js";
 import type { OnboardingData } from "./ipc.js";

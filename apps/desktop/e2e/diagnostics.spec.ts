@@ -19,13 +19,14 @@ test("native diagnostic directory commands use Host-resolved character paths", a
 				return "";
 			};
 		});
-		const settings = await invokeRpc(window, RPC.diagnostics.get, {});
+		const { defaultCharacterId: characterId } = await invokeRpc(window, RPC.bootstrap.get, {});
+		const settings = await invokeRpc(window, RPC.diagnostics.get, { characterId });
 		expect(settings.canReveal).toBe(true);
-		await invokeRpc(window, RPC.diagnostics.reveal, { scope: "character" });
-		await invokeRpc(window, RPC.diagnostics.reveal, { scope: "memory" });
-		await invokeRpc(window, RPC.diagnostics.reveal, { scope: "system" });
-		await invokeRpc(window, RPC.settings.get, {});
-		await invokeRpc(window, RPC.diagnostics.reveal, { scope: "latest" });
+		await invokeRpc(window, RPC.diagnostics.reveal, { characterId, scope: "character" });
+		await invokeRpc(window, RPC.diagnostics.reveal, { characterId, scope: "memory" });
+		await invokeRpc(window, RPC.diagnostics.reveal, { characterId, scope: "system" });
+		await invokeRpc(window, RPC.snapshot.get, { characterId });
+		await invokeRpc(window, RPC.diagnostics.reveal, { characterId, scope: "latest" });
 		const paths = await app.evaluate(
 			() => Reflect.get(globalThis, "diagnosticRevealPaths") as string[],
 		);

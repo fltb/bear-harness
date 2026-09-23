@@ -1,4 +1,4 @@
-import { type Accessor, createMemo, createSignal } from "solid-js";
+import { type Accessor, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type {
 	CanonChunk,
@@ -365,5 +365,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		settingsAvailable,
 	};
 	WORKFLOW_STORES.set(companion, store);
+	onCleanup(() => {
+		if (WORKFLOW_STORES.get(companion) === store) WORKFLOW_STORES.delete(companion);
+	});
 	return store;
 }

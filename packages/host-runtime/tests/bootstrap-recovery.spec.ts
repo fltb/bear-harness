@@ -92,7 +92,7 @@ describe("bootstrap fatal recovery", () => {
 		expect(existsSync(join(systemRoot, ".settings.db.corrupt-fixed", "original.db"))).toBe(true);
 	});
 
-	it("rebuilds only the active companion database and preserves its session catalog", () => {
+	it("rebuilds only the targeted companion database and preserves its session catalog", () => {
 		const dataDir = root();
 		const storage = new CompanionStorageRegistry(dataDir);
 		const handle = storage.open("jizhou");
@@ -144,7 +144,7 @@ describe("bootstrap fatal recovery", () => {
 
 		expect(inspectBootstrapHealth(options(dataDir))).toEqual({
 			status: "ok",
-			activeCharacterId: "jizhou",
+			defaultCharacterId: "jizhou",
 		});
 	});
 
@@ -163,6 +163,9 @@ describe("bootstrap fatal recovery", () => {
 					"INSERT INTO companion_identity(id, package_id, name) VALUES('broken-character', 'broken-character', 'Broken')",
 				)
 				.run();
+			database.exec(
+				"CREATE TABLE active_character(singleton INTEGER PRIMARY KEY, character_id TEXT)",
+			);
 			database
 				.prepare(
 					"INSERT INTO active_character(singleton, character_id) VALUES(1, 'broken-character')",
@@ -175,18 +178,11 @@ describe("bootstrap fatal recovery", () => {
 		mkdirSync(packageRoot);
 		writeFileSync(join(packageRoot, "character.yaml"), "invalid: true\n");
 
-		expect(inspectBootstrapHealth(options(dataDir))).toMatchObject({
-			status: "fatal",
-			issue: {
-				kind: "character_package",
-				characterId: "broken-character",
-				defaultCharacter: false,
-			},
-		});
+		expect(inspectBootstrapHealth(options(dataDir)).status).toBe("ok");
 		selectDefaultCharacter(options(dataDir));
 		expect(inspectBootstrapHealth(options(dataDir))).toEqual({
 			status: "ok",
-			activeCharacterId: "jizhou",
+			defaultCharacterId: "jizhou",
 		});
 	});
 

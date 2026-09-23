@@ -129,6 +129,7 @@ export async function invokeRpc<Endpoint extends RpcEndpoint>(
 }
 
 export async function provisionReplyModel(window: Page) {
+	const { defaultCharacterId: characterId } = await invokeRpc(window, RPC.bootstrap.get, {});
 	const { providers } = await invokeRpc(window, RPC.provider.list, {});
 	const provider = providers.find(
 		(candidate) =>
@@ -157,10 +158,14 @@ export async function provisionReplyModel(window: Page) {
 		},
 	});
 	await invokeRpc(window, RPC.systemOnboarding.completeEmbedding, { choice: "none" });
-	await invokeRpc(window, RPC.model.defaultsCompleteOnboarding, {});
-	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
+	await invokeRpc(window, RPC.model.defaultsSetReply, {
+		characterId,
+		reply: { providerId: provider.id, modelId: model.id },
+	});
+	await invokeRpc(window, RPC.model.defaultsCompleteOnboarding, { characterId });
+	const snapshot = await invokeRpc(window, RPC.snapshot.get, { characterId });
 	const steps = snapshot.character?.character.first_meeting.steps ?? [];
-	let onboarding = await invokeRpc(window, RPC.onboarding.get, {});
+	let onboarding = await invokeRpc(window, RPC.onboarding.get, { characterId });
 	while (onboarding.status === "active") {
 		const step = steps.find((candidate) => candidate.id === onboarding.currentStepId);
 		if (!step)
@@ -172,12 +177,14 @@ export async function provisionReplyModel(window: Page) {
 					? step.choices[0]?.value
 					: undefined;
 		onboarding = await invokeRpc(window, RPC.onboarding.submit, {
+			characterId,
 			stepId: step.id,
 			...(answer ? { answer } : {}),
 		});
 	}
-	const conversation = await invokeRpc(window, RPC.conversation.create, {});
+	const conversation = await invokeRpc(window, RPC.conversation.create, { characterId });
 	await invokeRpc(window, RPC.model.routeSet, {
+		characterId,
 		conversationId: conversation.conversationId,
 		selected: { providerId: provider.id, modelId: model.id },
 	});
@@ -219,9 +226,11 @@ export async function assertProductWindow(
 	return window;
 }
 
-export async function assertProductPage(window: Page, _product: Readonly<ProductConfig>) {
+export async function assertProductPage(window: Page, product: Readonly<ProductConfig>) {
 	await window.waitForLoadState("domcontentloaded");
-	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
+	const snapshot = await invokeRpc(window, RPC.snapshot.get, {
+		characterId: product.defaultCharacterId,
+	});
 	const character = snapshot.character as CharacterProjection | undefined;
 	if (!character) throw new Error("character snapshot unavailable");
 

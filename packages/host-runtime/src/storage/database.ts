@@ -13,7 +13,11 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { companionRuntimeIdentity, installationIdentity } from "./schema.js";
-import { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL } from "./schema-sql.js";
+import {
+	CHARACTER_MEMORY_SETTINGS_SCHEMA_SQL,
+	COMPANION_SCHEMA_SQL,
+	SYSTEM_SCHEMA_SQL,
+} from "./schema-sql.js";
 
 function createAppDatabase(client: DatabaseSync) {
 	return drizzle({ client });
@@ -329,6 +333,35 @@ export class SystemDatabase extends Database {
 	constructor(path: string) {
 		super(dirname(path), { fileName: basename(path) });
 	}
+	override initialize(schemaSql: string): void {
+		super.initialize(schemaSql);
+		const definition = this.connection
+			.prepare("SELECT sql FROM sqlite_master WHERE name = 'executor_profiles'")
+			.get() as { sql: string } | undefined;
+		if (definition && !definition.sql.includes("'custom'")) {
+			this.connection.exec("BEGIN IMMEDIATE");
+			try {
+				this.connection.exec(`CREATE TABLE executor_profiles_current (
+					id TEXT PRIMARY KEY, profile_type TEXT NOT NULL CHECK (profile_type IN ('pi','codex','custom')),
+					config_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')));
+					INSERT INTO executor_profiles_current SELECT id, profile_type, capability_json, created_at FROM executor_profiles;
+					DROP TABLE executor_profiles;
+					ALTER TABLE executor_profiles_current RENAME TO executor_profiles;`);
+				this.connection.exec("COMMIT");
+			} catch (error) {
+				this.connection.exec("ROLLBACK");
+				throw error;
+			}
+		}
+		// Remove obsolete installation pins once; Run-owned manifests/recovery snapshots stay intact.
+		if (definition)
+			this.connection.exec(`UPDATE executor_profiles SET config_json = json_remove(
+			config_json, '$.canonicalPath', '$.version', '$.sha256', '$.codeModeHostPath', '$.codeModeHostSha256')
+			WHERE profile_type = 'codex' AND (json_type(config_json, '$.canonicalPath') IS NOT NULL
+			OR json_type(config_json, '$.sha256') IS NOT NULL)`);
+		// Window selection has no installation-wide persistence or routing authority.
+		this.connection.exec("DROP TABLE IF EXISTS active_character");
+	}
 }
 
 export class CompanionDatabase extends Database {
@@ -337,6 +370,68 @@ export class CompanionDatabase extends Database {
 		readonly companionId: string,
 	) {
 		super(dirname(path), { fileName: basename(path) });
+	}
+
+	override initialize(schemaSql: string): void {
+		super.initialize(schemaSql);
+		const existing = this.orm
+			.select({ companionId: companionRuntimeIdentity.companionId })
+			.from(companionRuntimeIdentity)
+			.where(eq(companionRuntimeIdentity.id, 1))
+			.get();
+		if (existing && existing.companionId !== this.companionId)
+			throw new Error("character runtime database identity does not match its directory");
+		this.convertArtifactLifecycle();
+		this.connection.exec("BEGIN IMMEDIATE");
+		try {
+			// A one-way retirement: never read or transfer the former selection authority.
+			this.connection.exec("DROP TABLE IF EXISTS active_conversations");
+			this.connection.exec(CHARACTER_MEMORY_SETTINGS_SCHEMA_SQL);
+			this.connection.exec("COMMIT");
+		} catch (error) {
+			this.connection.exec("ROLLBACK");
+			throw error;
+		}
+	}
+
+	/** One-way conversion of the released mixed Artifact status; services only use the new columns. */
+	private convertArtifactLifecycle(): void {
+		const columns = this.connection.prepare("PRAGMA table_info(artifacts)").all() as Array<{
+			name: string;
+		}>;
+		if (!columns.some((column) => column.name === "status")) return;
+		// Rebuild without rewriting inbound foreign keys (adoptions and Canon provenance).
+		this.connection.exec("PRAGMA foreign_keys = OFF");
+		try {
+			this.connection.exec("BEGIN IMMEDIATE");
+			try {
+				this.connection.exec(`
+					CREATE TABLE artifacts_converted (
+						id TEXT PRIMARY KEY, logical_name TEXT NOT NULL, mime TEXT NOT NULL,
+						bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL,
+						verification TEXT NOT NULL DEFAULT 'pending' CHECK (verification IN ('pending','verified','failed')),
+						saved INTEGER NOT NULL DEFAULT 0 CHECK (saved IN (0,1)),
+						producer_run_id TEXT REFERENCES runs(id),
+						created_at TEXT NOT NULL DEFAULT (datetime('now'))
+					);
+					INSERT INTO artifacts_converted
+					SELECT id, logical_name, mime, bytes, sha256,
+						CASE status WHEN 'verified' THEN 'verified' WHEN 'verification_failed' THEN 'failed' ELSE 'pending' END,
+						status = 'saved', producer_run_id, created_at FROM artifacts;
+					DROP TABLE artifacts;
+					ALTER TABLE artifacts_converted RENAME TO artifacts;
+					CREATE INDEX idx_artifacts_run ON artifacts(producer_run_id);
+				`);
+				if (this.connection.prepare("PRAGMA foreign_key_check").all().length > 0)
+					throw new Error("artifact lifecycle conversion violates ownership");
+				this.connection.exec("COMMIT");
+			} catch (error) {
+				this.connection.exec("ROLLBACK");
+				throw error;
+			}
+		} finally {
+			this.connection.exec("PRAGMA foreign_keys = ON");
+		}
 	}
 
 	ensureRuntimeIdentity(): void {

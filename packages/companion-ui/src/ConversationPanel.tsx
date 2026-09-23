@@ -49,12 +49,7 @@ import {
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
-import {
-	ArtifactMessageContent,
-	DelegatedRunCard,
-	WorkRunCard,
-	WorkTimelineItem,
-} from "./WorkPanel.js";
+import { ArtifactMessageContent, DelegatedRunCard, WorkTimelineItem } from "./WorkPanel.js";
 
 type PiSessionEntryId = PiSessionEntry["id"];
 const MAX_REMEMBERED_TOOL_DISCLOSURES = 32;
@@ -842,14 +837,13 @@ function NativeToolView(props: {
 
 function NativeEntryNotice(props: { entry: PiSessionEntry }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
 	const value = () =>
 		nativeRecord(props.entry.type === "message" ? props.entry.message : props.entry)!;
 	const kind = () => value().role ?? value().type;
-	const resultRun = () => {
+	const resultRunId = () => {
 		if (value().customType !== "host_external_agent_result") return undefined;
 		const runId = nativeRecord(value().details)?.runId;
-		return store.runs.find((run) => run.id === runId);
+		return typeof runId === "string" ? runId : undefined;
 	};
 	const hidden = () =>
 		value().display === false || (kind() === "custom" && props.entry.type !== "message");
@@ -891,10 +885,10 @@ function NativeEntryNotice(props: { entry: PiSessionEntry }) {
 						</>
 					}
 				>
-					<Match when={resultRun()}>
-						{(run) => (
+					<Match when={resultRunId()}>
+						{(runId) => (
 							<>
-								<WorkRunCard run={run()} />
+								<DelegatedRunCard runId={runId()} />
 								<details>
 									<summary>{t("messages.native.source")}</summary>
 									<NativeMessageContent content={value().content} />

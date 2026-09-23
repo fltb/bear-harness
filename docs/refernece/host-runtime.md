@@ -8,7 +8,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/host-event-loop.ts` | 角色资源路由、切换、退休和关闭的单消费者事件队列 |
+| `src/character-runtime-registry.ts` | 按角色 ID 去重构造、持有唯一资源 owner、排斥删除与关闭，并保留失败后的清理依据 |
 | `src/companion/pi-runtime.ts` | 多个真实 Pi `AgentSession` 的 Registry、open 去重和显式路由 |
 | `src/companion/session-catalog.ts` | 当前角色的 Session 成员、归档和删除编排 |
 | `src/companion/pi-live-events.ts` | 把 Pi 原生事件加上 session id 并投给临时通道 |
@@ -20,7 +20,7 @@
 | `src/models/registry.ts` / `src/providers/` | 系统模型池、角色默认 route 和凭据边界 |
 | `src/memory/` | 显式 Memory 与角色级 TDAI runtime |
 | `src/external-agents/run-service.ts` | Run 生命周期、恢复、证据与结果交付 |
-| `src/artifacts/` | 角色 CAS、Artifact 完整性和有界读取 |
+| `src/artifacts/` | 角色 CAS、捕获、异步完整性/读取、RPC、呈现能力与资源清理 |
 | `src/security/` / `src/diagnostics/` | 审计、脱敏和角色级诊断 |
 
 ## 进程与角色生命周期
@@ -29,15 +29,15 @@
 
 1. 验证 `<dataRoot>`；
 2. 打开 `system/settings.db`；
-3. 解析并验证活动角色包；
-4. 打开 `companions/<id>/runtime.db` 和该角色的 memory、Run、Artifact、audit/diagnostics，并建立进程内失效通知；
-5. 创建 Pi Registry 与类型化 Dispatcher；
-6. 恢复可恢复的 Run，确认不可恢复的控制器丢失；
+3. 验证安装默认角色包，建立安装 Dispatcher 和角色 runtime Registry；
+4. 角色请求显式携带 `characterId`，按需打开 `companions/<id>/runtime.db`、memory、Run、Artifact、audit/diagnostics 及角色 Dispatcher；
+5. 每个已打开的角色 runtime 持有自己的 Pi Registry 与临时失效通知；
+6. 扫描角色库中需要恢复或投递的 Run，通过同一 Registry owner 恢复，只有确认控制器丢失才终止；
 7. 对外开放 IPC/HTTP。
 
-每个请求在进入时绑定一个角色 runtime。角色切换后，新请求进入新 runtime；已经开始的请求继续使用原 runtime，结束后原 runtime 才关闭。Pi 请求本身不进入这个队列，不同 Session 仍由 Pi 并发执行。
+安装请求只进入 system Dispatcher；角色请求在 schema 验证后，按显式 `characterId` 取得唯一 runtime。同角色构造去重；不同角色和不同 Pi Session 可以并行。窗口切换不释放旧 runtime，不改变已打开 Session 的执行，也不存在 Host 全局 active router。
 
-删除一个角色 runtime 前，Host 必须只关闭属于该角色的全部 Pi handles、memory runtime、Run controllers 和数据库句柄。Host shutdown 等待已经路由的请求结束后关闭资源；`close()` 是幂等的终态清理。
+删除一个角色 runtime 前，Host 先排斥新请求并停止属于该角色的 Pi handles、Run controllers 和文件工作，再等待已接纳操作与 memory capture 完成，最后释放数据库句柄。无法证明 executor 已停止时拒绝物理删除并保留资源与排斥；冷 runtime 也校验同一 Run 资源边界。Host shutdown 同样先停止真实生产者再 drain，关闭失败保留 owner 以便重试。
 
 ## Pi Registry
 
@@ -79,7 +79,7 @@ Character 顶层 child 恰好一个 `x-scope: global | conversation`，后代不
 
 角色设置通过 `memory.inspect({ characterId, kind, offset?, limit? })` 只读浏览真实本地记忆，`kind` 为 `records`、`profiles` 或 `explicit`。自动记忆条目读取角色 TDAI SQLite，情景与画像读取其 L2/L3 文件，显式记忆独立读取 `MEMORY.md`。默认每页 20 项、最多 25 项；各领域独立读取，权限、损坏或不安全文件错误不伪装成空集合。
 
-查看非当前角色先验证安装包与 runtime 目录归属，不激活角色、不创建其 runtime，也不启动模型、embedding 或记忆抽取。目录和文件拒绝符号链接，文件须为普通文件且读取有界。Renderer 以角色、分区及页码隔离查询，提供手动刷新；服务关闭不隐藏已有记忆，启用入口跳转安装级系统设置。
+查看任意角色先验证安装包与 runtime 目录归属，按显式角色路由取得其 runtime；不改变窗口选择，也不启动 Pi 回复。目录和文件拒绝符号链接，文件须为普通文件且读取有界。Renderer 以角色、分区及页码隔离查询，提供手动刷新。自动记忆需要安装 embedding 可用并且角色 consent 为 true；consent 位于角色 runtime DB、默认 false，角色设置与 onboarding 复用同一配置入口。关闭 consent 保留已有记忆，缺少 embedding 时链接系统设置。
 
 打开真实 Pi `AgentSession` 时，Host 读取一次角色包稳定 Prompt、用户称呼和显式 `MEMORY.md`，组成该 Session 的稳定 system context。当前 Character/Display、按当前输入检索的 Canon 与 TDAI recall 通过 Pi `before_agent_start` 作为当轮临时 system context 注入，不写成 transcript message。Host 不做统一字符截断，也不实现第二套长对话摘要/压缩流水线；上下文窗口与 compaction 继续由 Pi 原生机制负责。
 
@@ -97,11 +97,19 @@ activity 不落库、不回放，也不建立持久 activity/state mirror。SQLi
 
 ## Runs 与 Artifacts
 
-### Pi-only admission
+### 注册式 ACP runner admission
 
-新任务只能由 `host_delegate({ instruction, inputPaths? })` 交给内置 Pi Worker。模型不选择 agent；没有默认 executor 设置或自动 Codex fallback。现存 Codex discovery/settings/history 不等于新 admission 的可选后端。
+`host_delegate({ instruction, inputPaths?, runnerId? })` 省略 runnerId 时固定使用 `pi-default`。显式 runner 必须存在且启用，失败不切换后端。`host_runners({})` 返回已启用 profile 的 ID、类型、description、useWhen、limitations 与配置状态；模型按用户意图和这些说明选择，Host 不增加任务分类器。
 
-Host tool wrapper 提供真实 `conversationId`、`triggerEntryId` 和原生 `toolCallId`，形成 `DelegateParams`。Run service 以 `conversationId + toolCallId` 幂等准入，不按 instruction 去重；校验会话成员、输入路径、`pi-default` profile、模型 route 与资源容量后持久化 Run。返回 `DelegateResult = { accepted: true, runId, executor: "pi" }` 只确认身份与准入，不声称仍处于 `enqueued` 或已经完成。
+系统数据库的 `executor_profiles.config_json` 保存安装级启动配置，注册类型为 `pi | codex | custom`。密钥进入 CredentialStore，列表与模型目录不返回密钥；模型目录也不返回命令、参数或依赖路径。设置提供 list/save/test 与 Codex discovery/connect/status。配置状态不等于认证或 ACP 能力已被验证。
+
+Codex 注册 ID 跨 CLI 升级保持稳定，安装配置只保存 Codex home、连接记录和用户目录说明。新 Run 与连接测试扫描当前安装的二进制，启动前校验实际版本和哈希，把真实路径、版本和哈希写入 Run 证据，原生恢复记录保存完整执行快照。旧 Run 恢复不重新扫描或替换二进制；原版本已移除或变更时保持 unknown。旧安装级二进制绑定在数据库初始化时一次清除，保留原 ID 和用户设置；正常升级无需重新连接。
+
+Host wrapper 注入真实 conversationId、triggerEntryId、原生 toolCallId；Run service 以 conversationId + toolCallId 幂等准入，并在准入时固定 profile 配置。只有 Pi worker 使用调用会话的模型 route。receipt 为 `{ accepted: true, runId, runnerId, executor: "pi" | "codex" | "custom" }`，不代表任务完成。
+
+三类 worker 共用 AcpExecutorController、AcpRunClient 和 Run 范围内的标准 filesystem/terminal callbacks。Adapter 只提供进程配置和供应商扩展 dialect。连接时协商真实 load/resume/steering 能力；不支持的控制明确失败。Codex 的最终文本来自明确的 final_answer 阶段；通用 ACP 没有最终语义时只保留 evidence 和产物，不把进度拼成成果。
+
+Host 正常关闭时，支持恢复的 worker 必须先确认进程和工具已释放，再记录原生 sessionId 与恢复凭据；下次启动恢复为暂停，用户 resume 后继续。恢复记录仅存 profile、模型 ID 和释放事实，不存消息、凭据或复制 Pi 状态。异常崩溃未确认释放时保持 unknown，不新开 worker 重跑。
 
 receipt 返回后，由 Run 拥有并跟踪的异步 launch 启动 executor；启动失败保留同一 Run ID，写失败证据与 `failed`。取消、删除会话和关闭会 drain/停止真实 admission、launch、control 与 delivery 资源，不能在已取消或删除后再启动。Pi 继续独占对话 transcript/streaming/history/native state；Host 独占 Run 生命周期、权限、workspace、证据与 Artifact 安全。
 
@@ -129,7 +137,15 @@ Renderer 的 list/get/control 在当前角色内验证 Run 归属，不要求任
 
 原生 subscriber 在 append 前触发，entry 查找延后到 microtask。去重依据是已持久化 entry 或真实 Session/Run 的在途 delivery promise/subscription；bounded timeout 不清掉仍在途的操作，也不再排一个副本。会话 disposal 负责清理该 Session 的操作。终态未确认投递时可用 `run.retryDelivery` 重试同一结果；仍 pending 则返回错误，不伪造 `resultReportedAt`。重试投递不会重跑任务，新执行仍必须走新的原生 delegation。
 
-输出捕获逐项验证 containment、symlink、MIME、大小和 SHA-256，然后将字节写入当前角色的 CAS。Artifact 查询和动作验证 conversation、run、artifact 三层归属。open/reveal/save-as 由外壳提供原生 presenter；普通 Host API 不接受 Renderer 目标路径。
+Pi Worker 从原生最终 assistant 响应交付任务结论；进度正文仅保留在 evidence，不再把整个 Run 的正文累计为最终摘要。原生 interrupt/resume 保留同一 controller，用户取消引发的 aborted 响应不会被误判为 executor failure。
+
+输出捕获先异步扫描资源边界：单文件最多 8 GiB、单 Run 合计 32 GiB、文件最多 10,000、目录项最多 50,000、深度最多 128。保留大文件支持，随后以独立 1 MiB 缓冲逐项异步复制、哈希与验证，文件工作不占用 Run 状态转换队列；关闭和删除会取消并等待 IO 释放。每项验证 containment、symlink、普通文件身份、MIME、大小和 SHA-256，再提交当前角色的 CAS。Artifact 查询和动作验证 conversation、run、artifact 三层归属。open/reveal/save-as 由外壳提供原生 presenter；普通 Host API 不接受 Renderer 目标路径。
+
+Artifact 模块由 `index.ts`（存储与实际 IO）、`capture.ts`（Run 输出捕获）、`rpc.ts`（显式身份校验与注册）、`presentation.ts`（作用域内呈现能力）组成。composition 只注册接口。首次交付与重试都从已提交且验证成功的成果集合生成；部分捕获失败保留成功文件，Run 仍报告失败。
+
+Artifact 的 `verification: pending | verified | failed`、`saved` 与独立 adoption 记录互不覆盖；旧混合 status 在角色库打开时一次性转换，未知历史完整性重新校验，没有旧格式双读写。分块读取先异步验证精确文件版本，并合并并发校验；保存成功发送角色级 `CacheKey.runs()` 失效通知。完整 RPC/presenter 操作持有目标 Run 的资源租用，删除该会话先停止捕获，再等待其文件访问结束；其他 Run 不受影响。角色关闭 abort/drain 实际 IO 后才关闭数据库。
+
+角色资源首次开放前进行一次异步维护：仅清理无引用且超过 7 天的合法 CAS 文件与超过 24 小时的合法临时文件，保留未知文件和 symlink；没有全局周期状态机。Run detail 提供最多 20 项 manifest 白名单溯源摘要及不可读/截断提示；Pi 不虚构版本/hash，Codex 仅读取现有记录，不改执行链。采纳保留独立存储能力，本轮不开放新 RPC 或产品操作。
 
 聊天回复中的相对文件链接按该原生消息之前最近一次 `host_external_agent_result` 的 Run 解析，仅接受当前会话中该 Run 已登记且文件名唯一的 Artifact。历史回复不改绑到后来同名的成果；未知、重名或跨会话文件不生成下载按钮。点击使用不可变 conversation/run/artifact IDs 调用原生 Save As，WebDev 不支持原生保存时使用有界 Artifact 读取和浏览器 Blob 下载。链接路径只用于匹配展示名称，不作为 Host 文件系统路径。
 
@@ -137,7 +153,7 @@ Renderer 的 list/get/control 在当前角色内验证 Run 归属，不要求任
 
 ## 事件与查询
 
-产品域变更只发进程内失效通知，不保存、不回放；审计单独写入审计日志。Run live envelope 为 `{ type: "run", companionId, run }`，角色标签防止切换后迟到事件污染新角色；Run 内含自己的 `conversationId`。重连重新查询权威数据，不回放 live journal。列表接口轻量且可分页；conversation、Run、Artifact 和 Character/Display 通过按 ID detail 读取。bootstrap 不扫描所有会话。
+产品域变更只发进程内失效通知，明确区分 system 与携带 `characterId` 的 character scope，不保存、不回放；审计单独写入审计日志。Run live envelope 为 `{ type: "run", characterId, run }`，角色标签防止切换后迟到事件污染新角色；Run 内含自己的 `conversationId`。重连重新查询权威数据，不回放 live journal。列表接口轻量且可分页；conversation、Run、Artifact 和 Character/Display 通过按 ID detail 读取。bootstrap 不扫描所有会话。
 
 ## 验证
 

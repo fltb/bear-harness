@@ -1,6 +1,7 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { configuredModelLabel } from "../src/features/ModelSelector.js";
@@ -55,31 +56,28 @@ function configureActiveConversation(client: CompanionClient, isStreaming = fals
 			},
 		}),
 	);
-	client.conversation.activeGet = vi.fn(() =>
+	client.conversation.open = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				activeConversation: {
-					conversationId: "conversation-1",
-					name: "Test conversation",
-					branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
-					live: {
-						isStreaming,
-						isCompacting: false,
-						isRetrying: false,
-						retryAttempt: 0,
-						pendingToolCallIds: [],
-						steering: [],
-						followUp: [],
-					},
+				conversationId: "conversation-1",
+				name: "Test conversation",
+				branch: { entries: [], latestLeafIds: [], hasMoreBefore: false },
+				live: {
+					isStreaming,
+					isCompacting: false,
+					isRetrying: false,
+					retryAttempt: 0,
+					pendingToolCallIds: [],
+					steering: [],
+					followUp: [],
 				},
 			},
 		}),
 	);
-	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
 }
 
-function renderComposerWithModels(
+async function renderComposerWithModels(
 	client: ReturnType<typeof createTestClient>["client"],
 	modelState: {
 		pool: { models: ConfiguredModel[] };
@@ -123,6 +121,9 @@ function renderComposerWithModels(
 		Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 	);
 	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+	await waitForBootstrap(() =>
+		expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+	);
 }
 
 function configureSelectedModel(client: ReturnType<typeof createTestClient>["client"]): void {
@@ -169,6 +170,9 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole("button", { name: zhCN.composer.stopLabel }));
@@ -235,6 +239,9 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const selector = await screen.findByRole("button", {
 			name: new RegExp(zhCN.composer.modelLabel),
@@ -298,6 +305,9 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const selector = await screen.findByRole("button", {
 			name: new RegExp(zhCN.composer.modelLabel),
@@ -306,6 +316,7 @@ describe("composer", () => {
 		await selectKobalteOption(userEvent.setup(), selector, { label: "Deep · Relay Service" });
 		await waitFor(() =>
 			expect(client.model.routeSet).toHaveBeenCalledWith({
+				characterId: "test-character",
 				conversationId: "conversation-1",
 				selected: { providerId: "relay", modelId: "deep" },
 			}),
@@ -333,6 +344,9 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const composer = await screen.findByRole("textbox", {
 			name: zhCN.composer.messageInputLabel,
@@ -372,6 +386,9 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const composer = await screen.findByRole("textbox", {
 			name: zhCN.composer.messageInputLabel,

@@ -10,7 +10,10 @@ export type ArtifactPresentationOutcome = {
 
 /** Short-lived access to one ownership- and integrity-validated artifact. */
 export interface ArtifactPresentationAccess {
-	read(offset: number, length: number): { buffer: Buffer; nextOffset: number; eof: boolean };
+	read(
+		offset: number,
+		length: number,
+	): Promise<{ buffer: Buffer; nextOffset: number; eof: boolean }>;
 	withMaterializedFile<T>(use: (path: string) => T | Promise<T>): Promise<T>;
 }
 
@@ -46,36 +49,50 @@ export function createArtifactPresentationAccess(
 	record: ArtifactRecord,
 ): ScopedArtifactPresentationAccess {
 	let active = true;
-	const materializations = new Set<Promise<unknown>>();
+	const operations = new Set<Promise<unknown>>();
+	const controller = new AbortController();
+	let closing: Promise<void> | undefined;
+	let failed: { reason: unknown } | undefined;
+	const track = <T>(task: Promise<T>): Promise<T> => {
+		operations.add(task);
+		void task.then(
+			() => operations.delete(task),
+			(reason) => {
+				operations.delete(task);
+				failed ??= { reason };
+			},
+		);
+		return task;
+	};
 	const assertActive = () => {
 		if (!active) throw new Error("artifact_presentation_access_expired");
 	};
 	const access: ArtifactPresentationAccess = Object.freeze({
 		read(offset: number, length: number) {
 			assertActive();
-			const range = store.readBlobRange(record.id, offset, length);
-			if (!range) throw { kind: "not_found", reason: "artifact_not_found" };
-			return range;
+			return track(
+				store.readBlobRange(record.id, offset, length, controller.signal).then((range) => {
+					if (!range) throw { kind: "not_found", reason: "artifact_not_found" };
+					return range;
+				}),
+			);
 		},
 		withMaterializedFile<T>(use: (path: string) => T | Promise<T>): Promise<T> {
 			assertActive();
-			const task = materializeArtifact(store, record, use);
-			materializations.add(task);
-			void task.catch(() => undefined);
-			return task;
+			return track(materializeArtifact(store, record, use, controller.signal));
 		},
 	});
 	return {
 		access,
-		async close() {
-			if (!active) return;
+		close() {
 			active = false;
-			const results = await Promise.allSettled(materializations);
-			materializations.clear();
-			const failed = results.find(
-				(result): result is PromiseRejectedResult => result.status === "rejected",
-			);
-			if (failed) throw failed.reason;
+			controller.abort();
+			closing ??= (async () => {
+				await Promise.allSettled(operations);
+				operations.clear();
+				if (failed) throw failed.reason;
+			})();
+			return closing;
 		},
 	};
 }
@@ -84,6 +101,7 @@ async function materializeArtifact<T>(
 	store: ArtifactStore,
 	record: ArtifactRecord,
 	use: (path: string) => T | Promise<T>,
+	signal: AbortSignal,
 ): Promise<T> {
 	const directory = await mkdtemp(join(tmpdir(), "bear-artifact-"));
 	const path = join(directory, safeName(record.logicalName));
@@ -91,20 +109,24 @@ async function materializeArtifact<T>(
 	try {
 		file = await open(path, "wx", 0o600);
 		let offset = 0;
-		while (offset < record.bytes) {
-			const range = store.readBlobRange(
+		do {
+			signal.throwIfAborted();
+			const range = await store.readBlobRange(
 				record.id,
 				offset,
-				Math.min(MAX_ARTIFACT_READ_BYTES, record.bytes - offset),
+				Math.max(1, Math.min(MAX_ARTIFACT_READ_BYTES, record.bytes - offset)),
+				signal,
 			);
 			if (!range) throw { kind: "not_found", reason: "artifact_not_found" };
 			await writeAll(file, range.buffer);
-			if (range.nextOffset <= offset) throw new Error("artifact_materialization_stalled");
+			if (range.nextOffset <= offset && !range.eof)
+				throw new Error("artifact_materialization_stalled");
 			offset = range.nextOffset;
-		}
+		} while (offset < record.bytes);
 		await file.sync();
 		await file.close();
 		file = undefined;
+		signal.throwIfAborted();
 		return await use(path);
 	} finally {
 		if (file) await file.close().catch(() => undefined);

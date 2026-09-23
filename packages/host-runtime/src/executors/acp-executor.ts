@@ -1,9 +1,10 @@
+import { type AcpRecoveryRecord, readAcpRecovery, writeAcpRecovery } from "./acp-recovery.js";
+
 /**
  * Shared ACP controller for independent external-agent runs.
  *
  * The transport owns lifecycle, permission forwarding, and bounded evidence.
- * External agents use their own native filesystem and terminal tools; Bear
- * deliberately advertises no Host filesystem or terminal callbacks.
+ * Standard filesystem and terminal callbacks are confined to each Run.
  */
 
 import type * as acp from "@agentclientprotocol/sdk";
@@ -14,6 +15,8 @@ import {
 	type AcpProcessSpec,
 	AcpRunClient,
 } from "./acp-client.js";
+import { type AcpResultReader, standardAcpDialect } from "./acp-dialect.js";
+import { AcpRunIo } from "./acp-run-io.js";
 import type {
 	ExecutorController,
 	ExecutorLaunchRequest,
@@ -29,9 +32,11 @@ const CONTINUATION_PROMPT =
 type ActiveRun = {
 	request: ExecutorLaunchRequest;
 	client: AcpRunClient;
+	io: AcpRunIo;
 	pendingPermissionIds: Set<string>;
 	toolCallTitles: Map<string, string>;
-	messageText: string;
+	/** Current ACP response segment for peers without Pi's native final-response receipt. */
+	result: AcpResultReader;
 	settled: boolean;
 	/** A user interrupt is in flight; the next cancelled turn must pause, not settle. */
 	interruptRequested: boolean;
@@ -39,6 +44,7 @@ type ActiveRun = {
 	paused: boolean;
 	turn: Promise<void> | null;
 	release: Promise<void> | null;
+	recovery?: AcpRecoveryRecord;
 };
 
 /** Host-side ACP filesystem implementation for one approved run. */
@@ -52,12 +58,21 @@ export abstract class AcpExecutorController implements ExecutorController {
 	private readonly activeRuns = new Map<string, ActiveRun>();
 
 	async launch(request: ExecutorLaunchRequest): Promise<void> {
+		await this.open(request);
+	}
+
+	private async open(request: ExecutorLaunchRequest, recovery?: AcpRecoveryRecord): Promise<void> {
 		if (this.activeRuns.has(request.run.runId)) {
 			throw { kind: "conflict", reason: "executor_run_already_active" };
 		}
 
+		await this.prepareLaunch(request);
 		let active: ActiveRun;
-		const client = new AcpRunClient(this.processSpec(request), {
+		const spec = this.processSpec(request);
+		let client!: AcpRunClient;
+		const io = new AcpRunIo(spec, () => client.activeSessionId);
+		client = new AcpRunClient(spec, {
+			...io.handlers(),
 			onSessionUpdate: (notification) => this.handleSessionUpdate(active, notification),
 			onPermissionRequest: (permission) => this.handlePermissionRequest(active, permission),
 			onExit: (result) => this.handleProcessExit(active, result),
@@ -65,9 +80,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 		active = {
 			request,
 			client,
+			io,
 			pendingPermissionIds: new Set(),
 			toolCallTitles: new Map(),
-			messageText: "",
+			result: (spec.dialect ?? standardAcpDialect).result(),
 			settled: false,
 			interruptRequested: false,
 			paused: false,
@@ -77,16 +93,89 @@ export abstract class AcpExecutorController implements ExecutorController {
 		this.activeRuns.set(request.run.runId, active);
 
 		try {
-			await client.start();
+			await client.start(recovery ? { sessionId: recovery.sessionId } : {});
+			if (
+				client.activeSessionId &&
+				(client.capabilities.loadSession || client.capabilities.resume)
+			) {
+				active.recovery = {
+					schemaVersion: 1,
+					runId: request.run.runId,
+					sessionId: client.activeSessionId,
+					profile: request.profile,
+					released: false,
+					...(request.task.modelRoute
+						? {
+								modelRoute: {
+									providerId: request.task.modelRoute.providerId,
+									modelId: request.task.modelRoute.modelId,
+								},
+							}
+						: {}),
+				};
+				writeAcpRecovery(request, active.recovery);
+			}
 		} catch (error) {
+			active.release ??= this.release(active);
+			await active.release;
 			if (active.client.recoveryState() === "confirmed_lost")
 				this.activeRuns.delete(request.run.runId);
 			throw error;
 		}
 
 		if (active.settled || active.release) return;
-		request.emit({ type: "started" });
-		active.turn = this.runPrompt(active);
+		if (recovery) {
+			active.paused = true;
+			request.emit({ type: "restored" });
+		} else {
+			request.emit({ type: "started" });
+			active.turn = this.runPrompt(active);
+		}
+	}
+
+	async restore(request: ExecutorLaunchRequest): Promise<ExecutorRecovery> {
+		const active = this.activeRuns.get(request.run.runId);
+		if (active) return active.client.recoveryState();
+		const record = readAcpRecovery(request);
+		if (!record?.released) return "unknown";
+		const restored = { ...request, profile: record.profile };
+		// Claim before spawn; a crash during startup cannot license a second worker.
+		writeAcpRecovery(restored, { ...record, released: false });
+		try {
+			await this.open(restored, record);
+			return "attached";
+		} catch (error) {
+			if (!this.activeRuns.has(request.run.runId)) writeAcpRecovery(restored, record);
+			if (
+				error &&
+				typeof error === "object" &&
+				"reason" in error &&
+				error.reason === "runner_recovery_unsupported"
+			)
+				return "confirmed_lost";
+			return "unknown";
+		}
+	}
+	/** Graceful Host shutdown preserves loadable native sessions after a proven release. */
+	async suspend(): Promise<string[]> {
+		const preserved: string[] = [];
+		for (const active of [...this.activeRuns.values()]) {
+			const record = active.recovery;
+			if (record && !active.settled && !active.release) {
+				active.release = this.release(active);
+				try {
+					await active.release;
+					writeAcpRecovery(active.request, { ...record, released: true });
+					active.settled = true;
+					this.activeRuns.delete(active.request.run.runId);
+					preserved.push(active.request.run.runId);
+				} catch (error) {
+					active.release = null;
+					throw error;
+				}
+			} else await this.stop(active.request.run);
+		}
+		return preserved;
 	}
 
 	async recover(run: ExecutorRun): Promise<ExecutorRecovery> {
@@ -109,7 +198,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 		if (active.client.shutdownRequested) return { controller, actions };
 		if (active.pendingPermissionIds.size) actions.push("respondPermission");
 		else if (active.paused) actions.push("resume");
-		else if (active.turn && !active.interruptRequested) actions.push("steer", "interrupt");
+		else if (active.turn && !active.interruptRequested) {
+			actions.push("interrupt");
+			if (active.client.capabilities.steer) actions.push("steer");
+		}
 		return { controller, actions };
 	}
 
@@ -120,7 +212,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 	async stop(run: ExecutorRun): Promise<void> {
 		const active = this.activeRuns.get(run.runId);
 		if (!active) return;
-		active.release ??= active.client.stop();
+		active.release ??= this.release(active);
 		try {
 			await active.release;
 		} catch (error) {
@@ -213,12 +305,55 @@ export abstract class AcpExecutorController implements ExecutorController {
 		active.turn = this.runPrompt(active, instruction ?? CONTINUATION_PROMPT);
 	}
 
+	private async release(active: ActiveRun): Promise<void> {
+		const results = await Promise.allSettled([active.client.stop(), active.io.close()]);
+		const errors = results.flatMap((result) =>
+			result.status === "rejected" ? [result.reason] : [],
+		);
+		if (errors.length) throw new AggregateError(errors, "ACP resources could not be released");
+	}
+	protected async prepareLaunch(_request: ExecutorLaunchRequest): Promise<void> {}
+	async test(request: ExecutorLaunchRequest, signal?: AbortSignal) {
+		await this.prepareLaunch(request);
+		const spec = this.processSpec(request);
+		let client!: AcpRunClient;
+		const io = new AcpRunIo(spec, () => client.activeSessionId);
+		client = new AcpRunClient(spec, {
+			...io.handlers(),
+			onSessionUpdate() {},
+			onPermissionRequest() {},
+			onExit() {},
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const abort = () => {
+			void client.stop().catch(() => undefined);
+		};
+		signal?.addEventListener("abort", abort, { once: true });
+		try {
+			if (signal?.aborted) throw new Error("runner_probe_cancelled");
+			await Promise.race([
+				client.start(),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(
+						() => reject({ kind: "unavailable", reason: "runner_probe_timeout" }),
+						15000,
+					);
+				}),
+			]);
+			return client.connectionInfo;
+		} finally {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
+			await Promise.all([client.stop(), io.close()]);
+		}
+	}
 	protected abstract processSpec(request: ExecutorLaunchRequest): AcpProcessSpec;
 
 	private async runPrompt(
 		active: ActiveRun,
 		text = executionPrompt(active.request),
 	): Promise<void> {
+		active.result.reset();
 		try {
 			const response = await active.client.prompt(text);
 			if (active.settled || active.release) return;
@@ -237,9 +372,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 				}
 				await this.settle(active, { type: "cancelled" });
 			} else if (response.stopReason === "end_turn") {
+				const summary = active.result.finish(response);
 				await this.settle(active, {
 					type: "completed",
-					summary: active.messageText.trim() || undefined,
+					summary: typeof summary === "string" ? summary.trim() || undefined : undefined,
 				});
 			} else {
 				await this.settle(active, {
@@ -255,33 +391,17 @@ export abstract class AcpExecutorController implements ExecutorController {
 	private handleSessionUpdate(active: ActiveRun, notification: acp.SessionNotification): void {
 		if (active.settled) return;
 		const update = notification.update;
+		const normalized = active.result.update(update);
+		if (normalized?.evidence)
+			active.request.emit({
+				type: "evidence",
+				kind: normalized.evidence.kind,
+				data: boundedEvidence(normalized.evidence.data),
+			});
+		if (normalized?.suppress) return;
 		switch (update.sessionUpdate) {
 			case "agent_message_chunk":
-				if (
-					update._meta?.bearEvent &&
-					typeof update._meta.bearEvent === "object" &&
-					"type" in update._meta.bearEvent &&
-					["turn_start", "auto_retry_start", "auto_retry_end"].includes(
-						String(update._meta.bearEvent.type),
-					)
-				) {
-					active.request.emit({
-						type: "evidence",
-						kind: `pi.${update._meta.bearEvent.type}`,
-						data: boundedEvidence(update._meta.bearEvent),
-					});
-					return;
-				}
-				if (typeof update._meta?.bearError === "string") {
-					active.request.emit({
-						type: "evidence",
-						kind: "acp.error",
-						data: { message: update._meta.bearError },
-					});
-					return;
-				}
 				if (update.content.type === "text") {
-					active.messageText = active.messageText + update.content.text;
 					active.request.emit({
 						type: "evidence",
 						kind: "acp.message",
@@ -377,7 +497,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 	): Promise<void> {
 		if (active.settled || active.release) return;
 		active.settled = true;
-		active.release ??= active.client.stop();
+		active.release ??= this.release(active);
 		try {
 			await active.release;
 			this.activeRuns.delete(active.request.run.runId);
@@ -460,7 +580,10 @@ function executorFailureCode(error: unknown): string {
 		error &&
 		typeof error === "object" &&
 		"reason" in error &&
-		(error.reason === "acp_start_failed" || error.reason === "acp_process_spawn_failed")
+		typeof error.reason === "string" &&
+		/^(?:acp_start_failed|acp_process_spawn_failed|runner_startup_timeout|runner_authentication_required|runner_auth_method_unavailable|runner_credential_missing|runner_recovery_unsupported|runner_final_result_missing)$/.test(
+			error.reason,
+		)
 	)
 		return error.reason;
 	return "acp_executor_failed";

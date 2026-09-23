@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
 
-export type ExecutorProfileType = "pi" | "codex";
+export type ExecutorProfileType = "pi" | "codex" | "custom";
 
 export interface ExecutorProfile {
 	id: string;
@@ -38,6 +38,7 @@ export interface ExecutorTask {
 
 export type ExecutorEvent =
 	| { type: "started" }
+	| { type: "restored" }
 	| { type: "evidence"; kind: string; data: unknown }
 	| { type: "needs_user"; prompt: string; requestId: string; options?: ExecutorPermissionOption[] }
 	| { type: "completed"; summary?: string }
@@ -67,6 +68,8 @@ export type ExecutorRecovery = "attached" | "confirmed_lost" | "unknown";
 /** A worker implementation for one profile type. */
 export interface ExecutorController {
 	launch(request: ExecutorLaunchRequest): Promise<void>;
+	restore?(request: ExecutorLaunchRequest): Promise<ExecutorRecovery>;
+	suspend?(): Promise<string[]>;
 	/** Query/recover the controller's live handle before startup declares a persisted run orphaned. */
 	recover(run: ExecutorRun): Promise<ExecutorRecovery>;
 	/** Synchronous observation of a resource owned by this controller. */
@@ -87,6 +90,7 @@ export interface ExecutorController {
 const PROFILE_TYPES: Record<ExecutorProfileType, true> = {
 	pi: true,
 	codex: true,
+	custom: true,
 };
 
 function unavailable(reason: string): never {
@@ -113,19 +117,50 @@ export class ExecutorRouter {
 		this.controllers.set(profileType, controller);
 	}
 
+	profile(profileId: string): ExecutorProfile {
+		return this.resolve(profileId).profile;
+	}
+	profileType(profileId: string): ExecutorProfileType {
+		return this.resolve(profileId).profile.type;
+	}
+
 	/** Validate known profile and controller prerequisites before admission. */
-	validateProfile(profileId: string, expectedType?: ExecutorProfileType): void {
+	validateProfile(profileId: string, expectedType?: ExecutorProfileType): ExecutorProfile {
 		const { profile } = this.resolve(profileId);
 		if (expectedType && profile.type !== expectedType) unavailable("executor_profile_type_invalid");
+		if (profile.capabilities.enabled === false) unavailable("runner_disabled");
+		return profile;
 	}
 
 	async launch(
 		run: ExecutorRun,
 		task: ExecutorTask,
 		emit: ExecutorLaunchRequest["emit"],
+		pinned?: ExecutorProfile,
 	): Promise<void> {
 		const { profile, controller } = this.resolve(run.executorProfile);
-		await controller.launch({ run, task, profile, emit });
+		if (pinned && (pinned.id !== profile.id || pinned.type !== profile.type))
+			unavailable("runner_identity_changed");
+		await controller.launch({ run, task, profile: pinned ?? profile, emit });
+	}
+
+	async restore(
+		run: ExecutorRun,
+		task: ExecutorTask,
+		emit: ExecutorLaunchRequest["emit"],
+	): Promise<ExecutorRecovery> {
+		const { profile, controller } = this.resolve(run.executorProfile);
+		return controller.restore
+			? controller.restore({ run, task, profile, emit })
+			: controller.recover(run);
+	}
+	async suspend(): Promise<string[]> {
+		const results = await Promise.all(
+			[...new Set(this.controllers.values())].map((controller) =>
+				controller.suspend ? controller.suspend() : controller.close().then(() => []),
+			),
+		);
+		return results.flat();
 	}
 
 	async recover(run: ExecutorRun): Promise<ExecutorRecovery> {
@@ -194,7 +229,7 @@ export class ExecutorRouter {
 		if (!row) unavailable("executor_profile_not_found");
 		if (!PROFILE_TYPES[row.profileType]) unavailable("executor_profile_type_invalid");
 
-		const capabilities = row.capabilityJson;
+		const capabilities = row.configJson;
 
 		const controller = this.controllers.get(row.profileType);
 		if (!controller) unavailable("executor_profile_not_wired");

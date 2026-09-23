@@ -184,9 +184,6 @@ export function CurrentRolePackageManager(props: {
 		const reason =
 			typeof error === "object" && error !== null && "reason" in error ? String(error.reason) : "";
 		switch (reason) {
-			case "character_runtime_active":
-			case "character_package_active":
-				return t("currentRolePackage.deleteBlockedActive");
 			case "character_package_default":
 				return t("currentRolePackage.deleteBlockedDefault");
 			case "character_runtime_exists":
@@ -468,9 +465,6 @@ export function CurrentRolePackageManager(props: {
 								<div>
 									<strong>{t("currentRolePackage.deleteRuntime")}</strong>
 									<span>{t("currentRolePackage.deleteRuntimeDescription")}</span>
-									<Show when={props.deletionStatus()?.active}>
-										<small>{t("currentRolePackage.deleteBlockedActive")}</small>
-									</Show>
 									<Show when={props.deletionStatus() && !props.deletionStatus()?.runtimePresent}>
 										<small>{t("currentRolePackage.runtimeAlreadyAbsent")}</small>
 									</Show>
@@ -479,10 +473,7 @@ export function CurrentRolePackageManager(props: {
 									data-variant="danger"
 									type="button"
 									disabled={
-										deleting() ||
-										!props.deletionStatus() ||
-										props.deletionStatus()?.active ||
-										!props.deletionStatus()?.runtimePresent
+										deleting() || !props.deletionStatus() || !props.deletionStatus()?.runtimePresent
 									}
 									onClick={() => setPendingDeletion("runtime")}
 								>
@@ -493,9 +484,6 @@ export function CurrentRolePackageManager(props: {
 								<div>
 									<strong>{t("currentRolePackage.deletePackage")}</strong>
 									<span>{t("currentRolePackage.deletePackageDescription")}</span>
-									<Show when={props.deletionStatus()?.active}>
-										<small>{t("currentRolePackage.deleteBlockedActive")}</small>
-									</Show>
 									<Show when={props.deletionStatus()?.default}>
 										<small>{t("currentRolePackage.deleteBlockedDefault")}</small>
 									</Show>
@@ -513,7 +501,6 @@ export function CurrentRolePackageManager(props: {
 										deleting() ||
 										dirty() ||
 										!props.deletionStatus() ||
-										props.deletionStatus()?.active ||
 										props.deletionStatus()?.default ||
 										props.deletionStatus()?.runtimePresent ||
 										!props.deletionStatus()?.packagePresent

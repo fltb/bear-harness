@@ -12,13 +12,18 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunAction } from "@bear-harness/protocol";
+import { RunGetResponse } from "@bear-harness/protocol/schema";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	type ArtifactCaptureLimits,
+	DEFAULT_ARTIFACT_CAPTURE_LIMITS,
+} from "../src/artifacts/capture.js";
 import { ArtifactStore } from "../src/artifacts/index.js";
 import type { ExecutorLaunchRequest, ExecutorRecovery } from "../src/executors/router.js";
 import { ExternalAgentRunService, type RunStatus } from "../src/external-agents/run-service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
-import { conversations, evidence, runs } from "../src/storage/schema.js";
+import { conversations, evidence, runManifests, runs } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 
@@ -30,6 +35,8 @@ function setup(
 		close?: () => Promise<void>;
 		resolvePiModel?: ConstructorParameters<typeof ExternalAgentRunService>[4];
 		onTerminal?: ConstructorParameters<typeof ExternalAgentRunService>[5];
+		captureLimits?: ArtifactCaptureLimits;
+		profiles?: Record<string, ExecutorLaunchRequest["profile"]>;
 	} = {},
 ) {
 	const root = mkdtempSync(join(tmpdir(), "bear-run-restart-"));
@@ -65,11 +72,20 @@ function setup(
 				profile: { id: run.executorProfile, type: "pi", capabilities: {} },
 			}),
 	);
-	const validateProfile = vi.fn();
+	const validateProfile = vi.fn((id: string) => {
+		const profile =
+			options.profiles?.[id] ??
+			(id === "pi-default" ? { id, type: "pi" as const, capabilities: {} } : undefined);
+		if (!profile) throw { kind: "unavailable", reason: "executor_profile_not_found" };
+		if (profile.capabilities.enabled === false)
+			throw { kind: "unavailable", reason: "runner_disabled" };
+		return profile;
+	});
 	const controllerClose = vi.fn(async () => options.close?.());
 	const cancel = vi.fn(async () => options.cancel?.());
 	const stop = vi.fn(async () => undefined);
 	const runRoot = join(root, "runs");
+	const artifactStore = new ArtifactStore(database.orm, join(root, "artifacts"));
 	const createService = () =>
 		new ExternalAgentRunService(
 			database.orm,
@@ -81,21 +97,31 @@ function setup(
 				steer: vi.fn(async () => ({ outcome: "injected" })),
 				launch,
 				validateProfile,
+				profile: validateProfile,
+				profileType: (id: string) => validateProfile(id).type,
+				restore: (run: ExecutorLaunchRequest["run"]) => recover(run),
+				suspend: async () => {
+					await controllerClose();
+					return [];
+				},
 				close: controllerClose,
 				cancel,
 				stop,
 			} as never,
-			new ArtifactStore(database.orm, join(root, "artifacts")),
+			artifactStore,
 			runRoot,
 			options.resolvePiModel ?? (async () => ({ providerId: "test", modelId: "test" })),
 			options.onTerminal,
 			15_000,
+			undefined,
+			options.captureLimits,
 		);
 	const service = createService();
 	service.subscribeChanges(publish);
 	return {
 		database,
 		service,
+		artifactStore,
 		createService,
 		runRoot,
 		publish,
@@ -216,6 +242,28 @@ describe("ExternalAgentRunService restart recovery", () => {
 		}
 	});
 
+	it("deduplicates recovery probes in flight and allows a later recovery attempt", async () => {
+		const fixture = setup();
+		const probe = Promise.withResolvers<ExecutorRecovery>();
+		fixture.recover.mockReturnValue(probe.promise);
+		try {
+			seedRun(fixture.database, "recoverable", "running");
+			const first = fixture.service.recoverUnfinishedRuns();
+			const second = fixture.service.recoverUnfinishedRuns();
+			expect(second).toBe(first);
+			await vi.waitFor(() => expect(fixture.recover).toHaveBeenCalledOnce());
+			probe.resolve("unknown");
+			expect(await first).toBe(0);
+			fixture.recover.mockResolvedValue("confirmed_lost");
+			expect(await fixture.service.recoverUnfinishedRuns()).toBe(1);
+			expect(fixture.recover).toHaveBeenCalledTimes(2);
+		} finally {
+			probe.resolve("unknown");
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
 	it("never force-terminates an unknown run during later Host close", async () => {
 		const { controllerClose, database, service, recover, runRoot } = setup();
 		try {
@@ -240,6 +288,16 @@ describe("ExternalAgentRunService restart recovery", () => {
 			});
 			expect(existsSync(join(runRoot, "attached"))).toBe(false);
 			expect(existsSync(join(runRoot, "unknown"))).toBe(true);
+			expect(() => service.assertRuntimeDeletable()).toThrowError(
+				expect.objectContaining({
+					kind: "conflict",
+					reason: "external_agent_controller_unavailable",
+				}),
+			);
+			expect(service.getDetail("unknown").run.completedAt).toBeUndefined();
+			recover.mockResolvedValue("confirmed_lost");
+			await service.recoverUnfinishedRuns();
+			expect(() => service.assertRuntimeDeletable()).not.toThrow();
 		} finally {
 			database.close();
 		}
@@ -347,7 +405,12 @@ describe("ExternalAgentRunService restart recovery", () => {
 				instruction: "Use the available executor slot.",
 			});
 
-			expect(delegated).toEqual({ accepted: true, runId: delegated.runId, executor: "pi" });
+			expect(delegated).toEqual({
+				accepted: true,
+				runId: delegated.runId,
+				executor: "pi",
+				runnerId: "pi-default",
+			});
 			expect(service.list()).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({
@@ -391,6 +454,245 @@ describe("ExternalAgentRunService restart recovery", () => {
 });
 
 describe("ExternalAgentRunService output capture", () => {
+	it.each([
+		["maxFileBytes", 3, "run_output_file_too_large"],
+		["maxTotalBytes", 7, "run_output_total_too_large"],
+		["maxFiles", 1, "run_output_file_limit"],
+		["maxEntries", 1, "run_output_entry_limit"],
+		["maxDepth", 0, "run_output_depth_limit"],
+	] as const)("enforces %s before publishing any captured output", async (key, limit, reason) => {
+		const fixture = setup({
+			captureLimits: { ...DEFAULT_ARTIFACT_CAPTURE_LIMITS, [key]: limit },
+			launch: async ({ task, emit }) => {
+				if (key === "maxDepth") mkdirSync(join(task.outputDirectory, "nested"));
+				else {
+					writeFileSync(join(task.outputDirectory, "one.txt"), "1234");
+					writeFileSync(join(task.outputDirectory, "two.txt"), "5678");
+				}
+				emit({ type: "started" });
+				emit({ type: "completed", summary: "done" });
+			},
+		});
+		try {
+			const run = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "entry-limits",
+				toolCallId: "tool-limits",
+				inputPaths: [],
+				instruction: "Produce bounded outputs",
+			});
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(run.runId).run).toMatchObject({
+					status: "failed",
+					summary: reason,
+					artifacts: [],
+				}),
+			);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("reports the same committed verified files on initial delivery and retry after partial capture failure", async () => {
+		const reports: Array<{ status: string; names: string[] }> = [];
+		const fixture = setup({
+			launch: async ({ task, emit }) => {
+				writeFileSync(join(task.outputDirectory, "a.txt"), "first committed file");
+				writeFileSync(join(task.outputDirectory, "b.txt"), "second capture fails");
+				emit({ type: "started" });
+				emit({ type: "completed", summary: "Executor finished writing" });
+			},
+			onTerminal: async ({ run }) => {
+				reports.push({
+					status: run.status,
+					names: run.artifacts.map(({ logicalName }) => logicalName),
+				});
+				if (reports.length === 1) throw new Error("delivery unavailable");
+				return { resultReported: true };
+			},
+		});
+		const capture = fixture.artifactStore.createFromPath.bind(fixture.artifactStore);
+		vi.spyOn(fixture.artifactStore, "createFromPath").mockImplementation((input) => {
+			if (input.logicalName === "b.txt") return Promise.reject(new Error("second capture failed"));
+			return capture(input);
+		});
+		try {
+			const receipt = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "partial",
+				toolCallId: "partial",
+				inputPaths: [],
+				instruction: "Produce two files",
+			});
+			await vi.waitFor(() =>
+				expect(
+					fixture.service
+						.getDetail(receipt.runId)
+						.evidence.some(({ kind }) => kind === "run.reconciliation_pending"),
+				).toBe(true),
+			);
+			expect(reports).toEqual([{ status: "failed", names: ["a.txt"] }]);
+			expect(
+				fixture.artifactStore
+					.list(receipt.runId)
+					.map(({ logicalName, verification }) => ({ logicalName, verification })),
+			).toEqual([{ logicalName: "a.txt", verification: "verified" }]);
+			expect(
+				fixture.service.getDetail(receipt.runId).run.artifacts.map(({ name }) => name),
+			).toEqual(["a.txt"]);
+			await fixture.service.retryDelivery(receipt.runId);
+			expect(reports).toEqual([
+				{ status: "failed", names: ["a.txt"] },
+				{ status: "failed", names: ["a.txt"] },
+			]);
+			expect(fixture.service.getDetail(receipt.runId).run).toMatchObject({
+				status: "failed",
+				resultReportedAt: expect.any(String),
+			});
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("does not advertise committed but unverified files during initial delivery or retry", async () => {
+		const reports: string[][] = [];
+		const fixture = setup({
+			onTerminal: async ({ run }) => {
+				reports.push(run.artifacts.map(({ logicalName }) => logicalName));
+				return { resultReported: reports.length > 1 };
+			},
+		});
+		try {
+			seedRun(fixture.database, "unverified-result", "failed", "2026-09-22T00:00:00.000Z");
+			const verified = fixture.artifactStore.create({
+				logicalName: "ready.txt",
+				mime: "text/plain",
+				buffer: Buffer.from("verified"),
+				producerRunId: "unverified-result",
+			});
+			fixture.artifactStore.markVerified(verified.id);
+			fixture.artifactStore.create({
+				logicalName: "pending.txt",
+				mime: "text/plain",
+				buffer: Buffer.from("pending"),
+				producerRunId: "unverified-result",
+			});
+			await fixture.service.reconcilePending();
+			await fixture.service.retryDelivery("unverified-result");
+			expect(reports).toEqual([["ready.txt"], ["ready.txt"]]);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("keeps unrelated Run controls available while another output capture is pending", async () => {
+		let launched = 0;
+		const fixture = setup({
+			launch: async ({ task, emit }) => {
+				emit({ type: "started" });
+				if (++launched === 1) {
+					writeFileSync(join(task.outputDirectory, "result.txt"), "captured result");
+					emit({ type: "completed", summary: "done" });
+				}
+			},
+		});
+		const entered = deferred();
+		const release = deferred();
+		const create = fixture.artifactStore.createFromPath.bind(fixture.artifactStore);
+		vi.spyOn(fixture.artifactStore, "createFromPath").mockImplementation(async (params) => {
+			entered.resolve();
+			await release.promise;
+			return create(params);
+		});
+		try {
+			const first = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "first",
+				toolCallId: "first",
+				inputPaths: [],
+				instruction: "Create result",
+			});
+			await entered.promise;
+			const second = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "second",
+				toolCallId: "second",
+				inputPaths: [],
+				instruction: "Keep working",
+			});
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(second.runId).run.status).toBe("running"),
+			);
+			await expect(fixture.service.interruptRun(second.runId)).resolves.toMatchObject({
+				status: "interrupted",
+			});
+			expect(fixture.service.getDetail(first.runId).run.status).toBe("running");
+			release.resolve();
+			await vi.waitFor(() =>
+				expect(fixture.service.getDetail(first.runId).run.status).toBe("completed"),
+			);
+		} finally {
+			release.resolve();
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it.each(["close", "delete"] as const)(
+		"drains owned output IO before %s removes the Run directory",
+		async (operation) => {
+			const fixture = setup({
+				launch: async ({ task, emit }) => {
+					writeFileSync(join(task.outputDirectory, "result.txt"), "captured result");
+					emit({ type: "started" });
+					emit({ type: "completed", summary: "done" });
+				},
+			});
+			const entered = deferred();
+			const release = deferred();
+			let captureSignal: AbortSignal | undefined;
+			const create = fixture.artifactStore.createFromPath.bind(fixture.artifactStore);
+			vi.spyOn(fixture.artifactStore, "createFromPath").mockImplementation(async (params) => {
+				captureSignal = params.signal;
+				entered.resolve();
+				await release.promise;
+				return create(params);
+			});
+			try {
+				const run = await fixture.service.delegate({
+					conversationId: "conversation-1",
+					triggerEntryId: "capture",
+					toolCallId: "capture",
+					inputPaths: [],
+					instruction: "Create result",
+				});
+				await entered.promise;
+				// The executor already completed: only the capture operation still owns this directory.
+				fixture.recover.mockResolvedValue("unknown");
+				const draining =
+					operation === "close"
+						? fixture.service.close()
+						: fixture.service.prepareConversationDeletion("conversation-1");
+				expect(captureSignal?.aborted).toBe(true);
+				expect(existsSync(join(fixture.runRoot, run.runId))).toBe(true);
+				release.resolve();
+				await draining;
+				expect(existsSync(join(fixture.runRoot, run.runId))).toBe(false);
+				expect(fixture.artifactStore.list()).toEqual([]);
+				expect(fixture.service.getDetail(run.runId).run.status).toBe(
+					operation === "close" ? "forced_termination" : "cancelled",
+				);
+			} finally {
+				release.resolve();
+				await fixture.service.close();
+				fixture.database.close();
+			}
+		},
+	);
+
 	it("persists only stable executor failure codes, never raw worker error text", async () => {
 		const secret = "pi-secret-must-not-persist";
 		const fixture = setup({
@@ -448,7 +750,7 @@ describe("ExternalAgentRunService output capture", () => {
 				expect.objectContaining({
 					producerRunId: delegated.runId,
 					mime: "application/pdf",
-					status: "verified",
+					verification: "verified",
 				}),
 			]);
 		} finally {
@@ -486,12 +788,15 @@ describe("ExternalAgentRunService output capture", () => {
 					inputPaths: [],
 					instruction: "Create oversized output",
 				});
-				await vi.waitFor(() => {
-					expect(fixture.service.list()[0]).toMatchObject({
-						status: "completed",
-						summary: "done",
-					});
-				});
+				await vi.waitFor(
+					() => {
+						expect(fixture.service.list()[0]).toMatchObject({
+							status: "completed",
+							summary: "done",
+						});
+					},
+					{ timeout: 20_000 },
+				);
 				expect(fixture.service.list()[0]?.artifacts).toHaveLength(kind === "bytes" ? 3 : 0);
 			} finally {
 				await fixture.service.close();
@@ -554,7 +859,12 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 				fixture.service.delegate(params),
 				fixture.service.delegate(params),
 			]);
-			expect(first).toEqual({ accepted: true, runId: second.runId, executor: "pi" });
+			expect(first).toEqual({
+				accepted: true,
+				runId: second.runId,
+				executor: "pi",
+				runnerId: "pi-default",
+			});
 			await vi.waitFor(() =>
 				expect(fixture.service.getDetail(first.runId).run.status).toBe("failed"),
 			);
@@ -758,9 +1068,10 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 		},
 	);
 
-	it("does not settle an owned startup when controller close cannot confirm release", async () => {
+	it("retains an owned startup after failed close and retries release without settling unknown runs", async () => {
 		const launchEntered = deferred();
 		const startup = deferred();
+		let releaseFails = true;
 		const fixture = setup({
 			launch: async () => {
 				launchEntered.resolve();
@@ -768,12 +1079,14 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 			},
 			close: async () => {
 				startup.resolve();
-				throw new Error("native release unconfirmed");
+				if (releaseFails) throw new Error("native release unconfirmed");
 			},
 		});
 		fixture.runtime.mockReturnValue({ controller: "unknown", actions: [] });
 		fixture.recover.mockResolvedValue("unknown");
 		try {
+			seedRun(fixture.database, "historical-unknown", "interrupted");
+			mkdirSync(join(fixture.runRoot, "historical-unknown"), { recursive: true });
 			const receipt = await fixture.service.delegate(params);
 			await launchEntered.promise;
 			await expect(fixture.service.close()).rejects.toThrow("native release unconfirmed");
@@ -784,6 +1097,20 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 			});
 			expect(fixture.service.getDetail(receipt.runId).run.completedAt).toBeUndefined();
 			expect(existsSync(join(fixture.runRoot, receipt.runId))).toBe(true);
+			await expect(fixture.service.delegate(params)).rejects.toMatchObject({
+				reason: "run_service_closed",
+			});
+			releaseFails = false;
+			await fixture.service.close();
+			expect(fixture.controllerClose).toHaveBeenCalledTimes(2);
+			expect(fixture.service.getDetail(receipt.runId).run.status).toBe("forced_termination");
+			expect(existsSync(join(fixture.runRoot, receipt.runId))).toBe(false);
+			expect(fixture.service.getDetail("historical-unknown").run).toMatchObject({
+				status: "interrupted",
+				controller: "unknown",
+			});
+			expect(fixture.service.getDetail("historical-unknown").run.completedAt).toBeUndefined();
+			expect(existsSync(join(fixture.runRoot, "historical-unknown"))).toBe(true);
 		} finally {
 			startup.resolve();
 			await fixture.service.close().catch(() => undefined);
@@ -995,6 +1322,243 @@ describe("ExternalAgentRunService admission and inspectable results", () => {
 			expect(delivered.resultReportedAt).toEqual(expect.any(String));
 			expect(delivered.artifacts).toEqual(pending.artifacts);
 			expect(delivered.actions).toEqual([]);
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+});
+
+describe("Run launch provenance projection", () => {
+	it("exposes only supported bounded launch facts without paths, secrets, or raw manifests", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "provenance", "completed", "2026-09-22T00:00:00.000Z");
+			expect(fixture.service.getDetail("provenance").provenance).toEqual({
+				entries: [],
+				unavailableCount: 0,
+				hasMore: false,
+			});
+			const base = {
+				schemaVersion: 1,
+				runId: "provenance",
+				profileId: "pi-default",
+				launchedAt: "2026-09-22T01:02:03.000Z",
+			};
+			fixture.database.orm
+				.insert(runManifests)
+				.values([
+					{
+						id: "pi-launch",
+						runId: "provenance",
+						manifestJson: {
+							...base,
+							executor: "pi-acp",
+							workerPath: "/private/worker.js",
+							apiKey: "never-return-this",
+							version: "ignored-for-pi",
+							sha256: "a".repeat(64),
+						},
+					},
+					{
+						id: "codex-launch",
+						runId: "provenance",
+						manifestJson: {
+							...base,
+							executor: "codex",
+							version: "0.149.1",
+							sha256: "b".repeat(64),
+							canonicalPath: "/private/codex",
+							environment: { TOKEN: "never-return-this" },
+						},
+					},
+					{
+						id: "future-launch",
+						runId: "provenance",
+						manifestJson: { ...base, schemaVersion: 2, executor: "future" },
+					},
+					{
+						id: "wrong-binding",
+						runId: "provenance",
+						manifestJson: { ...base, runId: "another-run", executor: "pi-acp" },
+					},
+				])
+				.run();
+			const provenance = fixture.service.getDetail("provenance").provenance;
+			expect(provenance).toEqual({
+				entries: [
+					{
+						executor: "codex",
+						profileId: "pi-default",
+						launchedAt: base.launchedAt,
+						version: "0.149.1",
+						sha256: "b".repeat(64),
+					},
+					{ executor: "pi-acp", profileId: "pi-default", launchedAt: base.launchedAt },
+				],
+				unavailableCount: 2,
+				hasMore: false,
+			});
+			expect(JSON.stringify(provenance)).not.toContain("/private");
+			expect(JSON.stringify(provenance)).not.toContain("never-return-this");
+			expect(JSON.stringify(provenance)).not.toContain("workerPath");
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("omits unsafe optional version and hash fields while retaining valid launch facts", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "unsafe-optional", "completed", "2026-09-22T00:00:00.000Z");
+			const versions = [
+				"never-return-this",
+				"/private/codex",
+				"0.149.1\nTOKEN=secret",
+				"1".repeat(129),
+			];
+			for (const [index, version] of versions.entries())
+				fixture.database.orm
+					.insert(runManifests)
+					.values({
+						id: `unsafe-${index}`,
+						runId: "unsafe-optional",
+						manifestJson: {
+							schemaVersion: 1,
+							executor: "codex",
+							runId: "unsafe-optional",
+							profileId: "pi-default",
+							launchedAt: "2026-09-22T01:02:03.000Z",
+							version,
+							sha256: "secret-or-path",
+						},
+					})
+					.run();
+			const detail = fixture.service.getDetail("unsafe-optional");
+			expect(detail.provenance).toEqual({
+				entries: versions.map(() => ({
+					executor: "codex",
+					profileId: "pi-default",
+					launchedAt: "2026-09-22T01:02:03.000Z",
+				})),
+				unavailableCount: 0,
+				hasMore: false,
+			});
+			expect(() => RunGetResponse.parse(detail)).not.toThrow();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+
+	it("distinguishes absent, malformed and unsupported records and caps history at twenty", async () => {
+		const fixture = setup();
+		try {
+			seedRun(fixture.database, "unsupported", "completed", "2026-09-22T00:00:00.000Z");
+			fixture.database.orm
+				.insert(runManifests)
+				.values({
+					id: "unsupported-record",
+					runId: "unsupported",
+					manifestJson: { schemaVersion: 99 },
+				})
+				.run();
+			expect(fixture.service.getDetail("unsupported").provenance).toEqual({
+				entries: [],
+				unavailableCount: 1,
+				hasMore: false,
+			});
+			seedRun(fixture.database, "history", "completed", "2026-09-22T00:00:00.000Z");
+			for (let index = 0; index < 21; index++)
+				fixture.database.orm
+					.insert(runManifests)
+					.values({
+						id: `launch-${index}`,
+						runId: "history",
+						manifestJson: {
+							schemaVersion: 1,
+							executor: "pi-acp",
+							runId: "history",
+							profileId: "pi-default",
+							launchedAt: "2026-09-22T01:02:03.000Z",
+						},
+					})
+					.run();
+			const page = fixture.service.getDetail("history").provenance;
+			expect(page.entries).toHaveLength(20);
+			expect(page).toMatchObject({ unavailableCount: 0, hasMore: true });
+			fixture.database.connection
+				.prepare("UPDATE run_manifests SET manifest_json = ? WHERE id = ?")
+				.run("invalid JSON", "launch-20");
+			fixture.database.orm
+				.insert(runManifests)
+				.values({
+					id: "oversize",
+					runId: "history",
+					manifestJson: { ignored: "secret".repeat(1000) },
+				})
+				.run();
+			const filtered = fixture.service.getDetail("history").provenance;
+			expect(filtered.entries).toHaveLength(18);
+			expect(filtered).toMatchObject({ unavailableCount: 2, hasMore: true });
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+});
+
+describe("explicit runner admission", () => {
+	it("uses Pi only when omitted and never resolves a Pi model for a selected custom worker", async () => {
+		const resolvePiModel = vi.fn(async () => ({ providerId: "test", modelId: "test" }));
+		const fixture = setup({
+			resolvePiModel,
+			profiles: { "custom-research": { id: "custom-research", type: "custom", capabilities: {} } },
+		});
+		try {
+			const custom = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				inputPaths: [],
+				triggerEntryId: "custom-entry",
+				toolCallId: "custom-call",
+				instruction: "Research",
+				runnerId: "custom-research",
+			});
+			expect(custom).toMatchObject({ executor: "custom", runnerId: "custom-research" });
+			expect(resolvePiModel).not.toHaveBeenCalled();
+			const pi = await fixture.service.delegate({
+				conversationId: "conversation-1",
+				inputPaths: [],
+				triggerEntryId: "pi-entry",
+				toolCallId: "pi-call",
+				instruction: "Work",
+			});
+			expect(pi).toMatchObject({ executor: "pi", runnerId: "pi-default" });
+			expect(resolvePiModel).toHaveBeenCalledOnce();
+		} finally {
+			await fixture.service.close();
+			fixture.database.close();
+		}
+	});
+	it("rejects disabled and unknown explicit selections without admitting a default Run", async () => {
+		const fixture = setup({
+			profiles: { disabled: { id: "disabled", type: "custom", capabilities: { enabled: false } } },
+		});
+		try {
+			for (const runnerId of ["disabled", "missing"])
+				await expect(
+					fixture.service.delegate({
+						conversationId: "conversation-1",
+						inputPaths: [],
+						triggerEntryId: runnerId,
+						toolCallId: runnerId,
+						instruction: "Work",
+						runnerId,
+					}),
+				).rejects.toMatchObject({ kind: "unavailable" });
+			expect(fixture.service.list()).toEqual([]);
+			expect(fixture.launch).not.toHaveBeenCalled();
 		} finally {
 			await fixture.service.close();
 			fixture.database.close();

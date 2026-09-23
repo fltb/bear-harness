@@ -4,7 +4,15 @@ import type { ProductConfig } from "@bear-harness/product-config";
 import type { CharacterMedia } from "@bear-harness/protocol";
 import { faBars } from "@fortawesome/free-solid-svg-icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
-import { createMemo, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
+import {
+	createMemo,
+	createResource,
+	createSignal,
+	type JSX,
+	onCleanup,
+	onMount,
+	Show,
+} from "solid-js";
 import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
 import { Composer } from "./Composer";
 import { ConversationPanel, MediaViewer } from "./ConversationPanel";
@@ -53,12 +61,25 @@ export function CompanionApp(props: {
 			mutations: { retry: false },
 		},
 	});
+	const [bootstrap] = createResource(async () => {
+		const result = await props.client.bootstrap.get();
+		if (!result.ok) throw new Error(result.error.reason);
+		return result.data;
+	});
 	return (
 		<I18nextProvider i18n={i18n}>
 			<QueryClientProvider client={queryClient}>
-				<CompanionRuntime client={props.client} platform={props.platform}>
-					{props.children}
-				</CompanionRuntime>
+				<Show when={bootstrap()}>
+					{(installation) => (
+						<CompanionRuntime
+							client={props.client}
+							characterId={installation().defaultCharacterId}
+							platform={props.platform}
+						>
+							{props.children}
+						</CompanionRuntime>
+					)}
+				</Show>
 			</QueryClientProvider>
 		</I18nextProvider>
 	);
@@ -66,12 +87,13 @@ export function CompanionApp(props: {
 
 function CompanionRuntime(props: {
 	client: CompanionClient;
+	characterId: string;
 	platform?: string;
 	children?: JSX.Element;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
-	const store = createCompanionStore(props.client);
+	const store = createCompanionStore(props.client, props.characterId);
 	const workflow = createShellWorkflowStore({ store, currentLocale, translate: t });
 
 	syncDocumentTitle(() => t("shell.productName"));

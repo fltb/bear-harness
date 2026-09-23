@@ -4,7 +4,7 @@ import { createQuery, QueryClient, QueryClientProvider } from "@tanstack/solid-q
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import type { RunInfo } from "../src/stores/ipc.js";
+import type { RunGetResponse, RunInfo } from "../src/stores/ipc.js";
 import { ThreadHead } from "../src/ThreadHead.js";
 import {
 	ArtifactMessageContent,
@@ -19,14 +19,16 @@ const artifact = (
 	name: string,
 	mime: string,
 	bytes: number,
-	status: RunInfo["artifacts"][number]["status"] = "verified",
+	verification: RunInfo["artifacts"][number]["verification"] = "verified",
 ): RunInfo["artifacts"][number] => ({
 	id,
 	name,
 	mime,
 	bytes,
 	sha256: "a".repeat(64),
-	status,
+	verification,
+	saved: false,
+	adopted: false,
 	createdAt: timestamp,
 });
 
@@ -62,6 +64,7 @@ function renderWork(
 	const respondPermission = vi.fn(() => Promise.resolve());
 	const { run: runOverrides, ...storeOverrides } = overrides;
 	const store: CompanionStore = {
+		selectedCharacterId: "character-one",
 		activeConversationId: "conversation-1",
 		errorMetadata: null,
 		conversations: [],
@@ -88,6 +91,7 @@ function renderWork(
 						run: store.runs.find((item) => item.id === runId())!,
 						instruction: "Inspect the declared inputs and produce a report",
 						inputPaths: [],
+						provenance: { entries: [], unavailableCount: 0, hasMore: false },
 						evidence: [],
 					}),
 				})),
@@ -197,6 +201,60 @@ describe("work timeline controls", () => {
 			within(detail).queryByRole("button", { name: zhCN.work.task.retryDelivery }),
 		).not.toBeInTheDocument();
 	});
+
+	it.each([true, false])(
+		"shows persisted execution provenance without inventing missing entries (%s)",
+		async (hasEntry) => {
+			const user = userEvent.setup();
+			renderWork({
+				runs: [run("completed", "completed")],
+				run: {
+					observeDetail: () =>
+						createQuery(() => ({
+							queryKey: ["provenance-detail"],
+							queryFn: async () => ({
+								run: run("completed", "completed"),
+								instruction: "Original task",
+								inputPaths: [],
+								evidence: [],
+								provenance: {
+									entries: hasEntry
+										? [
+												{
+													executor: "codex" as const,
+													profileId: "original-profile",
+													launchedAt: timestamp,
+													version: "1.2.3",
+													sha256: "c".repeat(64),
+												},
+											]
+										: [],
+									unavailableCount: 2,
+									hasMore: true,
+								},
+							}),
+						})),
+				} as unknown as CompanionStore["run"],
+			});
+			await user.click(screen.getByRole("button", { name: zhCN.work.timeline.revealDetails }));
+			const detail = await screen.findByRole("region", { name: zhCN.work.task.details });
+			await user.click(
+				await within(detail).findByText(zhCN.work.result.provenance, { selector: "summary" }),
+			);
+			if (hasEntry) {
+				expect(within(detail).getByText(`codex · original-profile · ${timestamp}`)).toBeVisible();
+				expect(within(detail).getByText("1.2.3")).toBeVisible();
+				expect(within(detail).getByText("c".repeat(64))).toBeVisible();
+			} else {
+				expect(within(detail).getByText(zhCN.work.result.noProvenance)).toBeVisible();
+				expect(within(detail).queryByText(/original-profile/)).not.toBeInTheDocument();
+			}
+			expect(
+				within(detail).getByText(zhCN.work.result.provenanceUnavailable.replace("{count}", "2")),
+			).toBeVisible();
+			expect(within(detail).getByText(zhCN.work.result.provenanceTruncated)).toBeVisible();
+		},
+	);
 
 	it("preserves in-flight instruction drafts and exposes a real control failure after reopening", async () => {
 		const user = userEvent.setup();
@@ -438,7 +496,7 @@ describe("work timeline controls", () => {
 		expect(
 			within(preview).getByRole("region", { name: zhCN.work.result.provenance }),
 		).toBeVisible();
-		expect(within(preview).getByText(zhCN.work.artifactStatuses.verified)).toBeVisible();
+		expect(within(preview).getByText(zhCN.work.artifactVerification.verified)).toBeVisible();
 		expect(
 			within(preview).getByText("The report was generated from the requested source."),
 		).toBeVisible();
@@ -478,6 +536,92 @@ describe("work timeline controls", () => {
 		);
 		expect(screen.queryByRole("dialog", { name: "archive.bin" })).not.toBeInTheDocument();
 	});
+
+	it("removes a loaded preview when authoritative verification later fails", async () => {
+		const user = userEvent.setup();
+		const file = artifact("report", "report.txt", "text/plain", 5);
+		const view = renderWork({
+			runs: [{ ...run("completed", "completed"), artifacts: [file] }],
+			artifact: {
+				read: vi.fn(async () => ({
+					artifact: file,
+					offset: 0,
+					nextOffset: 5,
+					eof: true,
+					base64: btoa("hello"),
+				})),
+				open: vi.fn(),
+				reveal: vi.fn(),
+				saveAs: vi.fn(),
+			},
+		});
+		await user.click(
+			screen.getByRole("button", { name: `${zhCN.work.timeline.viewArtifacts}: report.txt` }),
+		);
+		const preview = await screen.findByRole("dialog", { name: "report.txt" });
+		expect(await within(preview).findByText("hello")).toBeVisible();
+		view.queryClient.setQueryData<RunGetResponse>(
+			["test-run", "completed", undefined],
+			(detail) =>
+				detail && {
+					...detail,
+					run: { ...detail.run, artifacts: [{ ...file, verification: "failed" }] },
+				},
+		);
+		expect(await within(preview).findByRole("alert")).toHaveTextContent(
+			zhCN.work.result.issues.corrupted,
+		);
+		expect(within(preview).queryByText("hello")).not.toBeInTheDocument();
+	});
+
+	it.each([false, true])(
+		"reads across usage changes while still rejecting immutable changes (%s)",
+		async (changeHash) => {
+			const user = userEvent.setup();
+			let saved = false;
+			const continuation = Promise.withResolvers<void>();
+			const file = artifact("report", "report.txt", "text/plain", 11);
+			const read = vi.fn(async ({ offset }) => {
+				if (offset > 0) await continuation.promise;
+				return {
+					artifact: {
+						...file,
+						saved,
+						adopted: saved,
+						sha256: offset > 0 && changeHash ? "b".repeat(64) : file.sha256,
+					},
+					offset,
+					nextOffset: offset === 0 ? 5 : 11,
+					eof: offset > 0,
+					base64: btoa(offset === 0 ? "hello" : " world"),
+				};
+			});
+			renderWork({
+				runs: [{ ...run("completed", "completed"), artifacts: [file] }],
+				artifact: {
+					read,
+					open: vi.fn(),
+					reveal: vi.fn(),
+					saveAs: vi.fn(async () => {
+						saved = true;
+						return { outcome: "completed" as const };
+					}),
+				},
+			});
+			await user.click(
+				screen.getByRole("button", { name: `${zhCN.work.timeline.viewArtifacts}: report.txt` }),
+			);
+			const preview = await screen.findByRole("dialog", { name: "report.txt" });
+			await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+			await user.click(within(preview).getByRole("button", { name: zhCN.work.download }));
+			continuation.resolve();
+			if (changeHash)
+				expect(await within(preview).findByRole("alert")).toHaveTextContent(
+					zhCN.work.result.issues.corrupted,
+				);
+			else expect(await within(preview).findByText("hello world")).toBeVisible();
+		},
+	);
 
 	it("revokes generated media URLs on artifact switch, close, and unmount", async () => {
 		const user = userEvent.setup();
@@ -714,6 +858,7 @@ describe("work timeline controls", () => {
 		expect(saveAs).toHaveBeenCalledWith(identity("download"));
 		expect(read).toHaveBeenCalledWith({ ...identity("download"), offset: 0, length: 1024 * 1024 });
 		expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe("report.bin");
+		expect(within(preview).getByText(zhCN.work.result.downloadStarted)).toBeVisible();
 		expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
 		await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:download"));
 
@@ -772,7 +917,7 @@ describe("work timeline controls", () => {
 					...run("completed", "completed"),
 					artifacts: [
 						artifact("missing", "missing.txt", "text/plain", 1),
-						artifact("corrupt", "corrupt.txt", "text/plain", 1, "verification_failed"),
+						artifact("corrupt", "corrupt.txt", "text/plain", 1, "failed"),
 					],
 				},
 			],

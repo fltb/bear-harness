@@ -2,7 +2,7 @@
 
 import { RPC } from "@bear-harness/protocol/schema";
 import { describe, expect, it } from "vitest";
-import { wireHostHandlers } from "../src/composition.js";
+import { wireCharacterHandlers, wireSystemHandlers } from "../src/composition.js";
 import { Dispatcher, ProtocolResponseValidationError } from "../src/dispatcher.js";
 
 describe("Zod RPC dispatcher", () => {
@@ -48,6 +48,17 @@ describe("Zod RPC dispatcher", () => {
 		).toThrow("duplicate RPC handler registration: settings.get");
 	});
 
+	it("keeps dispatch available but refuses new registrations after composition is sealed", async () => {
+		const dispatcher = new Dispatcher();
+		dispatcher.registerHandler(RPC.bootstrap.get, async () => ({ defaultCharacterId: "bear" }));
+		dispatcher.seal();
+		expect(() => dispatcher.registerHandler(RPC.provider.logout, async () => ({}))).toThrow();
+		await expect(dispatcher.dispatch(RPC.bootstrap.get.channel, {})).resolves.toEqual({
+			ok: true,
+			data: { defaultCharacterId: "bear" },
+		});
+	});
+
 	it("rejects unknown fields without leaking validation internals", async () => {
 		const dispatcher = new Dispatcher();
 		dispatcher.registerHandler(RPC.settings.get, async () => ({ settings: {} }));
@@ -67,6 +78,7 @@ describe("Zod RPC dispatcher", () => {
 
 			await expect(
 				dispatcher.dispatch(RPC.message.send.channel, {
+					characterId: "bear",
 					conversationId: "c1",
 					text: "hello",
 					clientMessageId: "00000000-0000-4000-8000-000000000001",
@@ -86,6 +98,7 @@ describe("Zod RPC dispatcher", () => {
 
 		await expect(
 			dispatcher.dispatch(RPC.message.send.channel, {
+				characterId: "bear",
 				conversationId: "c1",
 				text: "hello",
 				clientMessageId: "00000000-0000-4000-8000-000000000001",
@@ -105,9 +118,9 @@ describe("Zod RPC dispatcher", () => {
 			conversations: [{ id: "missing-required-fields" }],
 		})) as never);
 
-		await expect(dispatcher.dispatch(RPC.conversation.list.channel, {})).rejects.toBeInstanceOf(
-			ProtocolResponseValidationError,
-		);
+		await expect(
+			dispatcher.dispatch(RPC.conversation.list.channel, { characterId: "bear" }),
+		).rejects.toBeInstanceOf(ProtocolResponseValidationError);
 		expect(violations).toHaveLength(1);
 	});
 
@@ -118,6 +131,7 @@ describe("Zod RPC dispatcher", () => {
 		});
 		await expect(
 			dispatcher.dispatch(RPC.message.send.channel, {
+				characterId: "bear",
 				conversationId: "c1",
 				text: "hello",
 				clientMessageId: "00000000-0000-4000-8000-000000000001",
@@ -133,7 +147,6 @@ describe("Zod RPC dispatcher", () => {
 			id: `character-${String(index).padStart(3, "0")}`,
 			name: `Character ${index}`,
 			subtitle: "Test character",
-			active: index === 0,
 		}));
 		const sources = Array.from({ length: 205 }, (_, index) => ({
 			id: `source-${String(index).padStart(3, "0")}`,
@@ -176,13 +189,14 @@ describe("Zod RPC dispatcher", () => {
 			readiness: "ready" as const,
 		}));
 		const dispatcher = new Dispatcher();
-		wireHostHandlers(dispatcher, {
+		const context = {
+			characterId: characters[0]?.id,
 			defaultCharacterId: characters[0]?.id,
 			systemOrm: {},
 			characterLoader: {
 				getActiveCharacterId: () => characters[0]?.id,
 				load: () => ({ id: characters[0]?.id, state: {} }),
-				list: (_db: unknown, _defaultId: string, request: { cursor?: string; limit: number }) => {
+				list: (request: { cursor?: string; limit: number }) => {
 					const cursorIndex = request.cursor
 						? characters.findIndex((character) => character.id === request.cursor)
 						: -1;
@@ -203,11 +217,19 @@ describe("Zod RPC dispatcher", () => {
 				modelProjectionFacts: () => ({}),
 			},
 			models: { list: () => models },
-		} as never);
+		} as never;
+		wireCharacterHandlers(dispatcher, context);
+		wireSystemHandlers(dispatcher, context);
 
 		const first = await dispatcher.dispatch(RPC.character.list.channel, { limit: 100 });
-		const sourcePage = await dispatcher.dispatch(RPC.canon.listSources.channel, { limit: 100 });
-		const modulePage = await dispatcher.dispatch(RPC.canon.listModules.channel, { limit: 100 });
+		const sourcePage = await dispatcher.dispatch(RPC.canon.listSources.channel, {
+			characterId: "bear",
+			limit: 100,
+		});
+		const modulePage = await dispatcher.dispatch(RPC.canon.listModules.channel, {
+			characterId: "bear",
+			limit: 100,
+		});
 		const providerPage = await dispatcher.dispatch(RPC.provider.list.channel, { limit: 30 });
 		const modelPage = await dispatcher.dispatch(RPC.model.poolGet.channel, { limit: 100 });
 		expect({

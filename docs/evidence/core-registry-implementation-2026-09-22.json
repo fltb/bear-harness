@@ -1,0 +1,640 @@
+{
+	"date": "2026-09-22",
+	"base_commit": "bf3cbfb0d94f39acb54e250695a29a47e176c4c3",
+	"branch": "codex/execution-core-audit",
+	"metrics": {
+		"host_runtime_all": {
+			"before": {
+				"files": 73,
+				"lines": 26693
+			},
+			"after": {
+				"files": 73,
+				"lines": 27027,
+				"paths": [
+					"packages/host-runtime/src/artifacts/index.ts",
+					"packages/host-runtime/src/artifacts/presentation.ts",
+					"packages/host-runtime/src/await-source.ts",
+					"packages/host-runtime/src/canon/package-schema.ts",
+					"packages/host-runtime/src/canon/service.ts",
+					"packages/host-runtime/src/character-runtime-registry.ts",
+					"packages/host-runtime/src/character-runtime.ts",
+					"packages/host-runtime/src/companion/behavior-schema.ts",
+					"packages/host-runtime/src/companion/character-archive-import.ts",
+					"packages/host-runtime/src/companion/character-draft-service.ts",
+					"packages/host-runtime/src/companion/character-loader.ts",
+					"packages/host-runtime/src/companion/companion-store.ts",
+					"packages/host-runtime/src/companion/context-pack.ts",
+					"packages/host-runtime/src/companion/core-zod-tools.ts",
+					"packages/host-runtime/src/companion/first-meeting.ts",
+					"packages/host-runtime/src/companion/host-tool-register.ts",
+					"packages/host-runtime/src/companion/media-schema.ts",
+					"packages/host-runtime/src/companion/onboarding-schema.ts",
+					"packages/host-runtime/src/companion/pi-live-events.ts",
+					"packages/host-runtime/src/companion/pi-runtime.ts",
+					"packages/host-runtime/src/companion/role-resources.ts",
+					"packages/host-runtime/src/companion/session-catalog.ts",
+					"packages/host-runtime/src/companion/state-schema.ts",
+					"packages/host-runtime/src/companion/theme.ts",
+					"packages/host-runtime/src/composition.ts",
+					"packages/host-runtime/src/diagnostics/character-trace.ts",
+					"packages/host-runtime/src/diagnostics/contracts.ts",
+					"packages/host-runtime/src/diagnostics/crashpad.ts",
+					"packages/host-runtime/src/diagnostics/index.ts",
+					"packages/host-runtime/src/diagnostics/levels.ts",
+					"packages/host-runtime/src/diagnostics/query.ts",
+					"packages/host-runtime/src/diagnostics/redaction.ts",
+					"packages/host-runtime/src/diagnostics/retention.ts",
+					"packages/host-runtime/src/diagnostics/storage.ts",
+					"packages/host-runtime/src/diagnostics/trace.ts",
+					"packages/host-runtime/src/dispatcher.ts",
+					"packages/host-runtime/src/executors/acp-client.ts",
+					"packages/host-runtime/src/executors/acp-executor.ts",
+					"packages/host-runtime/src/executors/codex-adapter.ts",
+					"packages/host-runtime/src/executors/confinement.ts",
+					"packages/host-runtime/src/executors/environment.ts",
+					"packages/host-runtime/src/executors/pi-acp-worker.ts",
+					"packages/host-runtime/src/executors/pi-adapter.ts",
+					"packages/host-runtime/src/executors/router.ts",
+					"packages/host-runtime/src/external-agents/run-service.ts",
+					"packages/host-runtime/src/fsops/service.ts",
+					"packages/host-runtime/src/index.ts",
+					"packages/host-runtime/src/memory/diagnostics.ts",
+					"packages/host-runtime/src/memory/explicit-memory.ts",
+					"packages/host-runtime/src/memory/local-embedding-acquisition.ts",
+					"packages/host-runtime/src/memory/tencentdb-host-adapter.ts",
+					"packages/host-runtime/src/memory/tencentdb-runtime.ts",
+					"packages/host-runtime/src/models/registry.ts",
+					"packages/host-runtime/src/network/native-web-search.ts",
+					"packages/host-runtime/src/network/proxy-config.ts",
+					"packages/host-runtime/src/network/system-proxy.ts",
+					"packages/host-runtime/src/providers/catalog.ts",
+					"packages/host-runtime/src/providers/credential-store.ts",
+					"packages/host-runtime/src/runtime.ts",
+					"packages/host-runtime/src/security/audit-store.ts",
+					"packages/host-runtime/src/security/fs-audit.ts",
+					"packages/host-runtime/src/settings/capabilities.ts",
+					"packages/host-runtime/src/storage/app-settings-store.ts",
+					"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+					"packages/host-runtime/src/storage/companion-storage.ts",
+					"packages/host-runtime/src/storage/database.ts",
+					"packages/host-runtime/src/storage/durable-file-sync.ts",
+					"packages/host-runtime/src/storage/durable-file-transaction.ts",
+					"packages/host-runtime/src/storage/invalidation-hub.ts",
+					"packages/host-runtime/src/storage/layout.ts",
+					"packages/host-runtime/src/storage/schema-sql.ts",
+					"packages/host-runtime/src/storage/schema.ts",
+					"packages/host-runtime/src/system-onboarding-license.ts"
+				]
+			},
+			"delta_lines": 334
+		},
+		"companion_execution": {
+			"before": {
+				"files": 7,
+				"lines": 2314
+			},
+			"after": {
+				"files": 7,
+				"lines": 2423,
+				"paths": [
+					"packages/host-runtime/src/companion/context-pack.ts",
+					"packages/host-runtime/src/companion/core-zod-tools.ts",
+					"packages/host-runtime/src/companion/host-tool-register.ts",
+					"packages/host-runtime/src/companion/pi-live-events.ts",
+					"packages/host-runtime/src/companion/pi-runtime.ts",
+					"packages/host-runtime/src/companion/role-resources.ts",
+					"packages/host-runtime/src/companion/session-catalog.ts"
+				]
+			},
+			"delta_lines": 109
+		},
+		"host_composition_lifecycle": {
+			"before": {
+				"files": 6,
+				"lines": 2888
+			},
+			"after": {
+				"files": 6,
+				"lines": 2807,
+				"paths": [
+					"packages/host-runtime/src/await-source.ts",
+					"packages/host-runtime/src/character-runtime-registry.ts",
+					"packages/host-runtime/src/character-runtime.ts",
+					"packages/host-runtime/src/composition.ts",
+					"packages/host-runtime/src/dispatcher.ts",
+					"packages/host-runtime/src/runtime.ts"
+				]
+			},
+			"delta_lines": -81
+		},
+		"external_runs_executors_artifacts": {
+			"before": {
+				"files": 11,
+				"lines": 5159
+			},
+			"after": {
+				"files": 11,
+				"lines": 5493,
+				"paths": [
+					"packages/host-runtime/src/artifacts/index.ts",
+					"packages/host-runtime/src/artifacts/presentation.ts",
+					"packages/host-runtime/src/executors/acp-client.ts",
+					"packages/host-runtime/src/executors/acp-executor.ts",
+					"packages/host-runtime/src/executors/codex-adapter.ts",
+					"packages/host-runtime/src/executors/confinement.ts",
+					"packages/host-runtime/src/executors/environment.ts",
+					"packages/host-runtime/src/executors/pi-acp-worker.ts",
+					"packages/host-runtime/src/executors/pi-adapter.ts",
+					"packages/host-runtime/src/executors/router.ts",
+					"packages/host-runtime/src/external-agents/run-service.ts"
+				]
+			},
+			"delta_lines": 334
+		},
+		"storage_security": {
+			"before": {
+				"files": 12,
+				"lines": 3753
+			},
+			"after": {
+				"files": 12,
+				"lines": 3747,
+				"paths": [
+					"packages/host-runtime/src/security/audit-store.ts",
+					"packages/host-runtime/src/security/fs-audit.ts",
+					"packages/host-runtime/src/storage/app-settings-store.ts",
+					"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+					"packages/host-runtime/src/storage/companion-storage.ts",
+					"packages/host-runtime/src/storage/database.ts",
+					"packages/host-runtime/src/storage/durable-file-sync.ts",
+					"packages/host-runtime/src/storage/durable-file-transaction.ts",
+					"packages/host-runtime/src/storage/invalidation-hub.ts",
+					"packages/host-runtime/src/storage/layout.ts",
+					"packages/host-runtime/src/storage/schema-sql.ts",
+					"packages/host-runtime/src/storage/schema.ts"
+				]
+			},
+			"delta_lines": -6
+		},
+		"protocol_client": {
+			"before": {
+				"files": 5,
+				"lines": 3288
+			},
+			"after": {
+				"files": 5,
+				"lines": 3437,
+				"paths": [
+					"packages/companion-client/src/client.ts",
+					"packages/companion-client/src/index.ts",
+					"packages/companion-client/src/unwrap.ts",
+					"packages/protocol/src/index.ts",
+					"packages/protocol/src/schema.ts"
+				]
+			},
+			"delta_lines": 149
+		},
+		"ui_execution_projection": {
+			"before": {
+				"files": 9,
+				"lines": 3261
+			},
+			"after": {
+				"files": 10,
+				"lines": 3356,
+				"paths": [
+					"packages/companion-ui/src/lib/pi-event-replay.ts",
+					"packages/companion-ui/src/stores/companion.tsx",
+					"packages/companion-ui/src/stores/conversation-workflows.ts",
+					"packages/companion-ui/src/stores/external-agent-api.ts",
+					"packages/companion-ui/src/stores/ipc.ts",
+					"packages/companion-ui/src/stores/mutation-client.ts",
+					"packages/companion-ui/src/stores/paged-rpc.ts",
+					"packages/companion-ui/src/stores/rpc-query.ts",
+					"packages/companion-ui/src/stores/run-api.ts",
+					"packages/companion-ui/src/stores/window-live.ts"
+				]
+			},
+			"delta_lines": 95
+		},
+		"transports": {
+			"before": {
+				"files": 3,
+				"lines": 946
+			},
+			"after": {
+				"files": 3,
+				"lines": 946,
+				"paths": [
+					"apps/desktop/src/main/ipc-router.ts",
+					"apps/desktop/src/preload/index.cts",
+					"apps/web-dev/server/index.ts"
+				]
+			},
+			"delta_lines": 0
+		},
+		"execution_slice": {
+			"before": {
+				"files": 53,
+				"lines": 21609
+			},
+			"after": {
+				"files": 54,
+				"lines": 22209,
+				"paths": [
+					"apps/desktop/src/main/ipc-router.ts",
+					"apps/desktop/src/preload/index.cts",
+					"apps/web-dev/server/index.ts",
+					"packages/companion-client/src/client.ts",
+					"packages/companion-client/src/index.ts",
+					"packages/companion-client/src/unwrap.ts",
+					"packages/companion-ui/src/lib/pi-event-replay.ts",
+					"packages/companion-ui/src/stores/companion.tsx",
+					"packages/companion-ui/src/stores/conversation-workflows.ts",
+					"packages/companion-ui/src/stores/external-agent-api.ts",
+					"packages/companion-ui/src/stores/ipc.ts",
+					"packages/companion-ui/src/stores/mutation-client.ts",
+					"packages/companion-ui/src/stores/paged-rpc.ts",
+					"packages/companion-ui/src/stores/rpc-query.ts",
+					"packages/companion-ui/src/stores/run-api.ts",
+					"packages/companion-ui/src/stores/window-live.ts",
+					"packages/host-runtime/src/artifacts/index.ts",
+					"packages/host-runtime/src/artifacts/presentation.ts",
+					"packages/host-runtime/src/await-source.ts",
+					"packages/host-runtime/src/character-runtime-registry.ts",
+					"packages/host-runtime/src/character-runtime.ts",
+					"packages/host-runtime/src/companion/context-pack.ts",
+					"packages/host-runtime/src/companion/core-zod-tools.ts",
+					"packages/host-runtime/src/companion/host-tool-register.ts",
+					"packages/host-runtime/src/companion/pi-live-events.ts",
+					"packages/host-runtime/src/companion/pi-runtime.ts",
+					"packages/host-runtime/src/companion/role-resources.ts",
+					"packages/host-runtime/src/companion/session-catalog.ts",
+					"packages/host-runtime/src/composition.ts",
+					"packages/host-runtime/src/dispatcher.ts",
+					"packages/host-runtime/src/executors/acp-client.ts",
+					"packages/host-runtime/src/executors/acp-executor.ts",
+					"packages/host-runtime/src/executors/codex-adapter.ts",
+					"packages/host-runtime/src/executors/confinement.ts",
+					"packages/host-runtime/src/executors/environment.ts",
+					"packages/host-runtime/src/executors/pi-acp-worker.ts",
+					"packages/host-runtime/src/executors/pi-adapter.ts",
+					"packages/host-runtime/src/executors/router.ts",
+					"packages/host-runtime/src/external-agents/run-service.ts",
+					"packages/host-runtime/src/runtime.ts",
+					"packages/host-runtime/src/security/audit-store.ts",
+					"packages/host-runtime/src/security/fs-audit.ts",
+					"packages/host-runtime/src/storage/app-settings-store.ts",
+					"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+					"packages/host-runtime/src/storage/companion-storage.ts",
+					"packages/host-runtime/src/storage/database.ts",
+					"packages/host-runtime/src/storage/durable-file-sync.ts",
+					"packages/host-runtime/src/storage/durable-file-transaction.ts",
+					"packages/host-runtime/src/storage/invalidation-hub.ts",
+					"packages/host-runtime/src/storage/layout.ts",
+					"packages/host-runtime/src/storage/schema-sql.ts",
+					"packages/host-runtime/src/storage/schema.ts",
+					"packages/protocol/src/index.ts",
+					"packages/protocol/src/schema.ts"
+				]
+			},
+			"delta_lines": 600
+		}
+	},
+	"codex_adapter_changed": false,
+	"metrics_note": "Same baseline file sets; HostEventLoop replaced by CharacterRuntimeRegistry, new window-live included. Supporting onboarding pages and tests are outside execution_slice.",
+	"verification": [
+		{
+			"check": "lint",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-lint-final.log",
+			"log_sha256": "d3b078bb0b12b024e01b8a6a0da651d8baa6ab61a4789a642e2a9759c551e064"
+		},
+		{
+			"check": "typecheck",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-typecheck-final.log",
+			"log_sha256": "66346f62db2dc92eff4ccdd5e107b663a96b450d2763b04c77494cf80dece91c"
+		},
+		{
+			"check": "host_coverage",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-host-coverage-final.log",
+			"log_sha256": "b01f75fb90c66f63af9dcf34634b4e4b696c9729c09bee7f4ba9acc76b7a3260",
+			"passed": 634,
+			"skipped": 2,
+			"files": 71,
+			"coverage_percent": {
+				"statements": 79.33,
+				"branches": 69.44,
+				"functions": 80.82,
+				"lines": 82.85
+			}
+		},
+		{
+			"check": "host_delete_notice",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-final-notice-test.log",
+			"log_sha256": "b738c6e90ffd251172c1aa1aa4c109bb71bcbda48a90b3c60467de64a1623ade",
+			"passed": 6
+		},
+		{
+			"check": "host_recovery",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-host-recovery.log",
+			"log_sha256": "8f0b1331491f38279acc92142338fc667d8b7c02538f436f4b6c7ed46afb65ae",
+			"passed": 50
+		},
+		{
+			"check": "desktop_coverage",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-desktop-coverage.log",
+			"log_sha256": "8ae17e07970d6a17a45fc6064417ec5798a4d7a6841f9779e13ffce4eb9414f3",
+			"passed": 207,
+			"files": 23,
+			"coverage_percent": {
+				"statements": 86.18,
+				"branches": 76.08,
+				"functions": 92.93,
+				"lines": 89.52
+			}
+		},
+		{
+			"check": "desktop_recovery",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-desktop-recovery.log",
+			"log_sha256": "a985191d22d559399f4cd42e79b5c3f3679f77c8e89ac9dbe909d53b5db195dd",
+			"passed": 24
+		},
+		{
+			"check": "desktop_build",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-electron-build.log",
+			"log_sha256": "ba1e72649cee87f7041c083a090ba84f3006989f21ccd83b4a3ff40f100dbb4a"
+		},
+		{
+			"check": "desktop_e2e",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-electron-e2e.log",
+			"log_sha256": "c1323d75d6fb15f7ef5172bc6611ede8a5d958d64c645636bc1fe48ccebd2066",
+			"passed": 4
+		},
+		{
+			"check": "web_unit",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-web-unit.log",
+			"log_sha256": "0929d3204b052fa889fa8c5cfc827e00b585f0164c2d5b88c26736428bd4f075",
+			"passed": 13
+		},
+		{
+			"check": "web_build",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-web-build-final.log",
+			"log_sha256": "99ef7faae539dba96326255620f936aac9dc758a6c4898951e417c72fd8128c8"
+		},
+		{
+			"check": "web_required_hosted",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-web-required-final.log",
+			"log_sha256": "2f659e821badfab008ccee9667ce98a603c109fb50aca3980d58cdbdc3065ffa",
+			"passed": 67,
+			"skipped": 2,
+			"profile": "hosted",
+			"excludes": "ux-metrics.spec.ts per existing Playwright config"
+		},
+		{
+			"check": "web_required_full_initial",
+			"status": "failed",
+			"log": "/private/tmp/bear-core-web-required.log",
+			"log_sha256": "2b9644084c4f1d611c0a48fa1273ebfb578ad747a02025dbb2a8b2ecb362b319",
+			"passed": 57,
+			"skipped": 2,
+			"failed": 32,
+			"note": "Initial pre-fixture migration run. Functional failures fixed and verified by hosted rerun. 60-second stream passed. Visual baselines remain out of sync with already committed layout."
+		},
+		{
+			"check": "web_visual_empty",
+			"status": "failed_existing_baseline",
+			"log": "/private/tmp/bear-core-visual.log",
+			"log_sha256": "b99df7c571150cafdf169537b39715f1db05965a166623c7a2a36271e9910608",
+			"failed": 3,
+			"note": "Preparation succeeded; pixel diffs 11-13%."
+		},
+		{
+			"check": "web_visual_run_artifact",
+			"status": "failed_existing_baseline",
+			"log": "/private/tmp/bear-core-visual-run.log",
+			"log_sha256": "25db44f2e88118470a6b0078297b0089716d49d45c8067f348afe7f9c1ef54f0",
+			"failed": 2,
+			"note": "Preparation and result actions succeeded; pixel diff about 12%."
+		},
+		{
+			"check": "scripts_unit",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-scripts-unit.log",
+			"log_sha256": "9ce5eb08ceded513090be3ad7d150fa5ba29b0924404cd41ec4cfb52987c5067",
+			"passed": 24
+		},
+		{
+			"check": "foundation_unit",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-foundation-unit.log",
+			"log_sha256": "1557f70542c182df4484b597ebea18e0df7f59c3d7454234fcd6df98ee8e47d6",
+			"i18n_passed": 12,
+			"tdai_passed": 8
+		},
+		{
+			"check": "live_model_prerequisites",
+			"status": "unconfigured",
+			"log": "/private/tmp/bear-core-live-prerequisites.log",
+			"log_sha256": "53daf79793c0dcd34a6ce7befcb5c868adec56a2506232295b28eff632fb5394",
+			"note": "BEAR_E2E_LIVE_MODEL release harness not configured; no live model verdict claimed."
+		},
+		{
+			"check": "ui_coverage",
+			"status": "passed",
+			"passed": 272,
+			"skipped": 1,
+			"files": 37,
+			"coverage_percent": {
+				"statements": 80.3,
+				"branches": 70.09,
+				"functions": 80.3,
+				"lines": 83.67
+			},
+			"log": "/private/tmp/bear-projection-audit/ui-coverage-final.log",
+			"log_sha256": "b6c1149521f8a2e792e0f945cc87962a7c1c91050743617c79a0b3e8e2bd87e3"
+		},
+		{
+			"check": "final_desktop_and_web_build",
+			"status": "passed",
+			"log": "/private/tmp/bear-core-build-final.log",
+			"log_sha256": "34d321ea398721639468b85015fdf865cd4c4fb23faa7053ec12f12b225aae5a"
+		},
+		{
+			"check": "web_native_after_final_reconnect_fix",
+			"status": "passed",
+			"passed": 18,
+			"log": "/private/tmp/bear-core-web-native-final.log",
+			"log_sha256": "6a742c2eb80d1c86d19951a8953f9aed918d656306a4cb86fbbbac31b0d39bce"
+		},
+		{
+			"check": "protocol_unit",
+			"status": "passed",
+			"log": "/private/tmp/bear-projection-audit/protocol-final.log",
+			"log_sha256": "1b4d9239f01f99e9cd1dd2abd4400e160c0bb27a75c37709dd4f802593de5242",
+			"passed": 18
+		},
+		{
+			"check": "final_projection_packages_typecheck",
+			"status": "passed",
+			"log": "/private/tmp/bear-projection-audit/typecheck-final.log",
+			"log_sha256": "68527cd48ac839606b257c2a5903832c33a118a8453046c6a2e2c26719fd4d81"
+		}
+	],
+	"security_audit": {
+		"status": "blocked_auto_review",
+		"reason": "npm registry dependency metadata outbound requires explicit user authorization",
+		"user_question_pending": true,
+		"dependency_upgrades_performed": false
+	},
+	"visual_baseline_evidence": {
+		"snapshot_commit": "779bf8a",
+		"layout_commit": "75ce217",
+		"artifact_details_commit": "c4fd1a2",
+		"thinking_controls_commit": "42b569c",
+		"snapshots_updated": false,
+		"layout_changed_in_this_branch": false
+	},
+	"release_decision": "not_approved",
+	"release_blockers": [
+		"live model validation unconfigured",
+		"npm security audit and signatures not authorized",
+		"existing visual baselines out of sync",
+		"clean-commit platform packages and packaged smoke not produced"
+	],
+	"unit_summary": {
+		"passed": 1188,
+		"skipped": 3,
+		"note": "Sum of script, i18n, protocol, TDAI, Host, UI, desktop and WebDev unit suites; excludes repeated targeted checks."
+	},
+	"changed_source_manifest": {
+		"apps/desktop/e2e/diagnostics.spec.ts": "63202e7499396faaf7c70eefd7f6c89a9c3bd34a87e625f35348a5cb46113404",
+		"apps/desktop/e2e/helpers.ts": "69c08a3edf8212d4dbac79addc4d2e4c6f2af2185e0d093645bfc9693c8656df",
+		"apps/desktop/playwright.config.ts": "7aef914127cd8eac4b3011cfefb204b4ac6543dee77a8502881a0a4dcdfa0f1e",
+		"apps/promo/src/demo/transport.ts": "4c37a3163be18998be0834410b92c8adb2b43ce53fa4e6ef4844e435bc051aab",
+		"apps/promo/src/renderer.tsx": "faa294ff56092874d648308cef860e0b294044707d6fc24d97298e17f45ec90d",
+		"apps/web-dev/e2e/character-continuity.spec.ts": "72c02985620fb89b8e23074ddfde020fed0e57f86d202185baced7111fc470ed",
+		"apps/web-dev/e2e/chat-journey.spec.ts": "43146704d3f49d9062c863ea3fe05fcb0def8bdce37dece66b6a40f51f0ffeb2",
+		"apps/web-dev/e2e/diagnostics.spec.ts": "8aa45c6459631c2f2ac49ca19c84f3a7cb73119fb9715b7de549619b49a4b1a1",
+		"apps/web-dev/e2e/helpers.ts": "2117ae729d5ef00e099db73e0d9a87cc09398063e6f4bd0d3a5bf412f1bddb6c",
+		"apps/web-dev/e2e/jizhou-character-quality-live.spec.ts": "bcb31b76f4a5e40c52b36e7b365fb3c33a4d3825f18a17c920402a7f6d891ed4",
+		"apps/web-dev/e2e/live-model.spec.ts": "c052a7b55e5c83127dae308807c7b0dfca64ae73abdbd8d12cdb559771164e0c",
+		"apps/web-dev/e2e/multi-character-switching.spec.ts": "b153d0397f2fff3a27fdb0cdc4723dcbdfdf85649c12ef4116ad8260591927c1",
+		"apps/web-dev/e2e/native-projection.spec.ts": "c66b3288da469e89ff7ba1b182e2f90318dfea49a4ff80151573b9280f9e901d",
+		"apps/web-dev/e2e/resource-acceptance.spec.ts": "263aecb85a075799bff68bfe5091d8908ba083b4e8b5599f80ed5bc8b337d845",
+		"apps/web-dev/e2e/rule-provider.spec.ts": "e9877b8cc993a0a3aa508b24ab744e4313e2474c2d9587ae56bde3976cbafce9",
+		"apps/web-dev/e2e/run-artifact.spec.ts": "f6d43f5af41c1baf6967ff74b8d141bc60938e63b4ab77f5c5fb4f981e31081e",
+		"apps/web-dev/e2e/settings.spec.ts": "24787e9e6e0eb624e606dbe0c192fa255e6ad2d303b7e320a5e06009fb00531f",
+		"apps/web-dev/e2e/soak-acceptance.spec.ts": "d25fe0de3273fd529b899fbc71f24dcf178b233c496d7d403f0b08de61b9dcd7",
+		"apps/web-dev/e2e/ux-metrics.spec.ts": "d5a6ec2d34f893575bb6e74d0df14820f2486bd3e63d65c2b2de9ada46e200da",
+		"package-lock.json": "e75ef5bf3206c3b50ab1d44226b431f9c74c2284cc92508bf81dd5e603417a69",
+		"packages/companion-client/src/client.ts": "5442284f1c78851684032fe8c6c191e91998b0f2832d67aa15c81c1578576615",
+		"packages/companion-client/src/index.ts": "f663837ca82b05ee7af02cfb249c5457a9afc457830ade6831220b803c6c2a8b",
+		"packages/companion-ui/src/App.tsx": "47e12da58533c066b73d13b196a64cec0ab7db37642baaa99442367b6370db73",
+		"packages/companion-ui/src/FirstMeeting.tsx": "20b1123811f9b0c21259e5ee9ae6af9c64838ca0bbea8ec20fc4b40cfee9afd2",
+		"packages/companion-ui/src/features/Backstage.tsx": "c78e54df5a7a3e5e073be868518531f1748c8456800cf143cdd78d0f8a0ad3df",
+		"packages/companion-ui/src/features/CurrentRolePackageManager.tsx": "6522e06877c64e2e90eaf18ff6462c9888cbb179e22817df15e6838ea1cbc423",
+		"packages/companion-ui/src/features/RelationshipMemory.tsx": "43ac6bc9440e62caec73df99695ab37ba40ae7a70cddc78a83c48e9b26dd2f8b",
+		"packages/companion-ui/src/stores/backstage-workflows.ts": "20c2e1e1a457832db54f071f505ab942597fa6bc6c47e7606e77dcf300d94557",
+		"packages/companion-ui/src/stores/character-api.ts": "93225e96c2c39dfde55cb83a6faab08a16be59a0f8041fee9d8b1a0fd3fc223f",
+		"packages/companion-ui/src/stores/companion.tsx": "ccf8f1df1b47a90fb1b1ce11910184b5d70d10b72d8af99778cb4f73cc1e0039",
+		"packages/companion-ui/src/stores/external-agent-api.ts": "4277162262cc9c6f6f5b0de834f59919b5d86b66523e06e78c9d297ed7a2a6a2",
+		"packages/companion-ui/src/stores/ipc.ts": "ee89ef471f941408d2a1f0970022b66202ab8a733be5e60d054851fd28ddfe33",
+		"packages/companion-ui/src/stores/model-provider-api.ts": "c17a444ecbe1f778b481ac8b46e8010163c9306dd16fd1234370cd73e34c4cb8",
+		"packages/companion-ui/src/stores/mutation-client.ts": "0fd3daf947208a0fb2e6ce965fe8153fe3d0a128b3e883444f22c3a30692c220",
+		"packages/companion-ui/src/stores/onboarding.ts": "2ecd11f95170fa606a210ee2f9906acf2511f831bf269eff70773fee0d9860c3",
+		"packages/companion-ui/src/stores/paged-rpc.ts": "ec5c47f21e874f8997a3672b49e053772b57d035e9df1fb437090163dbeaf64c",
+		"packages/companion-ui/src/stores/rpc-query.ts": "afc3261cafbf09d288dc7b84529f88b26a658da755b15cfef94d2a14733dba87",
+		"packages/companion-ui/src/stores/run-api.ts": "09cb56a6e3db37576e345ee0f68b52c65e7db0244b310c58baf4e5948873fca5",
+		"packages/companion-ui/src/stores/supplementary-api.ts": "15d679070950e3e1cf66fc2b3c59c2b76f4925280174594f12bb6acc47803b9c",
+		"packages/companion-ui/src/stores/window-live.ts": "6d1048cb13665167c59354ecd063e1f61da31b96874c3c937d967e31553d783f",
+		"packages/companion-ui/tests/backstage-journey.spec.tsx": "255c6a2f0cacd6de1a11449cb12b32e99d6ba61d63ae1dbf95cd641321307599",
+		"packages/companion-ui/tests/character-api.spec.ts": "ff5b68437a0156b4f8b9cc12258e599088ab7f71078ff37f730255525e9f2d4c",
+		"packages/companion-ui/tests/character-deletion-ui.spec.tsx": "e05ddbfed0c259b55b63265d1c12e53d809fdebab1fa23c50d90dda52507a061",
+		"packages/companion-ui/tests/composer.spec.tsx": "797e7b11b48e2ed164b4ff3c1de089b45d434f751cb99a4c4abb4d3117a5b640",
+		"packages/companion-ui/tests/conversation-local-active.spec.ts": "b5c750bdb6c9c6489dcd44d5e4c531a28d226f93f81cf12b5bd38ada862f10e4",
+		"packages/companion-ui/tests/external-agent-settings.spec.tsx": "8317fd98b7e7024252425aaca9a79e284d53bd83b78edc6b2cdeff7acd87f25b",
+		"packages/companion-ui/tests/first-meeting-journey.spec.tsx": "873c93ed8060bafd1ab6bc6e98ad1147c4de89331d20090863f05149e123dff6",
+		"packages/companion-ui/tests/fixtures.ts": "5c2b1dcb7bf0edc7af91b4cea873b96ba8125d12c274014ad04b5dbd05ba3f30",
+		"packages/companion-ui/tests/fork-config.spec.tsx": "029e2f678acf0d0b9f5bd3ff995f6b28afa21c09c8ddbfba228c211c9a6cec32",
+		"packages/companion-ui/tests/generated-client-contract.spec.ts": "ec7976e91bca14a453e8e072aa2fda246101b78c2c95b794f4249c71cd0c0802",
+		"packages/companion-ui/tests/idle-home.spec.tsx": "a5576ddd9c4a0fa28ef24605f110ba70878c4f984fa27ffdd560572393540673",
+		"packages/companion-ui/tests/locale-switch-preserves-store.spec.tsx": "f078dc862a1abf86148255947e6b27aa64681d0c40c11ed15d6e6952fba3708a",
+		"packages/companion-ui/tests/message-versions.spec.tsx": "95c0bd338288d0b6c5a8564568681ede659359016312f7c23c4aacddfc008859",
+		"packages/companion-ui/tests/model-settings-contract.spec.tsx": "91e0e43be0d1e24caaeaa2cc810e28233896fb3d85f6b3a4c77a828e61a2e47d",
+		"packages/companion-ui/tests/network-memory-settings.spec.tsx": "065e0ba355cff2e2195a3013c3299a3ce01a9668fa83bf2ea09487627565a95f",
+		"packages/companion-ui/tests/onboarding-projection.spec.ts": "c099b6d77423559d553ea9962f5bd56f8bf1477badfbbe7019142904038fc9d0",
+		"packages/companion-ui/tests/relationship-memory.spec.tsx": "08ed22cb6b4fef6b7dbeaf97c06348c01f8fb55ead0d29b124a224b81bd53230",
+		"packages/companion-ui/tests/settings-workbench.spec.tsx": "b9d37e5c65b890db6473c0f1ec756ad9b2f2435ea2d070037b122ff2999d8f70",
+		"packages/companion-ui/tests/shell-visual-contract.spec.tsx": "163e2dabe287ef542f0fb5c31c89067072481d6798ea2655eaedf4c7eb6ab302",
+		"packages/companion-ui/tests/tool-activity.spec.tsx": "0f2cc81b28025157d789fff43feb45c20fb8aa1ec5754ff051efe37badf01512",
+		"packages/companion-ui/tests/window-live.spec.ts": "8bde79b84268444d2ffb46302a3987ed23f70d52a3166f339bf6c8744e74b4c2",
+		"packages/host-runtime/package.json": "b5e15dc4c3af256098f73b7e112db35ab909e10a6cbca5099c36999bfb3106a2",
+		"packages/host-runtime/src/artifacts/index.ts": "b0992a4291eeb4b24866a0ebeae474b0d3d2b6be0e3f6a765608a9b2fb56a99e",
+		"packages/host-runtime/src/character-runtime-registry.ts": "5afe5cc1f07f2bc2b86021ad8bef6aa170f029611cc2b8f793163fd31f93ec40",
+		"packages/host-runtime/src/character-runtime.ts": "37c99b6f86a966a254d1427cd961be72a96a0aa0207d0e9ac5bae2d0acf5b17c",
+		"packages/host-runtime/src/companion/character-loader.ts": "efc1d45adad8b3e4199651bf1bf4e671f544f57a17e23af391dd0fb8c8e9e1c3",
+		"packages/host-runtime/src/companion/pi-runtime.ts": "6d9bb974f3bd124f6861d5ba241ebfab0277b5ee548fcb37df0b537486d6ce11",
+		"packages/host-runtime/src/companion/session-catalog.ts": "424069a81121ffedafaab173abff4e148c1d26abdf268ea7cd47edcd0596c2ab",
+		"packages/host-runtime/src/composition.ts": "b434dedd6cbddd93b50623801ae5926a4bdc9ef081006c9b927fcbf932c7fcd8",
+		"packages/host-runtime/src/dispatcher.ts": "b0f80ab0f4f0e15feebf193ca4e9fe17e6a37a39ee1669d074bce65c3384b02a",
+		"packages/host-runtime/src/executors/acp-executor.ts": "8833b78f0ecb2aca06d2b830a9a7aa04176fafc66adc37a842a62651955a0d38",
+		"packages/host-runtime/src/executors/pi-acp-worker.ts": "8f7db3c7487fa5a5a399f4547e44de751fbc6ee8713e724b1b16a4bd538d6866",
+		"packages/host-runtime/src/external-agents/run-service.ts": "e909470e2e253d30154580eec56c6adfcd446d6ed45c84213d70f3ca935d6a3b",
+		"packages/host-runtime/src/host-event-loop.ts": null,
+		"packages/host-runtime/src/models/registry.ts": "8aee43c2b1a2ffa8b167e572dff32ce72f313f7ae119de3eb878bb2ed1b68c40",
+		"packages/host-runtime/src/runtime.ts": "915780de6c41a71fd1859a821de154ca01e51811ecd0ea1649464742fd669218",
+		"packages/host-runtime/src/storage/bootstrap-recovery.ts": "f2b086c9ca36004bd1768a2927d21af6ed3bcee0a03ae9abd6719a2b3a118c75",
+		"packages/host-runtime/src/storage/companion-storage.ts": "3159baa4afef1df5910dc89a7ce1f5a01f83bd6775a53af1481e9bbcee6d1f8f",
+		"packages/host-runtime/src/storage/database.ts": "74d98b0b26a9c8ba5fcbd1fba1127ba1cd150416da53848c39649eca0a866f32",
+		"packages/host-runtime/src/storage/invalidation-hub.ts": "b01331966a8b6f87225ebf11277b2632fdf53b8ff3fbb93e53ca88db7766cb9f",
+		"packages/host-runtime/src/storage/schema-sql.ts": "1005d007ca2d3c07a2b62552c05c9b270e9303f20b514003727623fb76286bc1",
+		"packages/host-runtime/src/storage/schema.ts": "a04d190f7d5dcdd72ea59b999a4ec1ad1aa2993ea399ea653bcbedf4798a8dc8",
+		"packages/host-runtime/tests/acp-executor.spec.ts": "5818188cf2310eee8cc15e122d4e65226789c8448ee73c181c067e5f8646f636",
+		"packages/host-runtime/tests/artifact-integrity.spec.ts": "9bea8fc421db5fc132021bbcc51cdc6dd01ec8b9a8cae62661cfbcff396751fa",
+		"packages/host-runtime/tests/artifact-rpc.spec.ts": "c29ea6fe273e26a17665e6a18ff5aed75855e645dfd021fef140dfb76bb69eb2",
+		"packages/host-runtime/tests/bootstrap-recovery.spec.ts": "9de90b127d94cf2309d3f542f2c6e82604a6608326b9c2b33680ed829e347d02",
+		"packages/host-runtime/tests/canon/service.spec.ts": "470ae869873a64dd21e3f3ff556f83df2749b6d849c1a1adca038a4e9ffccf04",
+		"packages/host-runtime/tests/character-deletion.spec.ts": "2dffb04a0d3391eebf049c207299f8ae47d6c344ea229886057108e1659bc83a",
+		"packages/host-runtime/tests/character-draft.spec.ts": "ebb428e70ec56c9609a0c9bdbbdac632493ea66c71f57e6c2380f7087dc77813",
+		"packages/host-runtime/tests/character-import.spec.ts": "9ad2a6496bf7d094e8e81052232e8d53688eb026c3cfdaba436340cfedf4c8ba",
+		"packages/host-runtime/tests/character-runtime-registry.spec.ts": "c753246a988695853233f2294c72b7beb8eeec6d01cf9016124b3e436face733",
+		"packages/host-runtime/tests/character-state-rpc.spec.ts": "edc2c03528cbcaa5f078399ffc7af55666fb7341c41d217eee8be481d9398850",
+		"packages/host-runtime/tests/companion-storage.spec.ts": "8258710063eb72adf162b1b2ddb78fcaa8988659e885aa7ab8e8bb177852dbdc",
+		"packages/host-runtime/tests/composition-conversation.spec.ts": "e27a580c90c4d4fb3d8f49863b4c796416e51726a9c789678dd8bfa5b0bad331",
+		"packages/host-runtime/tests/database-contract.spec.ts": "e3c9e8bd2b71aea0ae1de7f603815f43ea96c8cadf71f92c750071b53a403b70",
+		"packages/host-runtime/tests/dispatcher.spec.ts": "b01e6f25cfae765e4b7ef63fba077be4a17a5da420382382e818be4c6f9940c5",
+		"packages/host-runtime/tests/executor-ipc-schemas.spec.ts": "644fff66a5ab377eef01e460fb29c28f11470c898a829150d975e96cf3fa61fc",
+		"packages/host-runtime/tests/external-agent-run-service.spec.ts": "c3b70f830cae632b4cc83843e8721c6604f2193a80b0fedad5d627d4049b6984",
+		"packages/host-runtime/tests/host-event-loop.spec.ts": null,
+		"packages/host-runtime/tests/host-scope-registry.spec.ts": "1bd4d3e521c511d971a7ceb27b7eee17bb17e88711a9be2f39ae90cec15dc595",
+		"packages/host-runtime/tests/invalidation-hub.spec.ts": "cbb2baafb150a148a7dfef1f3706462dd24ec5b9b89c6bef08d8e8f969fe06b9",
+		"packages/host-runtime/tests/memory-inspection.spec.ts": "86ff96fac896eb634b3a5de34c776aec0b2ce54903531240b3c4ec5806bc73ae",
+		"packages/host-runtime/tests/model-registry.spec.ts": "695f9dd667c60c21c43262c7ec9f7bc46fb4aae6d143a6d402de035fefb2eaa0",
+		"packages/host-runtime/tests/onboarding.spec.ts": "aac70f7034bb409f103fea1fbdd46a45f3eb664ea3cea0f4e254ecdcd3c33686",
+		"packages/host-runtime/tests/pi-runtime.spec.ts": "70457b69f350df7dedff2997f754bd420a38adc0a3ab6f52fae3180c37fd52f2",
+		"packages/host-runtime/tests/provider-model-sync.spec.ts": "dbeb77a223dcb275bb628a7a52925499873901847ad6f0ed620562f898f42975",
+		"packages/host-runtime/tests/session-catalog.spec.ts": "d30499cd8214d5ed156bd794f1fea0fc5032651e9d295b8a7523835b2014d89b",
+		"packages/i18n/src/locales/en.ts": "1c01dd7bc735536292f812628d6c8363d875c7dfa9435faa9d90ac05455e1e8f",
+		"packages/i18n/src/locales/zh-CN.ts": "e2c74f7ca72e05e6e90998c095e848834695215724c33b20305e0dd38cadf225",
+		"packages/i18n/src/locales/zh-TW.generated.ts": "73dc2309d21ef065376fe22a858906174769230c8805db9da1ee042beafffbf0",
+		"packages/protocol/src/index.ts": "6fccb09bc62c5ded93d01eb9c63a677d148ca20c1add6340dd7ccd1692578058",
+		"packages/protocol/src/schema.ts": "580d07edf687b8d5b9070e11e4d0ba75bbb49d0ba7ea90e30eded08cb420babc",
+		"packages/protocol/tests/schema.spec.ts": "b2196133b3c04bbd06628846aa405d73f3262a04bc59b600fd2a4cce3ab040c1",
+		"scripts/check-rpc-contracts.mjs": "1fb3792c3da339e53dce9918d4d2448a7bd6855e679d8efdb1ad85009f07bad6"
+	},
+	"verification_note": "Working-tree evidence, not a release attestation. Baseline commit plus changed source hashes identifies the reviewed input; no clean release commit or packages claimed.",
+	"verification_complete_for_implementation": true
+}

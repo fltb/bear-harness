@@ -1,4 +1,4 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type { CharacterClient as CompanionClient } from "@bear-harness/companion-client";
 import type { QueryClient } from "@tanstack/solid-query";
 import type {
 	ConfiguredModel,

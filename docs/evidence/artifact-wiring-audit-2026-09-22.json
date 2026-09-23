@@ -1,0 +1,321 @@
+{
+	"date": "2026-09-22",
+	"branch": "codex/execution-core-audit",
+	"baseCommit": "bf3cbfb0d94f39acb54e250695a29a47e176c4c3",
+	"reviewedState": "base plus existing uncommitted core redesign",
+	"productSourceChangesThisAudit": false,
+	"codexExecutionChainModified": false,
+	"releaseApproved": false,
+	"scope": {
+		"moduleCount": 6,
+		"fileCount": 22,
+		"lines": 18076,
+		"countingNote": "Full physical production files, including non-Artifact code; not an Artifact-exclusive LOC or every-line review claim.",
+		"modules": [
+			{
+				"module": "Artifact 存储与呈现",
+				"fileCount": 2,
+				"lines": 925,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/artifacts/index.ts",
+						"lines": 792,
+						"sha256": "b0992a4291eeb4b24866a0ebeae474b0d3d2b6be0e3f6a765608a9b2fb56a99e"
+					},
+					{
+						"path": "packages/host-runtime/src/artifacts/presentation.ts",
+						"lines": 133,
+						"sha256": "821079c8721ceca731ed40e0031d4b156ab98946f3f6079bfd9105e8b6787d2d"
+					}
+				]
+			},
+			{
+				"module": "Run 与执行器",
+				"fileCount": 3,
+				"lines": 2536,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/external-agents/run-service.ts",
+						"lines": 1838,
+						"sha256": "e909470e2e253d30154580eec56c6adfcd446d6ed45c84213d70f3ca935d6a3b"
+					},
+					{
+						"path": "packages/host-runtime/src/executors/pi-adapter.ts",
+						"lines": 146,
+						"sha256": "b1afdb7e91cb32646f03434fce5344e7977c062daf355b15e3a058b4a6dc310f"
+					},
+					{
+						"path": "packages/host-runtime/src/executors/codex-adapter.ts",
+						"lines": 552,
+						"sha256": "22652bc74900a67e0a17ec248f6ae925bafd05b3f4f6649359925fa80543808d"
+					}
+				]
+			},
+			{
+				"module": "Host 装配与会话",
+				"fileCount": 5,
+				"lines": 3636,
+				"files": [
+					{
+						"path": "packages/host-runtime/src/composition.ts",
+						"lines": 1299,
+						"sha256": "b434dedd6cbddd93b50623801ae5926a4bdc9ef081006c9b927fcbf932c7fcd8"
+					},
+					{
+						"path": "packages/host-runtime/src/character-runtime.ts",
+						"lines": 476,
+						"sha256": "37c99b6f86a966a254d1427cd961be72a96a0aa0207d0e9ac5bae2d0acf5b17c"
+					},
+					{
+						"path": "packages/host-runtime/src/companion/host-tool-register.ts",
+						"lines": 433,
+						"sha256": "58a508b19291880eeab65ea898241781cf246fab89af40993aeee6837d7b0347"
+					},
+					{
+						"path": "packages/host-runtime/src/companion/pi-runtime.ts",
+						"lines": 1194,
+						"sha256": "6d9bb974f3bd124f6861d5ba241ebfab0277b5ee548fcb37df0b537486d6ce11"
+					},
+					{
+						"path": "packages/host-runtime/src/companion/session-catalog.ts",
+						"lines": 234,
+						"sha256": "424069a81121ffedafaab173abff4e148c1d26abdf268ea7cd47edcd0596c2ab"
+					}
+				]
+			},
+			{
+				"module": "协议与数据结构",
+				"fileCount": 2,
+				"lines": 3211,
+				"files": [
+					{
+						"path": "packages/protocol/src/schema.ts",
+						"lines": 2734,
+						"sha256": "580d07edf687b8d5b9070e11e4d0ba75bbb49d0ba7ea90e30eded08cb420babc"
+					},
+					{
+						"path": "packages/host-runtime/src/storage/schema.ts",
+						"lines": 477,
+						"sha256": "a04d190f7d5dcdd72ea59b999a4ec1ad1aa2993ea399ea653bcbedf4798a8dc8"
+					}
+				]
+			},
+			{
+				"module": "UI 与客户端投影",
+				"fileCount": 7,
+				"lines": 6313,
+				"files": [
+					{
+						"path": "packages/companion-ui/src/WorkPanel.tsx",
+						"lines": 842,
+						"sha256": "31e51d93a7fb10f77b994e88e4e0c79aaf31427ea6d2f56872809b2f89b8b2a7"
+					},
+					{
+						"path": "packages/companion-ui/src/ConversationPanel.tsx",
+						"lines": 1774,
+						"sha256": "24de1785fa2347763c7de4a7f013653cfde53dbef702671684f2ddc81b988957"
+					},
+					{
+						"path": "packages/companion-ui/src/RunTaskPanel.tsx",
+						"lines": 468,
+						"sha256": "81bc20fba9231261199698fa152bf11c0174c0c53ce2097a588598270651cacf"
+					},
+					{
+						"path": "packages/companion-ui/src/stores/shell-workflows.tsx",
+						"lines": 438,
+						"sha256": "8013a8a0c739ef708bdc9a562f4653d678ed49ef0b2b51953156117c38d711e1"
+					},
+					{
+						"path": "packages/companion-ui/src/stores/companion.tsx",
+						"lines": 2371,
+						"sha256": "ccf8f1df1b47a90fb1b1ce11910184b5d70d10b72d8af99778cb4f73cc1e0039"
+					},
+					{
+						"path": "packages/companion-ui/src/stores/run-api.ts",
+						"lines": 127,
+						"sha256": "09cb56a6e3db37576e345ee0f68b52c65e7db0244b310c58baf4e5948873fca5"
+					},
+					{
+						"path": "packages/companion-ui/src/stores/supplementary-api.ts",
+						"lines": 293,
+						"sha256": "15d679070950e3e1cf66fc2b3c59c2b76f4925280174594f12bb6acc47803b9c"
+					}
+				]
+			},
+			{
+				"module": "桌面与 Web 入口",
+				"fileCount": 3,
+				"lines": 1455,
+				"files": [
+					{
+						"path": "apps/desktop/src/main/artifact-presenter.ts",
+						"lines": 244,
+						"sha256": "3a90d46e8f008c5d36f809b5bec21b8b4b3468e95c3951ef236bbd1a7e8c687d"
+					},
+					{
+						"path": "apps/desktop/src/main/index.ts",
+						"lines": 630,
+						"sha256": "df8401059c0c9791bb84a8d191ac63ef4e22e723f2d51fe0e96960cb4c303b9f"
+					},
+					{
+						"path": "apps/web-dev/server/index.ts",
+						"lines": 581,
+						"sha256": "6ad71b592aa49e452dcbafad7d1056b51c9e5b683164c9275cbc70936f2f70d5"
+					}
+				]
+			}
+		]
+	},
+	"findings": [
+		{
+			"id": "A1",
+			"priority": "P2",
+			"title": "空会话/角色作用域保留旧 Artifact 选择",
+			"evidenceLevel": "source-and-existing-fixture",
+			"source": {
+				"path": "packages/companion-ui/src/stores/shell-workflows.tsx",
+				"line": 240
+			},
+			"fixed": false
+		},
+		{
+			"id": "A2",
+			"priority": "P2",
+			"title": "历史 Run 文件标签切换丢失 Run 详情来源",
+			"evidenceLevel": "source-call-chain",
+			"source": {
+				"path": "packages/companion-ui/src/stores/shell-workflows.tsx",
+				"line": 277
+			},
+			"fixed": false
+		},
+		{
+			"id": "A3",
+			"priority": "P2",
+			"title": "分块读取间保存状态变化误报文件损坏",
+			"evidenceLevel": "actual-function-reproduction",
+			"source": {
+				"path": "packages/companion-ui/src/WorkPanel.tsx",
+				"line": 94
+			},
+			"fixed": false
+		},
+		{
+			"id": "A4",
+			"priority": "P2",
+			"title": "保存后缺少元数据失效通知",
+			"evidenceLevel": "source-call-chain",
+			"source": {
+				"path": "packages/host-runtime/src/composition.ts",
+				"line": 1278
+			},
+			"fixed": false
+		},
+		{
+			"id": "A5",
+			"priority": "P2",
+			"title": "冷范围读取同步完整校验阻塞 Host",
+			"evidenceLevel": "isolated-runtime-reproduction",
+			"source": {
+				"path": "packages/host-runtime/src/artifacts/index.ts",
+				"line": 571
+			},
+			"fixed": false
+		},
+		{
+			"id": "A6",
+			"priority": "P2",
+			"title": "部分捕获失败首次交付与重试附件不一致",
+			"evidenceLevel": "isolated-runtime-reproduction",
+			"source": {
+				"path": "packages/host-runtime/src/external-agents/run-service.ts",
+				"line": 458
+			},
+			"fixed": false
+		},
+		{
+			"id": "A7",
+			"priority": "P2",
+			"title": "历史结果消息缺少 Run 详情补查",
+			"evidenceLevel": "source-call-chain",
+			"source": {
+				"path": "packages/companion-ui/src/ConversationPanel.tsx",
+				"line": 849
+			},
+			"fixed": false
+		}
+	],
+	"unwiredCapabilities": [
+		"manifest safe product projection",
+		"adoption product semantics and RPC/UI",
+		"orphan CAS/temp maintenance GC"
+	],
+	"validation": {
+		"toolchain": "fnm exec --using=.nvmrc",
+		"host": {
+			"files": [
+				"packages/host-runtime/tests/artifact-rpc.spec.ts",
+				"packages/host-runtime/tests/artifact-integrity.spec.ts"
+			],
+			"passed": 22,
+			"logTail": " v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime\n\n\n Test Files  2 passed (2)\n      Tests  22 passed (22)\n   Start at  23:41:04\n   Duration  689ms (transform 148ms, setup 0ms, import 596ms, tests 396ms, environment 0ms)\n\n"
+		},
+		"desktop": {
+			"files": ["apps/desktop/tests/artifact-presenter.spec.ts"],
+			"passed": 16,
+			"logTail": " v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/apps/desktop\n\n\n Test Files  1 passed (1)\n      Tests  16 passed (16)\n   Start at  23:41:04\n   Duration  149ms (transform 18ms, setup 0ms, import 27ms, tests 56ms, environment 0ms)\n\n"
+		},
+		"ui": {
+			"files": [
+				"packages/companion-ui/tests/run-api.spec.ts",
+				"packages/companion-ui/tests/shell-visual-contract.spec.tsx",
+				"packages/companion-ui/tests/work-panel.spec.tsx"
+			],
+			"passed": 34,
+			"failed": 0,
+			"success": true
+		},
+		"totalPassed": 72,
+		"reproductions": [
+			{
+				"check": "cold-range-read",
+				"fileMiB": 64,
+				"returnedBytes": 1,
+				"elapsedMs": 23.884457999999995,
+				"warmElapsedMs": 0.26350000000002183,
+				"timerStateBeforeYield": false,
+				"timerFired": true,
+				"timerDelayMs": 25.51370800000001
+			},
+			{
+				"check": "partial-capture-delivery",
+				"firstProjected": ["a.txt"],
+				"attempts": [
+					{
+						"status": "failed",
+						"outputs": []
+					},
+					{
+						"status": "failed",
+						"outputs": ["a.txt"]
+					}
+				]
+			},
+			{
+				"check": "mutable-status-between-chunks",
+				"execution": "read-only extraction of actual readArtifactBytes/artifactIssue functions",
+				"unchangedStatus": "success",
+				"statusChange": "verified -> saved",
+				"error": "artifact_metadata_changed_during_read",
+				"uiIssue": "corrupted",
+				"realMultiWindowE2E": false
+			}
+		],
+		"limits": [
+			"Existing tests omit these combinations; A1 fixture preserves obsolete behavior.",
+			"64 MiB timing is a local microbenchmark, not a performance acceptance result.",
+			"No new complete browser, live-model, packaged, or release validation.",
+			"Security audit deferred by user."
+		]
+	}
+}

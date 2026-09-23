@@ -69,9 +69,11 @@ class PiAcpAgent {
 
 	async initialize(_params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
 		return {
+			_meta: { steering: { supported: true } },
 			protocolVersion: acp.PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
+				sessionCapabilities: { resume: {} },
 				promptCapabilities: { image: false, audio: false, embeddedContext: false },
 				_meta: { bearNativeShutdown: true },
 			},
@@ -86,10 +88,26 @@ class PiAcpAgent {
 		return pending;
 	}
 
-	private async openSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+	async resumeSession(params: acp.ResumeSessionRequest): Promise<acp.ResumeSessionResponse> {
+		if (this.shutdownOperation) throw new Error("pi_worker_shutting_down");
+		if (this.sessions.has(params.sessionId)) throw new Error("pi_worker_session_already_open");
+		const pending = this.openSession(
+			{ ...params, mcpServers: params.mcpServers ?? [] },
+			params.sessionId,
+		).finally(() => this.creating.delete(pending));
+		this.creating.add(pending);
+		await pending;
+		return {};
+	}
+
+	private async openSession(
+		params: acp.NewSessionRequest,
+		restoreId?: string,
+	): Promise<acp.NewSessionResponse> {
 		if (!isAbsolute(params.cwd)) throw new Error("ACP session cwd must be absolute");
-		const id = crypto.randomUUID();
-		const agent = await this.createPiSession(params.cwd, id);
+		const id = restoreId ?? crypto.randomUUID();
+		if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("pi_worker_session_id_invalid");
+		const agent = await this.createPiSession(params.cwd, id, Boolean(restoreId));
 		const session: PiSession = {
 			agent,
 			context: null,
@@ -141,12 +159,16 @@ class PiAcpAgent {
 			const last = session.agent.state.messages.findLast((message) => message.role === "assistant");
 			if (
 				last?.role === "assistant" &&
-				(last.stopReason === "error" || (last.stopReason === "aborted" && !session.cancelled))
+				!session.cancelled &&
+				(last.stopReason === "error" || last.stopReason === "aborted")
 			)
 				throw new Error("pi_worker_turn_failed");
 			if (session.updateError) throw new Error("pi_worker_evidence_delivery_failed");
 			return {
 				stopReason: session.cancelled && last?.stopReason !== "stop" ? "cancelled" : "end_turn",
+				// The native terminal response, not accumulated progress chunks, is
+				// authoritative for the result delivered back to the conversation.
+				_meta: { bearFinalResponse: last?.role === "assistant" ? extractText(last) : "" },
 			};
 		} catch (error) {
 			await Promise.all(session.pendingUpdates);
@@ -204,7 +226,7 @@ class PiAcpAgent {
 		return { outcome: "injected" };
 	}
 
-	private async createPiSession(cwd: string, id: string): Promise<AgentSession> {
+	private async createPiSession(cwd: string, id: string, restoring = false): Promise<AgentSession> {
 		const runDir = resolve(sessionDir, id);
 		mkdirSync(runDir, { recursive: true });
 		const shellPath = process.env.BEAR_PI_SHELL_PATH;
@@ -228,13 +250,17 @@ class PiAcpAgent {
 			...(shellPath ? { shellPath } : {}),
 		});
 		const runtime = await this.runtime;
+		const saved = restoring ? await SessionManager.list(cwd, runDir) : [];
+		if (restoring && saved.length !== 1) throw new Error("pi_worker_session_unavailable");
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: runDir,
 			modelRuntime: runtime,
 			settingsManager: settings,
 			resourceLoader: resources,
-			sessionManager: SessionManager.create(cwd, runDir),
+			sessionManager: restoring
+				? SessionManager.open(saved[0]!.path, runDir, cwd)
+				: SessionManager.create(cwd, runDir),
 		});
 		if (!(await selectConfiguredModel(runtime, session))) {
 			session.dispose();
@@ -292,8 +318,8 @@ class PiAcpAgent {
 				| undefined;
 			if (message?.role === "assistant") {
 				if (
-					message.stopReason === "error" ||
-					(message.stopReason === "aborted" && !session.cancelled)
+					!session.cancelled &&
+					(message.stopReason === "error" || message.stopReason === "aborted")
 				) {
 					update = {
 						sessionUpdate: "agent_message_chunk",
@@ -450,6 +476,7 @@ acp
 	.agent({ name: "bear-pi-worker" })
 	.onRequest(acp.methods.agent.initialize, (ctx) => agent.initialize(ctx.params))
 	.onRequest(acp.methods.agent.session.new, (ctx) => agent.newSession(ctx.params))
+	.onRequest(acp.methods.agent.session.resume, (ctx) => agent.resumeSession(ctx.params))
 	.onRequest(acp.methods.agent.session.prompt, (ctx) => agent.prompt(ctx.params, ctx.client))
 	.onNotification(acp.methods.agent.session.cancel, (ctx) => agent.cancel(ctx.params))
 	.onRequest(

@@ -14,6 +14,7 @@ export interface ConfinableProcessSpec {
 	env: NodeJS.ProcessEnv;
 	readOnlyPaths?: readonly string[];
 	writablePaths?: readonly string[];
+	executablePaths?: readonly string[];
 }
 
 export interface ConfinedProcessCommand {
@@ -76,21 +77,7 @@ const LINUX_SYSTEM_READ_PATHS = [
 	"/run/systemd/resolve",
 ] as const;
 const DEFAULT_BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/bin/bwrap"] as const;
-const WRITABLE_ENVIRONMENT_PATHS = [
-	"BEAR_OUTPUT_DIR",
-	"BEAR_PI_SESSION_DIR",
-	"CODEX_HOME",
-	"HOME",
-	"TMPDIR",
-	"TMP",
-	"TEMP",
-] as const;
-const READ_ONLY_ENVIRONMENT_PATHS = ["BEAR_PI_AUTH_DIR"] as const;
-const EXECUTABLE_ENVIRONMENT_PATHS = [
-	"CODEX_PATH",
-	"BEAR_CODEX_CODE_MODE_HOST_PATH",
-	"BEAR_PI_SHELL_PATH",
-] as const;
+const WRITABLE_ENVIRONMENT_PATHS = ["BEAR_OUTPUT_DIR", "HOME", "TMPDIR", "TMP", "TEMP"] as const;
 
 function failInvalidPath(): never {
 	throw { kind: "validation_failed", reason: "executor_confinement_path_invalid" };
@@ -171,15 +158,6 @@ function confinementPaths(spec: ConfinableProcessSpec): {
 	writable: AllowedPath[];
 	executables: AllowedPath[];
 } {
-	const declaredHome = spec.env.HOME;
-	const declaredCodexHome = spec.env.CODEX_HOME;
-	if (
-		declaredCodexHome &&
-		(!declaredHome ||
-			!isWithin(validatePath(declaredCodexHome, false), validatePath(declaredHome, false)))
-	) {
-		failInvalidPath();
-	}
 	const writableCandidates = uniquePaths([
 		// cwd is the Host-created private Run workspace, never a declared input.
 		spec.cwd,
@@ -187,16 +165,14 @@ function confinementPaths(spec: ConfinableProcessSpec): {
 		...(spec.writablePaths ?? []),
 	]).map((path) => validatePath(path, true));
 	const command = validatePath(spec.command, false);
-	const executableCandidates = uniquePaths([
-		command,
-		...envPaths(spec.env, EXECUTABLE_ENVIRONMENT_PATHS),
-	]).map((path) => validatePath(path, false));
+	const executableCandidates = uniquePaths([command, ...(spec.executablePaths ?? [])]).map((path) =>
+		validatePath(path, false),
+	);
 	const executables = uniquePaths(executableCandidates.flatMap(runtimeExecutablePaths)).map(
 		(path) => allowedPath(validatePath(path, false)),
 	);
 	const readOnly = uniquePaths([
 		...runtimeArgumentPaths(spec.args),
-		...envPaths(spec.env, READ_ONLY_ENVIRONMENT_PATHS),
 		...(spec.readOnlyPaths ?? []),
 		...executables.map(({ path }) => path),
 	]).map((path) => allowedPath(validatePath(path, false)));

@@ -315,7 +315,6 @@ describe("external-agent result delivery", () => {
 				summary: "The top-level name is `bear-harness`.",
 				artifacts: [],
 			},
-			outputs: [],
 		});
 
 		expect(message).toContain("run-1");

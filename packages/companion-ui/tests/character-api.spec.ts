@@ -1,3 +1,4 @@
+import { bindCharacterClient } from "@bear-harness/companion-client";
 import { QueryClient } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
 import { createRoot, createSignal } from "solid-js";
@@ -234,7 +235,7 @@ describe("canon store API", () => {
 		createRoot((dispose) => {
 			disposals.push(dispose);
 			api = createCanonApi({
-				client,
+				client: bindCharacterClient(client, characterSummary.id),
 				queryClient,
 				cacheRevision,
 				currentCharacterId: () => characterSummary.id,
@@ -257,11 +258,13 @@ describe("canon store API", () => {
 		await api.listSources();
 		await api.addSource("STORY.md", "Once upon a time");
 		expect(client.canon.addSource).toHaveBeenCalledWith({
+			characterId: characterSummary.id,
 			logicalName: "STORY.md",
 			content: "Once upon a time",
 		});
 		expect(await api.search("opening")).toEqual([chunk]);
 		expect(client.canon.search).toHaveBeenCalledWith({
+			characterId: characterSummary.id,
 			query: "opening",
 		});
 		await api.removeSource(source.id);
@@ -276,6 +279,7 @@ describe("canon store API", () => {
 		};
 		await api.upsertModule(upsert);
 		expect(client.canon.upsertModule).toHaveBeenCalledWith({
+			characterId: characterSummary.id,
 			...upsert,
 		});
 		await api.deleteModule(module.id);
@@ -297,7 +301,7 @@ describe("canon store API", () => {
 		createRoot((dispose) => {
 			disposals.push(dispose);
 			api = createCanonApi({
-				client,
+				client: bindCharacterClient(client, characterSummary.id),
 				queryClient,
 				cacheRevision: vi.fn(() => 0),
 				currentCharacterId: () => undefined,

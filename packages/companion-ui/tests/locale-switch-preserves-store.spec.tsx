@@ -2,6 +2,7 @@ import { I18nextProvider, i18n } from "@bear-harness/i18n";
 import { en, zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createCompanionStore } from "../src/stores/companion.js";
@@ -87,10 +88,10 @@ function loadedClient() {
 			},
 		}),
 	);
-	fixture.client.conversation.activeGet = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: { activeConversation: activeProjection } }),
+	fixture.client.conversation.open = vi.fn(() =>
+		Promise.resolve({ ok: true as const, data: activeProjection }),
 	);
-	fixture.client.conversation.select = vi.fn(() => fixture.client.conversation.activeGet({}));
+
 	return fixture.client;
 }
 
@@ -102,6 +103,9 @@ describe("locale switching stability", () => {
 	it("keeps the conversation projection when the language changes", async () => {
 		const client = loadedClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
 		await within(thread).findByText("必须保留的记忆测试消息");
@@ -116,7 +120,7 @@ describe("locale switching stability", () => {
 		await waitFor(() => expect(screen.queryByRole("status", { name: "Loading" })).toBeNull());
 	});
 
-	it("is keyed by client: same client is stable, different clients are isolated", async () => {
+	it("isolates window-local selection even when windows share one client", async () => {
 		const clientA = createTestClient().client;
 		const clientB = createTestClient().client;
 
@@ -137,16 +141,16 @@ describe("locale switching stability", () => {
 		};
 
 		capture(() => {
-			first = createCompanionStore(clientA);
+			first = createCompanionStore(clientA, "test-character");
 		});
 		capture(() => {
-			second = createCompanionStore(clientA);
+			second = createCompanionStore(clientA, "test-character");
 		});
-		expect(second).toBe(first);
+		expect(second).not.toBe(first);
 
 		let other: ReturnType<typeof createCompanionStore> | undefined;
 		capture(() => {
-			other = createCompanionStore(clientB);
+			other = createCompanionStore(clientB, "test-character");
 		});
 		expect(other).not.toBe(first);
 	});

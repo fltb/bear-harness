@@ -97,7 +97,7 @@ describe("ACP process confinement", () => {
 		const { root, spec } = fixture();
 		const helper = join(root, "codex-code-mode-host");
 		copyFileSync("/usr/bin/true", helper);
-		spec.env.BEAR_CODEX_CODE_MODE_HOST_PATH = helper;
+		spec.executablePaths = [helper];
 		const profile = createMacOSSandboxProfile(spec);
 		const executeSection = profile.slice(
 			profile.indexOf("(allow process-exec"),
@@ -170,19 +170,15 @@ describe("ACP process confinement", () => {
 		).toEqual({ kind: "validation_failed", reason: "executor_confinement_path_invalid" });
 	});
 
-	it("rejects a CODEX_HOME grant outside the isolated HOME", () => {
+	it("does not turn provider environment paths into filesystem grants", () => {
 		const { root, spec } = fixture();
-		const canonicalCodexHome = join(root, "canonical-codex-home");
-		mkdirSync(canonicalCodexHome);
-
-		expect(
-			thrownBy(() =>
-				createMacOSSandboxProfile({
-					...spec,
-					env: { ...spec.env, CODEX_HOME: canonicalCodexHome },
-				}),
-			),
-		).toEqual({ kind: "validation_failed", reason: "executor_confinement_path_invalid" });
+		const canonicalHome = join(root, "provider-home");
+		mkdirSync(canonicalHome);
+		const profile = createMacOSSandboxProfile({
+			...spec,
+			env: { ...spec.env, CODEX_HOME: canonicalHome, CUSTOM_HOME: canonicalHome },
+		});
+		expect(profile).not.toContain(JSON.stringify(canonicalHome));
 	});
 
 	it("rejects writable roots inside snapshots before creating them", () => {
@@ -359,6 +355,7 @@ process.stdout.write(JSON.stringify(result));\n`,
 					UNRELATED_HOME_FILE: unrelatedHomeFile,
 					SIBLING_TEMP_FILE: siblingTempFile,
 				},
+				writablePaths: [session],
 			};
 			const confined = applyProcessConfinement(childSpec);
 			const result = spawnSync(confined.command, confined.args, {

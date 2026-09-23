@@ -36,8 +36,10 @@ export interface RunWorkflowState extends WorkflowActionState {
 }
 
 export interface SelectedArtifact {
-	readonly run: RunInfo;
-	readonly artifact: RunInfo["artifacts"][number];
+	readonly characterId: string;
+	readonly conversationId: string;
+	readonly runId: string;
+	readonly artifactId: string;
 }
 
 export interface ShellWorkflowStore {
@@ -69,9 +71,9 @@ export interface ShellWorkflowStore {
 	closeTask(): void;
 	readonly activeRuns: Accessor<RunInfo[]>;
 	readonly runGroups: Accessor<Readonly<Record<string, RunInfo[]>>>;
-	readonly selectedArtifact: Accessor<SelectedArtifact | undefined>;
-	selectArtifact(runId: string, artifactId: string): void;
-	openRunArtifact(run: RunInfo, artifactId: string): Promise<void>;
+	readonly selectedArtifact: Accessor<SelectedArtifact | null>;
+	selectArtifact(artifactId: string): void;
+	openRunArtifact(run: Pick<RunInfo, "id" | "conversationId">, artifactId: string): Promise<void>;
 	requestRunAgain(run: RunInfo, instruction: string): Promise<void>;
 	closeArtifact(): void;
 	permissionsForRun(runId: string): Accessor<RunPermissionRequest[]>;
@@ -237,65 +239,48 @@ export function createShellWorkflowStore(input: {
 		}
 		return groups;
 	});
-	// Query refreshes may briefly expose no active detail. Preserve the last
-	// concrete UI scope through that loading gap, but replace it when another
-	// character or conversation is explicitly active.
-	const artifactConversationId = createMemo<string | undefined>((previous) => {
-		const conversationId = store.activeConversationId;
-		return conversationId ?? previous;
-	});
-	// Recreate only presentation selection when its concrete UI scope changes.
+	// Selection belongs to one explicit window scope, including an empty conversation.
 	const artifactSelection = createMemo(() => {
-		const conversationId = artifactConversationId();
-		const [selected, setSelected] = createSignal<{
-			runId: string;
-			artifactId: string;
-			run?: RunInfo;
-		}>();
-		return { conversationId, selected, setSelected };
+		const characterId = store.selectedCharacterId;
+		const conversationId = store.activeConversationId;
+		const [selected, setSelected] = createSignal<SelectedArtifact | null>(null);
+		return { characterId, conversationId, selected, setSelected };
 	});
-	const selectedArtifact = createMemo<SelectedArtifact | undefined>(() => {
-		const scope = artifactSelection();
-		const selection = scope.selected();
-		if (!selection) return undefined;
-		const currentRun = (store.runs ?? []).find(
-			(candidate) =>
-				candidate.id === selection.runId && candidate.conversationId === scope.conversationId,
-		);
-		const currentArtifact = currentRun?.artifacts.find(
-			(candidate) => candidate.id === selection.artifactId,
-		);
-		if (currentRun && currentArtifact) return { run: currentRun, artifact: currentArtifact };
-		const openedRun =
-			selection.run?.conversationId === scope.conversationId ? selection.run : undefined;
-		const openedArtifact = openedRun?.artifacts.find(
-			(candidate) => candidate.id === selection.artifactId,
-		);
-		return openedRun && openedArtifact ? { run: openedRun, artifact: openedArtifact } : undefined;
-	});
+	const selectedArtifact = () => artifactSelection().selected();
 	let artifactNavigation = 0;
-	const selectArtifact = (runId: string, artifactId: string) => {
+	const selectArtifact = (artifactId: string) => {
 		artifactNavigation++;
-		artifactSelection().setSelected({ runId, artifactId });
+		artifactSelection().setSelected((selection) =>
+			selection ? { ...selection, artifactId } : null,
+		);
 	};
 	const closeArtifact = () => {
 		artifactNavigation++;
-		artifactSelection().setSelected(undefined);
+		artifactSelection().setSelected(null);
 	};
-	const navigateToRun = async (run: RunInfo) => {
-		const characterId = character()?.id;
+	const navigateToRun = async (run: Pick<RunInfo, "conversationId">) => {
+		const characterId = store.selectedCharacterId;
 		if (store.activeConversationId !== run.conversationId)
 			await store.selectConversation(run.conversationId);
-		if (character()?.id !== characterId || store.activeConversationId !== run.conversationId)
+		if (
+			store.selectedCharacterId !== characterId ||
+			store.activeConversationId !== run.conversationId
+		)
 			throw new Error("run_conversation_changed");
 	};
-	const openRunArtifact = async (run: RunInfo, artifactId: string) => {
-		if (!run.artifacts.some((artifact) => artifact.id === artifactId))
-			throw new Error("run_artifact_not_found");
+	const openRunArtifact = async (
+		run: Pick<RunInfo, "id" | "conversationId">,
+		artifactId: string,
+	) => {
 		const navigation = ++artifactNavigation;
 		await navigateToRun(run);
 		if (navigation !== artifactNavigation) return;
-		artifactSelection().setSelected({ runId: run.id, artifactId, run });
+		artifactSelection().setSelected({
+			characterId: store.selectedCharacterId,
+			conversationId: run.conversationId,
+			runId: run.id,
+			artifactId,
+		});
 		setQueueOpen(false);
 	};
 	const requestRunAgain = async (run: RunInfo, instruction: string) => {

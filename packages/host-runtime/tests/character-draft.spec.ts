@@ -203,7 +203,7 @@ describe("character package drafts", () => {
 		}
 	});
 
-	it("validates and publishes a binary-safe package revision, then activates that character", async () => {
+	it("validates and publishes a binary-safe package revision, without changing another character selection", async () => {
 		const runtime = await createRuntime();
 		try {
 			const created = await runtime.dispatch("character.draftCreate", {
@@ -238,7 +238,9 @@ describe("character package drafts", () => {
 				ok: true,
 				data: { draft: { status: "published" }, character: { id: "workshop-published" } },
 			});
-			await expect(runtime.dispatch("character.get", {})).resolves.toMatchObject({
+			await expect(
+				runtime.dispatch("character.get", { characterId: "workshop-published" }),
+			).resolves.toMatchObject({
 				data: { character: { id: "workshop-published" } },
 			});
 		} finally {

@@ -9,10 +9,13 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { RunSteerResponse } from "@bear-harness/protocol";
+import { type AcpDialect, type AcpExtensions, standardAcpDialect } from "./acp-dialect.js";
 import { applyProcessConfinement, type ConfinableProcessSpec } from "./confinement.js";
 
 export interface AcpProcessSpec extends ConfinableProcessSpec {
 	args: string[];
+	dialect?: AcpDialect;
+	authMethodId?: string;
 }
 
 export interface AcpPermissionRequest {
@@ -50,9 +53,6 @@ type PendingPermission = {
 	resolve: (response: acp.RequestPermissionResponse) => void;
 };
 
-/** codex-acp extension method that steers a live session (`_session/steering`). */
-const SESSION_STEERING_METHOD = "_session/steering";
-const SHUTDOWN_METHOD = "_bear/shutdown";
 const PROCESS_STOP_TIMEOUT_MS = 2_000;
 const NATIVE_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -81,7 +81,8 @@ export class AcpRunClient {
 	private stopped = false;
 	private permissionSequence = 0;
 	private stopping: Promise<void> | null = null;
-	private nativeShutdownRequired = false;
+	private extensions: AcpExtensions = {};
+	private initialized?: acp.InitializeResponse;
 	private nativeShutdown: Promise<unknown> | null = null;
 	private processExitObserved = false;
 	private readonly pendingPermissions = new Map<string, PendingPermission>();
@@ -116,7 +117,27 @@ export class AcpRunClient {
 		return "unknown";
 	}
 
-	async start(): Promise<void> {
+	get capabilities() {
+		return {
+			loadSession: this.initialized?.agentCapabilities?.loadSession === true,
+			resume: Boolean(this.initialized?.agentCapabilities?.sessionCapabilities?.resume),
+			steer: Boolean(this.extensions.steeringMethod),
+		};
+	}
+	get connectionInfo() {
+		return {
+			protocolVersion: this.initialized?.protocolVersion ?? acp.PROTOCOL_VERSION,
+			name: this.initialized?.agentInfo?.name ?? "ACP worker",
+			version: this.initialized?.agentInfo?.version ?? "",
+			authenticated: this.sessionId !== null,
+			authMethods: (this.initialized?.authMethods ?? []).map((method) => ({
+				id: method.id,
+				name: method.name,
+			})),
+			capabilities: this.capabilities,
+		};
+	}
+	async start(options: { sessionId?: string } = {}): Promise<void> {
 		if (this.connection) throw new Error("ACP run client already started");
 		if (this.stopped) throw { kind: "conflict", reason: "executor_not_running" };
 
@@ -168,31 +189,67 @@ export class AcpRunClient {
 		const app = this.createClientApp();
 		this.connection = app.connect(acp.ndJsonStream(input, output));
 
+		let startupTimedOut = false;
+		const startupTimer = setTimeout(() => {
+			startupTimedOut = true;
+			void this.stop().catch(() => undefined);
+		}, 30_000);
 		try {
 			const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
 				protocolVersion: acp.PROTOCOL_VERSION,
 				clientCapabilities: this.clientCapabilities(),
 				clientInfo: { name: "bear-harness", title: "Bear Harness", version: "1.0.0" },
 			});
-			this.nativeShutdownRequired =
-				initialized.agentCapabilities?._meta?.bearNativeShutdown === true;
+			this.initialized = initialized;
+			this.extensions = (this.spec.dialect ?? standardAcpDialect).extensions(initialized);
 			if (initialized.protocolVersion !== acp.PROTOCOL_VERSION) {
 				throw new Error(`ACP version mismatch: agent selected ${initialized.protocolVersion}`);
 			}
 			if (this.stopped || !this.connection) throw new Error("ACP startup cancelled");
-			const session = await this.connection.agent.request(acp.methods.agent.session.new, {
-				cwd: this.spec.cwd,
-				mcpServers: [],
-			});
+			if (this.spec.authMethodId) {
+				if (!(initialized.authMethods ?? []).some((method) => method.id === this.spec.authMethodId))
+					throw { kind: "unavailable", reason: "runner_auth_method_unavailable" };
+				await this.connection.agent.request(acp.methods.agent.authenticate, {
+					methodId: this.spec.authMethodId,
+				});
+			}
+			if (options.sessionId) {
+				const params = { sessionId: options.sessionId, cwd: this.spec.cwd, mcpServers: [] };
+				this.sessionId = options.sessionId;
+				if (this.capabilities.resume)
+					await this.connection.agent.request(acp.methods.agent.session.resume, params);
+				else if (this.capabilities.loadSession)
+					await this.connection.agent.request(acp.methods.agent.session.load, params);
+				else throw { kind: "unavailable", reason: "runner_recovery_unsupported" };
+				this.sessionId = options.sessionId;
+			} else {
+				const session = await this.connection.agent.request(acp.methods.agent.session.new, {
+					cwd: this.spec.cwd,
+					mcpServers: [],
+				});
+				this.sessionId = session.sessionId;
+			}
 			if (this.stopped) throw new Error("ACP startup cancelled");
-			this.sessionId = session.sessionId;
-		} catch {
+		} catch (error) {
 			try {
 				await this.stop();
 			} catch {
 				throw { kind: "unavailable", reason: "acp_process_release_failed" };
 			}
+			if (startupTimedOut) throw { kind: "unavailable", reason: "runner_startup_timeout" };
+			if (
+				error &&
+				typeof error === "object" &&
+				"reason" in error &&
+				typeof error.reason === "string" &&
+				error.reason.startsWith("runner_")
+			)
+				throw error;
+			if (error && typeof error === "object" && "code" in error && error.code === -32000)
+				throw { kind: "unavailable", reason: "runner_authentication_required" };
 			throw { kind: "unavailable", reason: "acp_start_failed" };
+		} finally {
+			clearTimeout(startupTimer);
 		}
 	}
 
@@ -209,9 +266,11 @@ export class AcpRunClient {
 	async steerTurn(instruction: string): Promise<RunSteerResponse> {
 		const connection = this.requireConnection();
 		const sessionId = this.requireSessionId();
+		if (!this.extensions.steeringMethod)
+			throw { kind: "unavailable", reason: "executor_steering_unsupported" };
 		try {
 			return steeringReceipt(
-				await connection.agent.request(SESSION_STEERING_METHOD, {
+				await connection.agent.request(this.extensions.steeringMethod, {
 					sessionId,
 					prompt: [{ type: "text", text: instruction }],
 				}),
@@ -257,13 +316,13 @@ export class AcpRunClient {
 			this.sessionId = null;
 			return;
 		}
-		if (this.nativeShutdownRequired) {
+		if (this.extensions.shutdownMethod) {
 			// Native bash shells have their own detached POSIX process groups:
 			// killing this transport cannot prove those tools stopped.
 			if (!this.nativeShutdown) {
 				if (!this.connection || process.exitCode !== null || process.signalCode !== null)
 					throw new Error("acp_native_shutdown_not_confirmed");
-				this.nativeShutdown = this.connection.agent.request(SHUTDOWN_METHOD, {});
+				this.nativeShutdown = this.connection.agent.request(this.extensions.shutdownMethod, {});
 			}
 			const receipt = await waitForNativeShutdown(this.nativeShutdown);
 			if (
@@ -284,10 +343,10 @@ export class AcpRunClient {
 		if (await waitForProcessExit(process, 100)) return;
 		// A pre-initialize worker has no session/tools. An initialized native
 		// worker reaches here only after its real abort/drain acknowledgement.
-		terminateProcessGroup(process, "SIGTERM");
-		const exited = await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS);
+		// Kill the owned group once while its leader is still live. Sending a
+		// second signal after leader exit can target a recycled group identity.
 		terminateProcessGroup(process, "SIGKILL");
-		if (!exited && !(await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS)))
+		if (!(await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS)))
 			throw new Error("acp_process_stop_timeout");
 	}
 
@@ -295,7 +354,7 @@ export class AcpRunClient {
 		const app = acp
 			.client({ name: "bear-harness" })
 			.onNotification(acp.methods.client.session.update, (ctx) => {
-				this.handlers.onSessionUpdate(ctx.params);
+				if (ctx.params.sessionId === this.sessionId) this.handlers.onSessionUpdate(ctx.params);
 			})
 			.onRequest(acp.methods.client.session.requestPermission, (ctx) =>
 				this.requestPermission(ctx.params),
@@ -352,6 +411,8 @@ export class AcpRunClient {
 	private requestPermission(
 		params: acp.RequestPermissionRequest,
 	): Promise<acp.RequestPermissionResponse> {
+		if (this.stopped || params.sessionId !== this.sessionId)
+			return Promise.resolve({ outcome: { outcome: "cancelled" } });
 		const requestId = `permission-${++this.permissionSequence}`;
 		const { promise, resolve } = Promise.withResolvers<acp.RequestPermissionResponse>();
 		const request: AcpPermissionRequest = {

@@ -1,7 +1,11 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import {
+	bindCharacterClient,
+	type CharacterClient as CompanionClient,
+	type CompanionClient as HostClient,
+} from "@bear-harness/companion-client";
 import type {
 	PiAgentSessionEvent as AgentSessionEvent,
-	ConversationActiveResponse,
+	InvalidationNotice,
 	LivePush,
 	LocalEmbeddingAcquisitionState,
 } from "@bear-harness/protocol";
@@ -9,12 +13,16 @@ import {
 	CancelledError,
 	createQuery,
 	isCancelledError,
+	QueryClient,
+	QueryClientProvider,
 	useQueryClient,
 } from "@tanstack/solid-query";
 import {
 	batch,
+	createComponent,
 	createContext,
 	createMemo,
+	createRoot,
 	createSignal,
 	onCleanup,
 	type ParentProps,
@@ -75,6 +83,7 @@ import type {
 	SettingsApi,
 } from "./supplementary-api.js";
 import { trackApi } from "./track-api.js";
+import { shareWindowLive } from "./window-live.js";
 
 export * from "./ipc.js";
 export type { OnboardingStore } from "./onboarding.js";
@@ -130,6 +139,7 @@ export type TimelineProjectionItem =
 			message: Extract<NonNullable<PiLiveState["streamingMessage"]>, { role: "assistant" }>;
 	  };
 export interface CompanionStore {
+	readonly selectedCharacterId: string;
 	readonly diagnostics: CompanionClient["diagnostics"];
 	reportTimelineScroll(conversationId: string, distance: number): void;
 	readonly loading: boolean;
@@ -204,7 +214,7 @@ export function useCompanionStore(): CompanionStore {
 	return value;
 }
 
-const stores = new WeakMap<CompanionClient, CompanionStore>();
+const stores = new WeakMap<QueryClient, WeakMap<HostClient, CompanionStore>>();
 const PI_RECONNECT_MIN_DELAY_MS = 100;
 const PI_RECONNECT_MAX_DELAY_MS = 5_000;
 
@@ -240,38 +250,125 @@ function waitForPiReconnect(signal: AbortSignal, delayMs: number): Promise<boole
 	});
 }
 
-function settlePiSnapshot<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
-	if (signal.aborted) return Promise.resolve(undefined);
-	return new Promise((resolve) => {
-		let settled = false;
-		const finish = (value?: T) => {
-			if (settled) return;
-			settled = true;
-			signal.removeEventListener("abort", abort);
-			resolve(value);
-		};
-		const abort = () => finish();
-		signal.addEventListener("abort", abort, { once: true });
-		if (signal.aborted) abort();
-		void promise.then(
-			(value) => finish(value),
-			() => finish(),
-		);
-	});
-}
-
-export function createCompanionStore(source: CompanionClient): CompanionStore {
-	const existing = stores.get(source);
+export function createCompanionStore(
+	source: HostClient,
+	initialCharacterId: string,
+): CompanionStore {
+	const windowCache = useQueryClient();
+	let windowStores = stores.get(windowCache);
+	if (!windowStores) {
+		windowStores = new WeakMap();
+		stores.set(windowCache, windowStores);
+	}
+	const existing = windowStores.get(source);
 	if (existing) return existing;
-	const created = untrack(() => createStoreForClient(source));
-	stores.set(source, created);
+	const [selectedCharacterId, setSelectedCharacterId] = createSignal(initialCharacterId);
+	const [projectionRevision, setProjectionRevision] = createSignal(0);
+	const windowClient = { ...source, live: shareWindowLive(source.live) };
+	const invalidationObservers = new Set<(notice: InvalidationNotice) => Promise<void>>();
+	const observeInvalidations = (listener: (notice: InvalidationNotice) => Promise<void>) => {
+		invalidationObservers.add(listener);
+		onCleanup(() => invalidationObservers.delete(listener));
+	};
+	const projections = new Map<string, { store: CompanionStore; dispose(): void }>();
+	const selectCharacter = async (characterId: string) => {
+		// This changes only the window projection. Host resources remain independently owned.
+		setSelectedCharacterId(characterId);
+	};
+	const selected = () => {
+		projectionRevision();
+		const characterId = selectedCharacterId();
+		let projection = projections.get(characterId);
+		if (!projection) {
+			projection = untrack(() =>
+				createRoot((dispose) => {
+					const cache = new QueryClient({
+						defaultOptions: {
+							queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: false },
+							mutations: { retry: false },
+						},
+					});
+					let store!: CompanionStore;
+					createComponent(QueryClientProvider, {
+						client: cache,
+						get children() {
+							store ??= untrack(() =>
+								createStoreForClient(
+									bindCharacterClient(windowClient, characterId),
+									characterId,
+									selectCharacter,
+									source,
+									observeInvalidations,
+								),
+							);
+							return undefined;
+						},
+					});
+					return {
+						store,
+						dispose: () => {
+							dispose();
+							cache.clear();
+						},
+					};
+				}),
+			);
+			projections.set(characterId, projection);
+		}
+		return projection.store;
+	};
+	untrack(selected);
+	const invalidationAbort = new AbortController();
+	onCleanup(() => invalidationAbort.abort());
+	void (async () => {
+		while (!invalidationAbort.signal.aborted) {
+			try {
+				for await (const notice of source.invalidations.stream(invalidationAbort.signal)) {
+					if (invalidationAbort.signal.aborted) return;
+					if (notice.scope === "system")
+						batch(() => {
+							let discarded = false;
+							for (const key of notice.keys) {
+								if (key[0] !== "character" || key[1] !== "runtime") continue;
+								const characterId = key[2];
+								const projection = projections.get(characterId);
+								if (!projection) continue;
+								projections.delete(characterId);
+								projection.dispose();
+								discarded = true;
+								if (selectedCharacterId() === characterId)
+									setSelectedCharacterId(initialCharacterId);
+							}
+							if (discarded) setProjectionRevision((value) => value + 1);
+						});
+					await Promise.all([...invalidationObservers].map((listener) => listener(notice)));
+				}
+			} catch {
+				// Product notices are transient; future invalidations resume on a fresh subscription.
+			}
+			if (!(await waitForPiReconnect(invalidationAbort.signal, PI_RECONNECT_MIN_DELAY_MS))) return;
+		}
+	})();
+	// One stable window facade; each operation captures its character store at invocation.
+	const created = new Proxy({} as CompanionStore, {
+		get: (_target, key) =>
+			key === "selectedCharacterId" ? selectedCharacterId() : Reflect.get(selected(), key),
+	});
+	windowStores.set(source, created);
 	onCleanup(() => {
-		if (stores.get(source) === created) stores.delete(source);
+		if (windowStores.get(source) === created) windowStores.delete(source);
+		for (const projection of projections.values()) projection.dispose();
 	});
 	return created;
 }
 
-function createStoreForClient(source: CompanionClient): CompanionStore {
+function createStoreForClient(
+	source: CompanionClient,
+	characterId: string,
+	selectCharacter: (id: string) => Promise<void>,
+	hostClient: HostClient,
+	observeInvalidations: (listener: (notice: InvalidationNotice) => Promise<void>) => void,
+): CompanionStore {
 	const queryClient = useQueryClient();
 	const client = withRpcMutations(source, queryClient);
 	const rendererId = crypto.randomUUID();
@@ -355,6 +452,9 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	};
 	let projectionEpoch = 0;
+	onCleanup(() => {
+		++projectionEpoch;
+	});
 	const deletedConversationIds = new Set<string>();
 	const markConversationDeleted = (conversationId: string) => {
 		deletedConversationIds.delete(conversationId);
@@ -424,23 +524,14 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		key: queryKeys.archivedConversations,
 		request: () => invoke(client, () => client.conversation.list({ archived: true, limit: 100 })),
 	});
-	createRpcQuery<ConversationActiveResponse>({
-		client: queryClient,
-		key: queryKeys.activeConversation,
-		request: () => invoke(client, () => client.conversation.activeGet({})),
-		enabled: false,
-	});
-	// Native events retire transient rows in the same transaction that updates
-	// this query. Its Solid observer notifies later; read the authoritative cache
-	// through the existing revision signal so a row never disappears in between.
+	const [activeConversationId, setActiveConversationId] = createSignal<string | null>(null);
 	const activeDetail = createMemo(() => {
 		cacheRevision();
-		return (
-			queryClient.getQueryData<ConversationActiveResponse>(queryKeys.activeConversation)
-				?.activeConversation ?? undefined
-		);
+		const id = activeConversationId();
+		return id
+			? queryClient.getQueryData<ConversationDetail>(queryKeys.conversation(id))
+			: undefined;
 	});
-	const activeConversationId = () => activeDetail()?.conversationId ?? null;
 	const companionStateQuery = createRpcQuery<CompanionStateData | undefined>({
 		client: queryClient,
 		key: () => queryKeys.companionState(activeConversationId() ?? ""),
@@ -455,11 +546,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		key: queryKeys.characters,
 		request: () => listAllCharacters(client),
 	});
-	const currentCharacterId = createMemo(
-		() =>
-			charactersQuery.data?.characters.find((item) => item.active)?.id ??
-			snapshotQuery.data?.character?.id,
-	);
+	const currentCharacterId = () => characterId;
 	// Primitive identity equality keeps same-character refreshes valid; a new token
 	// on every transition also retires manual reads when switching A → B → A.
 	const runIdentity = createMemo(() => ({ characterId: currentCharacterId() }));
@@ -649,20 +736,24 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			key: queryKeys.snapshot,
 			request: snapshotRequest,
 		});
+	const requestConversationSnapshot = (conversationId: string) =>
+		invoke(client, () => client.conversation.open({ conversationId })).catch((cause) => {
+			if (cause instanceof IpcInvocationError && cause.reason === "conversation_not_found") {
+				discardDeletedConversation(conversationId);
+				return undefined;
+			}
+			throw cause;
+		});
 	const refreshConversation = async (conversationId = activeConversationId()) => {
 		if (!conversationId) return undefined;
 		return withPiEventReplay(
 			conversationId,
-			() => invoke(client, () => client.conversation.open({ conversationId })),
+			() => requestConversationSnapshot(conversationId),
 			(detail) => {
 				hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
 				reconcileMessages(detail);
 				setPiLiveBySession((current) => new Map(current).set(detail.conversationId, detail.live));
 				replaceToolExecutions(detail);
-				if (activeConversationId() === detail.conversationId)
-					hydrateRpcQuery(queryClient, queryKeys.activeConversation, {
-						activeConversation: detail,
-					});
 			},
 		);
 	};
@@ -739,85 +830,18 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	};
 	const applyActiveProjectionIfCurrent = (
 		generation: number,
-		response: ConversationActiveResponse,
+		detail: ConversationDetail | null,
 	) => {
-		if (generation === activeMutationGeneration) applyActiveProjection(response);
+		if (generation === activeMutationGeneration) applyActiveProjection(detail);
 	};
 	const updateConversationProjection = (
 		conversationId: string,
 		update: (detail: ConversationDetail) => ConversationDetail,
-	) => {
-		queryClient.setQueryData<ConversationActiveResponse>(queryKeys.activeConversation, (current) =>
-			current?.activeConversation?.conversationId === conversationId
-				? { activeConversation: update(current.activeConversation) }
-				: current,
-		);
+	) =>
 		queryClient.setQueryData<ConversationDetail>(
 			queryKeys.conversation(conversationId),
 			(current) => (current ? update(current) : current),
 		);
-	};
-	const applyActiveProjection = (response: ConversationActiveResponse) => {
-		activeProjectionLoaded = true;
-		const previousId = activeConversationId();
-		let detail = response.activeConversation ?? undefined;
-		if (detail) {
-			const previous = queryClient.getQueryData<ConversationDetail>(
-				queryKeys.conversation(detail.conversationId),
-			);
-			const currentVersion = sessionVersions.get(detail.conversationId);
-			const version = detail.live.version;
-			if (
-				currentVersion &&
-				(!version ||
-					(version.instanceId === currentVersion.instanceId &&
-						version.sequence < currentVersion.sequence))
-			)
-				return;
-			if (version && retiredInstances.get(detail.conversationId)?.has(version.instanceId)) return;
-			const previousVersion = previous?.live.version ?? currentVersion;
-			const changedInstance = previousVersion && version?.instanceId !== previousVersion.instanceId;
-			if (changedInstance) {
-				const retired = retiredInstances.get(detail.conversationId) ?? new Set<string>();
-				retired.add(previousVersion.instanceId);
-				if (retired.size > 8) retired.delete(retired.values().next().value!);
-				retiredInstances.set(detail.conversationId, retired);
-			}
-			if (
-				changedInstance ||
-				(previous?.branch.activeLeafId !== detail.branch.activeLeafId &&
-					!detail.branch.entries.some((entry) => entry.id === previous?.branch.activeLeafId))
-			)
-				clearTransientProjection(detail.conversationId);
-			if (!changedInstance)
-				detail = { ...detail, branch: retainPiHistory(previous?.branch, detail.branch) };
-			if (version) sessionVersions.set(detail.conversationId, version);
-		}
-		hydrateRpcQuery(queryClient, queryKeys.activeConversation, {
-			activeConversation: detail ?? null,
-		});
-		if (detail) {
-			hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
-			void queryClient.invalidateQueries({
-				queryKey: queryKeys.modelRoute(detail.conversationId),
-				exact: true,
-			});
-			reconcileMessages(detail);
-			setPiLiveBySession((current) => new Map(current).set(detail.conversationId, detail.live));
-			replaceToolExecutions(detail);
-			setCompletedConversationIds((current) => {
-				if (!current.has(detail.conversationId)) return current;
-				const next = new Set(current);
-				next.delete(detail.conversationId);
-				return next;
-			});
-		}
-		if (previousId && previousId !== detail?.conversationId) {
-			queryClient.removeQueries({ queryKey: queryKeys.conversation(previousId), exact: true });
-			queryClient.removeQueries({ queryKey: queryKeys.companionState(previousId), exact: true });
-			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(previousId), exact: true });
-		}
-	};
 	const commitConversationDetailIfCurrent = (
 		conversationId: string,
 		detail: ConversationDetail,
@@ -827,36 +851,26 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			queryKey: queryKeys.modelRoute(conversationId),
 			exact: true,
 		});
-		if (activeConversationId() === conversationId)
-			applyActiveProjection({ activeConversation: detail });
-		else {
-			setPiLiveBySession((current) => new Map(current).set(conversationId, detail.live));
-			reconcileMessages(detail);
-			replaceToolExecutions(detail);
-		}
+		reconcileMessages(detail);
+		setPiLiveBySession((current) => new Map(current).set(conversationId, detail.live));
+		replaceToolExecutions(detail);
+	};
+	const selectLocalConversation = (conversationId: string | null) => {
+		activeProjectionLoaded = true;
+		setActiveConversationId(conversationId);
+		if (conversationId)
+			setCompletedConversationIds((current) => {
+				const next = new Set(current);
+				next.delete(conversationId);
+				return next;
+			});
+	};
+	const applyActiveProjection = (detail: ConversationDetail | null) => {
+		if (detail) commitConversationDetailIfCurrent(detail.conversationId, detail);
+		selectLocalConversation(detail?.conversationId ?? null);
 	};
 
-	const refreshActiveConversation = async () => {
-		const generation = activeMutationGeneration;
-		const epoch = projectionEpoch;
-		const conversationId = activeConversationId();
-		if (!conversationId) {
-			const response = await invoke(client, () => client.conversation.activeGet({}));
-			if (epoch === projectionEpoch) applyActiveProjectionIfCurrent(generation, response);
-			return;
-		}
-		let response: ConversationActiveResponse | undefined;
-		await withPiEventReplay(
-			conversationId,
-			async () => {
-				response = await invoke(client, () => client.conversation.activeGet({}));
-				return response.activeConversation ?? undefined;
-			},
-			(detail) => applyActiveProjectionIfCurrent(generation, { activeConversation: detail }),
-		);
-		if (response && epoch === projectionEpoch && !response.activeConversation)
-			applyActiveProjectionIfCurrent(generation, response);
-	};
+	const refreshActiveConversation = () => refreshConversation();
 	const refreshConversations = async () => {
 		const result = await refreshRpcQuery({
 			client: queryClient,
@@ -880,16 +894,14 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	};
 	const startupActiveGeneration = activeMutationGeneration;
-	void Promise.all([
-		queryClient.fetchQuery({ queryKey: queryKeys.onboarding, queryFn: onboarding.get }),
-		queryClient.fetchQuery({
-			queryKey: [...queryKeys.conversations, titleQuery()],
-			queryFn: conversationsRequest,
-		}),
-		invoke(client, () => client.conversation.activeGet({})),
-	])
-		.then(([, , active]) => {
-			if (!activeProjectionLoaded) applyActiveProjectionIfCurrent(startupActiveGeneration, active);
+	void refreshConversations()
+		.then(async (list) => {
+			if (
+				!activeProjectionLoaded &&
+				startupActiveGeneration === activeMutationGeneration &&
+				list.conversations[0]
+			)
+				await selectAndActivate(list.conversations[0].conversationId);
 		})
 		.catch((cause) => fail("conversation.initialize", cause));
 	const refreshRuns = () =>
@@ -1318,13 +1330,11 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		commit: (detail: ConversationDetail) => void,
 	): Promise<ConversationDetail | undefined> {
 		const epoch = projectionEpoch;
-		const navigation = activeMutationGeneration;
 		const baselineVersion = sessionVersions.get(conversationId);
 		const generation = (readGenerations.get(conversationId) ?? 0) + 1;
 		readGenerations.set(conversationId, generation);
 		const current = () =>
 			epoch === projectionEpoch &&
-			navigation === activeMutationGeneration &&
 			readGenerations.get(conversationId) === generation &&
 			!deletedConversationIds.has(conversationId);
 		const capture: AgentSessionEvent[] = [];
@@ -1421,98 +1431,117 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	): Promise<ConversationDetail | undefined> {
 		const generation = beginActiveMutation();
 		const epoch = projectionEpoch;
-		let response: ConversationActiveResponse | undefined;
 		const detail = await withPiEventReplay(
 			conversationId,
-			async () => {
-				response = await invoke(client, () => client.conversation.select({ conversationId }));
-				return generation === activeMutationGeneration
-					? (response.activeConversation ?? undefined)
-					: undefined;
-			},
-			(active) => applyActiveProjectionIfCurrent(generation, { activeConversation: active }),
+			() => requestConversationSnapshot(conversationId),
+			(snapshot) => commitConversationDetailIfCurrent(conversationId, snapshot),
 		);
+		// A newer background snapshot may supersede this read, but cannot cancel
+		// the window's selection. Never reapply the discarded snapshot to select.
 		if (
-			response &&
-			epoch === projectionEpoch &&
 			generation === activeMutationGeneration &&
-			!response.activeConversation
+			epoch === projectionEpoch &&
+			!deletedConversationIds.has(conversationId)
 		)
-			applyActiveProjectionIfCurrent(generation, response);
-		else if (!detail && response && generation === activeMutationGeneration)
-			await refreshActiveConversation();
+			selectLocalConversation(conversationId);
 		return detail;
 	}
-	const invalidationAbort = new AbortController();
-	onCleanup(() => invalidationAbort.abort());
-	void (async () => {
-		while (!invalidationAbort.signal.aborted) {
-			try {
-				for await (const notice of client.invalidations.stream(invalidationAbort.signal)) {
-					if (invalidationAbort.signal.aborted) return;
-					await Promise.all(
-						notice.keys.map((key) => queryClient.invalidateQueries({ queryKey: key })),
-					);
-				}
-			} catch {
-				// Invalidations are transient cache hints; reconnect for future notices.
-			}
-			if (invalidationAbort.signal.aborted) return;
-			if (!(await waitForPiReconnect(invalidationAbort.signal, PI_RECONNECT_MIN_DELAY_MS))) return;
-		}
-	})().catch(() => undefined);
+
+	function discardDeletedConversation(conversationId: string) {
+		markConversationDeleted(conversationId);
+		sessionVersions.delete(conversationId);
+		retiredInstances.delete(conversationId);
+		readGenerations.delete(conversationId);
+		piEventCaptures.delete(conversationId);
+		const submission = submissionsBySession().get(conversationId);
+		if (submission) submissionAnchors.delete(submission.id);
+		removeSubmission(conversationId);
+		dropPiLive(conversationId);
+		dropToolExecutions(conversationId);
+		setActivitiesBySession((current) => {
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+		setHostStagesBySession((current) => {
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+		setCompletedMessagesBySession((current) => {
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+		setHostFailuresBySession((current) => {
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+		queryClient.removeQueries({
+			queryKey: queryKeys.conversation(conversationId),
+			exact: true,
+		});
+		queryClient.removeQueries({
+			queryKey: queryKeys.companionState(conversationId),
+			exact: true,
+		});
+		queryClient.removeQueries({
+			queryKey: queryKeys.modelRoute(conversationId),
+			exact: true,
+		});
+		if (activeConversationId() === conversationId) applyActiveProjection(null);
+	}
+	observeInvalidations(async (notice) => {
+		if (notice.scope === "character" && notice.characterId !== characterId) return;
+		await Promise.all(
+			notice.keys.map(async (key) => {
+				if (notice.scope === "character" && key[0] === "conversation") {
+					const conversationId = key[1];
+					if (
+						!queryClient.getQueryData(queryKeys.conversation(conversationId)) &&
+						activeConversationId() !== conversationId
+					)
+						return;
+					try {
+						await refreshConversation(conversationId);
+					} catch (cause) {
+						fail("conversation.refresh", cause);
+					}
+				} else await queryClient.invalidateQueries({ queryKey: key });
+			}),
+		);
+	});
 	const liveAbort = new AbortController();
 	onCleanup(() => liveAbort.abort());
 	void (async () => {
 		let consecutiveDisconnects = 0;
 		let initialized = false;
-		const replaceActiveFromHost = async () => {
-			const reconnecting = liveConnectionStatus() === "reconnecting";
-			if (reconnecting) {
-				++projectionEpoch;
-				piEventCaptures.clear();
-				projectionRefreshes.clear();
-			}
-			const generation = activeMutationGeneration;
-			const epoch = projectionEpoch;
-			const response = await settlePiSnapshot(
-				invoke(client, () => client.conversation.activeGet({})),
-				liveAbort.signal,
+		const replaceProjectionsFromHost = async () => {
+			piEventCaptures.clear();
+			projectionRefreshes.clear();
+			const conversationIds = new Set([
+				...(activeConversationId() ? [activeConversationId() as string] : []),
+				...piLiveBySession().keys(),
+				...queryClient
+					.getQueryCache()
+					.findAll({ queryKey: ["conversation"] })
+					.map((query) => query.queryKey[1] as string),
+			]);
+			setHostStagesBySession(new Map());
+			setHostFailuresBySession(new Map());
+			setActivitiesBySession(new Map());
+			setToolExecutionsBySession(new Map());
+			setCompletedMessagesBySession(new Map());
+			setPiLiveBySession(new Map());
+			await Promise.all(
+				[...conversationIds]
+					.filter((id) => !deletedConversationIds.has(id))
+					.map((conversationId) => refreshConversation(conversationId)),
 			);
-			if (
-				!response ||
-				liveAbort.signal.aborted ||
-				generation !== activeMutationGeneration ||
-				epoch !== projectionEpoch
-			)
-				return;
-			if (reconnecting) {
-				++projectionEpoch;
-				piEventCaptures.clear();
-				projectionRefreshes.clear();
-			}
-			const commit = (active: ConversationActiveResponse) => {
-				if (liveAbort.signal.aborted || generation !== activeMutationGeneration) return;
-				setHostStagesBySession(new Map());
-				setHostFailuresBySession(new Map());
-				setActivitiesBySession(new Map());
-				setPiLiveBySession(new Map());
-				setToolExecutionsBySession(new Map());
-				setCompletedMessagesBySession(new Map());
-				applyActiveProjectionIfCurrent(generation, active);
-			};
-			if (response.activeConversation) {
-				const detail = response.activeConversation;
-				await withPiEventReplay(
-					detail.conversationId,
-					() => Promise.resolve(detail),
-					(activeConversation) => commit({ activeConversation }),
-				);
-			} else {
-				commit(response);
-			}
 		};
 		const applyLiveEvent = (event: LivePush) => {
+			if ("characterId" in event && event.characterId !== characterId) return;
 			rendererDiagnostics.scope(currentCharacterId());
 			if (event.type === "pi") {
 				const started = performance.now();
@@ -1573,9 +1602,9 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			}
 			if (event.type === "companionState")
 				hydrateRpcQuery(queryClient, queryKeys.companionState(event.conversationId), event.state);
-			if (event.type === "run" && event.companionId === currentCharacterId()) {
+			if (event.type === "run" && event.characterId === currentCharacterId()) {
 				queryClient.setQueryData(
-					queryKeys.activeRuns(event.companionId),
+					queryKeys.activeRuns(event.characterId),
 					(current: RunListData | undefined) => {
 						const runs = current?.runs.some((run) => run.id === event.run.id)
 							? current.runs.map((run) => (run.id === event.run.id ? event.run : run))
@@ -1649,10 +1678,13 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		};
 		while (!liveAbort.signal.aborted) {
 			let receivedEvent = false;
+			const attempt = new AbortController();
+			const abortAttempt = () => attempt.abort();
+			liveAbort.signal.addEventListener("abort", abortAttempt, { once: true });
 			try {
-				const events = await client.live.subscribe(liveAbort.signal);
+				const events = await client.live.subscribe(attempt.signal);
 				await Promise.all([
-					replaceActiveFromHost(),
+					replaceProjectionsFromHost(),
 					...(initialized
 						? [
 								refreshRuns(),
@@ -1688,7 +1720,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					applyLiveEvent(event);
 				}
 			} catch (cause) {
-				if (!initialized) fail("live.initialize", cause);
+				fail("live.initialize", cause);
+			} finally {
+				liveAbort.signal.removeEventListener("abort", abortAttempt);
+				attempt.abort();
 			}
 			if (liveAbort.signal.aborted) return;
 			++projectionEpoch;
@@ -1723,41 +1758,20 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		saveAs: (identity) => invoke(client, () => client.artifact.saveAs(identity)),
 	};
 	const characterApi = createCharacterApi({
+		hostClient,
 		client,
 		queryClient,
 		cacheRevision,
 		currentCharacterId,
-		characters: () => charactersQuery.data?.characters ?? [],
+		characters: () =>
+			(charactersQuery.data?.characters ?? []).map((item) => ({
+				...item,
+				active: item.id === characterId,
+			})),
+		selectCharacter,
 		refreshCharacters,
 		refreshSnapshot,
 		resyncOnboarding: onboarding.resync,
-		switchCharacterConversations: async () => {
-			beginActiveMutation();
-			++projectionEpoch;
-			projectionRefreshes.clear();
-			sessionVersions.clear();
-			retiredInstances.clear();
-			readGenerations.clear();
-			setPiLiveBySession(new Map());
-			setToolExecutionsBySession(new Map());
-			setSubmissionsBySession(new Map());
-			submissionAnchors.clear();
-			setActivitiesBySession(new Map());
-			setHostStagesBySession(new Map());
-			setHostFailuresBySession(new Map());
-			setCompletedMessagesBySession(new Map());
-			setCompletedConversationIds(new Set<string>());
-			piEventCaptures.clear();
-			deletedConversationIds.clear();
-			queryClient.removeQueries({
-				predicate: (query) =>
-					query.queryKey[0] === "conversation" && query.queryKey[1] !== "active",
-			});
-			queryClient.removeQueries({ queryKey: ["companionState"] });
-			queryClient.removeQueries({ queryKey: ["models", "route"] });
-			await refreshActiveConversation();
-			await Promise.all([refreshConversations(), refreshArchived()]);
-		},
 		invalidateConversations: refreshConversations,
 		invalidateActiveConversation: async () => {
 			await refreshActiveConversation();
@@ -1774,6 +1788,32 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		refreshSources: refreshCanonSources,
 		refreshModules: refreshCanonModules,
 	});
+	void Promise.all([
+		queryClient.ensureQueryData({
+			queryKey: queryKeys.settings,
+			queryFn: () => invoke(client, () => client.settings.get()),
+		}),
+		queryClient.ensureQueryData({
+			queryKey: queryKeys.systemModelDefaults,
+			queryFn: () => invoke(client, () => client.model.systemDefaultsGet()),
+		}),
+		queryClient.ensureQueryData({
+			queryKey: queryKeys.modelDefaults,
+			queryFn: () => invoke(client, () => client.model.defaultsGet()),
+		}),
+	])
+		.then(async ([settings, systemDefaults, defaults]) => {
+			if (
+				!liveAbort.signal.aborted &&
+				settings.settings.firstRunStage === "role" &&
+				systemDefaults.reply &&
+				!defaults.reply
+			)
+				await modelApi.initializeDefaults();
+		})
+		.catch((cause) => {
+			if (!liveAbort.signal.aborted) fail("character.initialize", cause);
+		});
 	const embedding: EmbeddingBinding = {
 		acquisitionState: () =>
 			acquisitionQuery.data ??
@@ -1826,7 +1866,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			client: queryClient,
 			request: (params) => invoke(client, () => client.systemOnboarding.completeEmbedding(params)),
 			invalidates: [queryKeys.embeddingInventory],
-			onSuccess: (result) => hydrateRpcQuery(queryClient, queryKeys.settings, result),
+			onSuccess: async (result) => {
+				hydrateRpcQuery(queryClient, queryKeys.settings, result);
+				await modelApi.initializeDefaults();
+			},
 		}),
 	};
 
@@ -1892,6 +1935,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	};
 	const companionState = () => companionStateQuery.data;
 	const store: CompanionStore = {
+		selectedCharacterId: characterId,
 		diagnostics: client.diagnostics,
 		reportTimelineScroll: (conversationId, distance) => {
 			rendererDiagnostics.scope(currentCharacterId());
@@ -2165,14 +2209,14 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			await refreshConversations();
 		},
 		selectConversation: (conversationId) =>
-			run("conversation.select", async () => {
+			run("conversation.open", async () => {
 				await selectAndActivate(conversationId);
 			}),
 		createConversation: (title) =>
 			run("conversation.create", async () => {
 				const generation = beginActiveMutation();
 				const detail = await invoke(client, () => client.conversation.create({ title }));
-				applyActiveProjectionIfCurrent(generation, { activeConversation: detail });
+				applyActiveProjectionIfCurrent(generation, detail);
 				await refreshConversations();
 			}),
 		createConversationFromEntry: (entryId) =>
@@ -2182,7 +2226,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				const detail = await invoke(client, () =>
 					client.message.branch({ conversationId, entryId }),
 				);
-				applyActiveProjectionIfCurrent(generation, { activeConversation: detail });
+				applyActiveProjectionIfCurrent(generation, detail);
 				await refreshConversations();
 			}),
 		renameConversation: (id, title) =>
@@ -2196,68 +2240,22 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		archiveConversation: (conversationId) =>
 			run("conversation.archive", async () => {
 				const generation = beginActiveMutation();
-				const response = await invoke(client, () =>
-					client.conversation.archive({ conversationId, archived: true }),
-				);
-				applyActiveProjectionIfCurrent(generation, response);
+				await invoke(client, () => client.conversation.archive({ conversationId, archived: true }));
+				if (activeConversationId() === conversationId)
+					applyActiveProjectionIfCurrent(generation, null);
 				await Promise.all([refreshConversations(), refreshArchived()]);
 			}),
 		restoreConversation: (conversationId) =>
 			run("conversation.restore", async () => {
-				const generation = beginActiveMutation();
-				const response = await invoke(client, () =>
+				await invoke(client, () =>
 					client.conversation.archive({ conversationId, archived: false }),
 				);
-				applyActiveProjectionIfCurrent(generation, response);
 				await Promise.all([refreshConversations(), refreshArchived()]);
 			}),
 		deleteConversation: (conversationId) =>
 			run("conversation.delete", async () => {
-				const generation = beginActiveMutation();
-				const response = await invoke(client, () => client.conversation.delete({ conversationId }));
-				markConversationDeleted(conversationId);
-				sessionVersions.delete(conversationId);
-				retiredInstances.delete(conversationId);
-				readGenerations.delete(conversationId);
-				piEventCaptures.delete(conversationId);
-				const submission = submissionsBySession().get(conversationId);
-				if (submission) submissionAnchors.delete(submission.id);
-				removeSubmission(conversationId);
-				dropPiLive(conversationId);
-				dropToolExecutions(conversationId);
-				setActivitiesBySession((current) => {
-					const next = new Map(current);
-					next.delete(conversationId);
-					return next;
-				});
-				setHostStagesBySession((current) => {
-					const next = new Map(current);
-					next.delete(conversationId);
-					return next;
-				});
-				setCompletedMessagesBySession((current) => {
-					const next = new Map(current);
-					next.delete(conversationId);
-					return next;
-				});
-				setHostFailuresBySession((current) => {
-					const next = new Map(current);
-					next.delete(conversationId);
-					return next;
-				});
-				queryClient.removeQueries({
-					queryKey: queryKeys.conversation(conversationId),
-					exact: true,
-				});
-				queryClient.removeQueries({
-					queryKey: queryKeys.companionState(conversationId),
-					exact: true,
-				});
-				queryClient.removeQueries({
-					queryKey: queryKeys.modelRoute(conversationId),
-					exact: true,
-				});
-				applyActiveProjectionIfCurrent(generation, response);
+				await invoke(client, () => client.conversation.delete({ conversationId }));
+				discardDeletedConversation(conversationId);
 				await Promise.all([refreshConversations(), refreshArchived()]);
 			}),
 		updateCompanionState: (changes) =>

@@ -163,10 +163,13 @@ async function prepareVisualState(page: Page, state: (typeof visualStates)[numbe
 		return;
 	}
 	await sendMessage(page, "E2E_DELEGATE_ARTIFACT");
-	const artifact = page.getByRole("button", {
-		name: `${zhCN.work.timeline.viewArtifacts}: e2e-report.txt`,
-		exact: true,
-	});
+	const artifact = page
+		.getByRole("region", { name: zhCN.messages.conversation, exact: true })
+		.getByRole("article", { name: zhCN.messages.toolActivity.externalResult, exact: true })
+		.getByRole("button", {
+			name: `${zhCN.work.timeline.viewArtifacts}: e2e-report.txt`,
+			exact: true,
+		});
 	await expect(artifact).toBeVisible({ timeout: 30_000 });
 	if (state === "artifact") {
 		await artifact.click();

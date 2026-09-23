@@ -28,6 +28,12 @@ export const en = {
 	},
 	relationshipMemory: {
 		title: "Relationship memory",
+		consentLabel: "Allow {name} to build relationship memory automatically",
+		consentDescription:
+			"Applies only to this character and is off by default. Turning it off keeps existing memories. Anything you explicitly ask to remember is saved separately.",
+		consentError: "Could not read or save this character's memory preference. Please retry.",
+		systemRequired:
+			"Enable the memory service in System Settings before allowing automatic memory for this character.",
 		description:
 			"Read {name}’s locally saved memory. Viewing does not start extraction, switch characters, or change conversations.",
 		records: "Memory entries",
@@ -37,8 +43,7 @@ export const en = {
 		error: "Could not read this character’s memory. Retry; existing content will not be changed.",
 		empty:
 			"No automatic memories here yet. Conversation transcripts are not relationship memory; entries and profiles appear after memory processing.",
-		disabled:
-			"Automatic memory is not enabled. Saved memory remains readable; enable the service in System Settings.",
+		disabled: "Automatic memory is off for this character. Saved memory remains readable.",
 		systemSettings: "Open memory service settings",
 		explicitTitle: "Explicit memory · MEMORY.md",
 		explicitDescription:
@@ -116,7 +121,6 @@ export const en = {
 		deletePackage: "Delete character package",
 		deletePackageDescription:
 			"Deletes the character definition, assets, canon, plugins, and skills. Runtime data must be deleted first.",
-		deleteBlockedActive: "Switch to another character before deleting this character's data.",
 		deleteBlockedDefault: "The product's default character package cannot be deleted.",
 		deleteBlockedRuntimePresent: "Delete the character runtime data first.",
 		deleteBlockedUnsaved: "Save or discard package edits before deleting the package.",
@@ -217,11 +221,6 @@ export const en = {
 		},
 		roleActive: "Active character",
 		roleSwitch: "Switch character",
-		roleSwitchBusyTitle: "The current reply is still in progress",
-		roleSwitchBusyDescription:
-			"Switching to “{name}” will stop the reply being generated. Content already shown will remain.",
-		roleSwitchBusyCancel: "Keep waiting",
-		roleSwitchBusyConfirm: "Stop and switch",
 		roleImport: "Import character package",
 		roleImportInput: "Choose character ZIP package",
 		roleImportHint:
@@ -437,6 +436,37 @@ export const en = {
 		},
 	},
 	settings: {
+		runnerProfiles: "Worker profiles",
+		runnerDefaultHint:
+			"Unspecified tasks use the built-in Pi Worker. Explicit selections never switch automatically. Descriptions help the model choose.",
+		runnerEnabled: "Enabled",
+		runnerDisabled: "Disabled",
+		runnerEdit: "Edit profile",
+		runnerTest: "Test connection",
+		runnerTestOk: "Connected to {name} {version}",
+		runnerRecovery: "Session recovery",
+		runnerSteering: "Live steering",
+		runnerSupported: "Supported",
+		runnerUnsupported: "Not available",
+		runnerAdd: "Add custom worker",
+		runnerName: "Name",
+		runnerDescription: "Description",
+		runnerUseWhen: "When to use",
+		runnerLimitations: "Limitations",
+		runnerCommand: "Executable",
+		runnerArgs: "Arguments (one per line)",
+		runnerDependencies: "Runtime dependencies (one per line; read and execute, no writes)",
+		runnerAuth: "Authentication method ID (optional)",
+		runnerEnvironmentHint:
+			"Environment variables are passed only to this worker. Secret values use the credential vault; leave an existing secret unchanged to retain it.",
+		runnerAddEnvironment: "Add environment variable",
+		runnerEnvironmentName: "Variable name",
+		runnerEnvironmentValue: "Value",
+		runnerSecret: "Store as secret",
+		runnerRemoveEnvironment: "Remove variable",
+		runnerSave: "Save worker",
+		runnerCancel: "Cancel editing",
+
 		diagnosticsTitle: "Logs and diagnostics",
 		diagnosticsReadPayload: "View payload",
 		diagnosticsPayload: "Trace payload",
@@ -871,10 +901,12 @@ export const en = {
 				sent: "Instructions sent to the executor",
 			},
 		},
-		artifactStatuses: {
-			created: "Pending review",
+		artifactVerification: {
+			pending: "Pending review",
 			verified: "Verified",
-			verification_failed: "Verification failed",
+			failed: "Verification failed",
+		},
+		artifactUsage: {
 			adopted: "Adopted",
 			saved: "Saved",
 		},
@@ -915,8 +947,12 @@ export const en = {
 			sourceFrom: "From: {summary}",
 			unavailable: "Result no longer available",
 			actionUnsupported: "This action is not supported in the current environment",
+			downloadStarted: "Download started",
 			tabsLabel: "Select result",
 			provenance: "Provenance and verification",
+			noProvenance: "No execution provenance is available",
+			provenanceUnavailable: "{count} execution provenance records are unavailable or unsupported",
+			provenanceTruncated: "Some execution provenance records are not shown",
 			producerRun: "Producer run",
 			executorProfile: "Executor",
 			triggerEntry: "Trigger message",

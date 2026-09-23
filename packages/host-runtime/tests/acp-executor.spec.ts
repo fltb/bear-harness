@@ -1,3 +1,4 @@
+import { piAcpDialect } from "../src/executors/acp-dialect.js";
 // @vitest-environment node
 
 import { spawn } from "node:child_process";
@@ -16,7 +17,7 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import * as acp from "@agentclientprotocol/sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AcpProcessSpec, AcpRunClient } from "../src/executors/acp-client.js";
 import { AcpExecutorController } from "../src/executors/acp-executor.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
@@ -174,7 +175,7 @@ function controlFixture(stopReason: "cancelled" | "end_turn" = "cancelled") {
 
 type NativeReply =
 	| { error: string }
-	| { tool: "write" | "bash"; args: Record<string, unknown> }
+	| { tool: "write" | "bash"; args: Record<string, unknown>; text?: string }
 	| { text: string };
 
 async function nativeWorkerFixture(replies: NativeReply[], providerId = "native-test") {
@@ -199,6 +200,7 @@ async function nativeWorkerFixture(replies: NativeReply[], providerId = "native-
 			const delta = tool
 				? {
 						role: "assistant",
+						...(reply.text ? { content: reply.text } : {}),
 						tool_calls: [
 							{
 								index: 0,
@@ -255,6 +257,7 @@ async function nativeWorkerFixture(replies: NativeReply[], providerId = "native-
 		}),
 	);
 	const spec: AcpProcessSpec = {
+		dialect: piAcpDialect,
 		command: executablePath,
 		args: [fileURLToPath(new URL("../src/executors/pi-acp-worker.ts", import.meta.url))],
 		cwd,
@@ -270,6 +273,8 @@ async function nativeWorkerFixture(replies: NativeReply[], providerId = "native-
 		},
 		readOnlyPaths: [realpathSync.native(fileURLToPath(new URL("../../..", import.meta.url)))],
 	};
+	spec.writablePaths = [spec.env.BEAR_PI_SESSION_DIR!];
+	spec.readOnlyPaths = [authDir, ...(spec.readOnlyPaths ?? [])];
 	return {
 		cwd,
 		spec,
@@ -565,7 +570,7 @@ describe("ACP external-agent transport", () => {
 			await fixture.firstTurn.promise;
 			expect(controller.runtime(request.run)).toEqual({
 				controller: "attached",
-				actions: ["cancel", "steer", "interrupt"],
+				actions: ["cancel", "interrupt"],
 			});
 			// An unsupported live control must not secretly start another turn.
 			await expect(controller.steer(request.run, "Narrow the scope.")).rejects.toMatchObject({
@@ -644,6 +649,33 @@ describe("ACP external-agent transport", () => {
 });
 
 describe("native Pi ACP worker", () => {
+	it("delivers the native final response after long progress and tool execution", async () => {
+		const progress = "Preparing the output. ".repeat(800);
+		const conclusion = "Completed: the verified deliverable is ready.";
+		const fixture = await nativeWorkerFixture([
+			{ tool: "write", args: { path: "result.txt", content: "delivered" }, text: progress },
+			{ text: conclusion },
+		]);
+		const { controller, request, events, terminal } = nativeController(fixture.spec);
+		try {
+			await bounded(controller.launch(request));
+			await bounded(terminal.promise);
+			expect(events.filter((event) => event.type === "completed")).toEqual([
+				{ type: "completed", summary: conclusion },
+			]);
+			const evidence = events
+				.filter((event) => event.type === "evidence" && event.kind === "acp.message")
+				.map((event) => (event.data as { text: string }).text)
+				.join("");
+			expect(evidence).toContain(progress);
+			expect(evidence).toContain(conclusion);
+			expect(readFileSync(join(fixture.cwd, "result.txt"), "utf8")).toBe("delivered");
+		} finally {
+			await controller.close();
+			await fixture.close();
+		}
+	}, 30_000);
+
 	it.each(["native-test", "openai"])(
 		"completes a native retry and write with read-only %s settings",
 		async (providerId) => {
@@ -745,6 +777,38 @@ describe("native Pi ACP worker", () => {
 		}
 	}, 30_000);
 
+	it("keeps native interrupt resumable and delivers only the resumed final response", async () => {
+		const replies: NativeReply[] = [];
+		const fixture = await nativeWorkerFixture(replies);
+		const barrier = shellBarrier(fixture.cwd);
+		const conclusion = "The resumed task is complete.";
+		replies.push({
+			tool: "bash",
+			args: { command: barrier.command },
+			text: "Earlier progress. ".repeat(800),
+		});
+		replies.push({ text: conclusion });
+		const { controller, request, events, terminal } = nativeController(fixture.spec);
+		try {
+			await bounded(controller.launch(request));
+			await barrier.ready();
+			await bounded(controller.interrupt(request.run));
+			await barrier.assertStopped();
+			expect(
+				events.filter((event) => ["completed", "failed", "cancelled"].includes(event.type)),
+			).toEqual([]);
+			expect(controller.runtime(request.run).actions).toContain("resume");
+			await bounded(controller.resume(request.run));
+			await bounded(terminal.promise);
+			expect(events.filter((event) => event.type === "completed")).toEqual([
+				{ type: "completed", summary: conclusion },
+			]);
+		} finally {
+			await controller.close();
+			await fixture.close();
+		}
+	}, 30_000);
+
 	it.each(["shutdown", "SIGTERM"] as const)(
 		"drains detached native bash descendants on direct worker %s without namespace teardown",
 		async (stop) => {
@@ -802,3 +866,37 @@ describe("native Pi ACP worker", () => {
 		30_000,
 	);
 });
+
+it("reopens a suspended native Pi worker from its real transcript and resumes without rerunning admission", async () => {
+	const fixture = await nativeWorkerFixture([
+		{ tool: "bash", args: { command: "sleep 30" } },
+		{ text: "Recovered native Pi session." },
+	]);
+	const first = nativeController(fixture.spec);
+	first.request.task.outputDirectory = createTemp("workspace");
+	const second = nativeController(fixture.spec);
+	second.request.task.outputDirectory = first.request.task.outputDirectory;
+	try {
+		await first.controller.launch(first.request);
+		await vi.waitFor(() =>
+			expect(first.events).toContainEqual(
+				expect.objectContaining({ type: "evidence", kind: "acp.tool_call" }),
+			),
+		);
+		await first.controller.interrupt(first.request.run);
+		expect(await first.controller.suspend()).toEqual([first.request.run.runId]);
+		expect(await second.controller.restore(second.request)).toBe("attached");
+		expect(second.controller.runtime(second.request.run).actions).toEqual(["cancel", "resume"]);
+		await second.controller.resume(second.request.run, undefined, "Report the recovered result.");
+		await bounded(second.terminal.promise);
+		expect(second.events).toContainEqual({
+			type: "completed",
+			summary: "Recovered native Pi session.",
+		});
+		expect(second.events.filter((event) => event.type === "started")).toEqual([]);
+	} finally {
+		await first.controller.close();
+		await second.controller.close();
+		await fixture.close();
+	}
+}, 20000);

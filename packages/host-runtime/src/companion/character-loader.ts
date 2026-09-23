@@ -49,7 +49,7 @@ import {
 	replaceDurableFileSync,
 } from "../storage/durable-file-transaction.js";
 import { removeOwnedDirectorySync, requireCompanionId } from "../storage/layout.js";
-import { activeCharacter, companionIdentity, companionPackages } from "../storage/schema.js";
+import { companionIdentity, companionPackages } from "../storage/schema.js";
 import { type CharacterBehaviorContract, CharacterBehaviorSchema } from "./behavior-schema.js";
 import {
 	type CharacterMediaDefinition,
@@ -212,7 +212,6 @@ export interface CharacterSummary {
 	name: string;
 	subtitle: string;
 	avatarUrl?: string;
-	active: boolean;
 }
 
 export type CharacterPackageOrigin = "official" | "local" | "imported";
@@ -1122,15 +1121,6 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		}
 	}
 
-	getActiveCharacterId(db: AppDatabase, defaultCharacterId: string): string {
-		const row = db
-			.select({ characterId: activeCharacter.characterId })
-			.from(activeCharacter)
-			.where(eq(activeCharacter.singleton, 1))
-			.get();
-		return row?.characterId ?? defaultCharacterId;
-	}
-
 	deletePackage(
 		db: AppDatabase,
 		characterId: string,
@@ -1139,9 +1129,6 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		const id = requireCompanionId(characterId);
 		if (id === options.defaultCharacterId) {
 			throw { kind: "conflict", reason: "character_package_default" };
-		}
-		if (id === this.getActiveCharacterId(db, options.defaultCharacterId)) {
-			throw { kind: "conflict", reason: "character_package_active" };
 		}
 		if (options.runtimeExists) {
 			throw { kind: "conflict", reason: "character_runtime_exists" };
@@ -1161,12 +1148,10 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		return removed || registered;
 	}
 
-	list(
-		db: AppDatabase,
-		defaultCharacterId: string,
-		query: { cursor?: string; limit?: number } = {},
-	): { characters: CharacterSummary[]; nextCursor?: string } {
-		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
+	list(query: { cursor?: string; limit?: number } = {}): {
+		characters: CharacterSummary[];
+		nextCursor?: string;
+	} {
 		const ids = readdirSync(this.libraryRoot, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
 			.map((entry) => entry.name)
@@ -1192,7 +1177,6 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 					name: character.name,
 					subtitle: character.character.subtitle,
 					...(avatarUrl ? { avatarUrl } : {}),
-					active: character.id === activeId,
 				};
 			});
 		const hasMore = cursorIndex + 1 + pageIds.length < ids.length;
@@ -1259,22 +1243,6 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		} finally {
 			rmSync(validationRoot, { recursive: true, force: true });
 		}
-	}
-
-	activate(
-		systemDb: AppDatabase,
-		character: CharacterPackage,
-		origin?: CharacterPackageOrigin,
-	): void {
-		this.seed(systemDb, character, origin);
-		systemDb
-			.insert(activeCharacter)
-			.values({ singleton: 1, characterId: character.id })
-			.onConflictDoUpdate({
-				target: activeCharacter.singleton,
-				set: { characterId: character.id, updatedAt: sql`datetime('now')` },
-			})
-			.run();
 	}
 
 	/** Seed identity once and refresh package provenance on every package load. */

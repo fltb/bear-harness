@@ -9,7 +9,7 @@ import {
 	type Stats,
 	statSync,
 } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type {
 	RunGetRequest,
 	RunGetResponse,
@@ -21,7 +21,14 @@ import type {
 import { RunPermission } from "@bear-harness/protocol/schema";
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import PQueue from "p-queue";
+import {
+	type ArtifactCaptureLimits,
+	captureArtifacts,
+	DEFAULT_ARTIFACT_CAPTURE_LIMITS,
+	outputCaptureFailure,
+} from "../artifacts/capture.js";
 import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
+import { readAcpRecovery } from "../executors/acp-recovery.js";
 import type {
 	ExecutorEvent,
 	ExecutorPermissionOption,
@@ -30,7 +37,7 @@ import type {
 	ExecutorTask,
 } from "../executors/router.js";
 import type { AppDatabase } from "../storage/database.js";
-import { conversations, evidence, runs } from "../storage/schema.js";
+import { conversations, evidence, runManifests, runs } from "../storage/schema.js";
 
 export const MAX_CONCURRENT_RUNS = 2;
 export type RunStatus =
@@ -57,6 +64,17 @@ const EXECUTOR_RESOURCE_STATUSES: readonly RunStatus[] = [
 ];
 const UNRECOVERABLE_AFTER_RESTART = EXECUTOR_RESOURCE_STATUSES;
 
+/** Shared by live and unopened runtime deletion; uncertainty never authorizes file removal. */
+export function assertRuntimeDeletable(db: AppDatabase): void {
+	const unfinished = db
+		.select({ id: runs.id })
+		.from(runs)
+		.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
+		.limit(1)
+		.get();
+	if (unfinished) throw { kind: "conflict", reason: "external_agent_controller_unavailable" };
+}
+
 type RunRow = typeof runs.$inferSelect;
 export interface RunSummary {
 	id: string;
@@ -71,6 +89,7 @@ export interface RunSummary {
 	artifacts: ArtifactRecord[];
 }
 export interface DelegateParams {
+	runnerId?: string;
 	conversationId: string;
 	triggerEntryId: string;
 	toolCallId: string;
@@ -80,11 +99,11 @@ export interface DelegateParams {
 export interface DelegateResult {
 	runId: string;
 	accepted: true;
-	executor: "pi";
+	executor: "pi" | "codex" | "custom";
+	runnerId: string;
 }
 export interface TerminalRunResult {
 	run: RunSummary;
-	outputs: ArtifactRecord[];
 	needsResultReport: boolean;
 }
 export interface TerminalReconcileResult {
@@ -102,11 +121,19 @@ interface ReconciliationAttempt {
 
 const DEFAULT_RECONCILIATION_TIMEOUT_MS = 15_000;
 
+interface OutputCapture {
+	conversationId: string;
+	controller: AbortController;
+	promise: Promise<void>;
+}
+
 /** Direct external-agent ownership/FSM boundary. There is no proposal or approval phase. */
 export class ExternalAgentRunService {
 	private readonly events = new PQueue({ concurrency: 1 });
 	private readonly changeListeners = new Set<(run: WireRun) => void>();
 	private readonly reconciliationTasks = new Map<string, ReconciliationAttempt>();
+	/** Owned file operations, drained before the exact Run directory or database is released. */
+	private readonly captures = new Map<string, OutputCapture>();
 	private readonly detachedTasks = new Set<Promise<void>>();
 	private readonly admissions = new Set<Promise<DelegateResult>>();
 	private readonly controls = new Map<Promise<unknown>, string>();
@@ -116,6 +143,7 @@ export class ExternalAgentRunService {
 	>();
 	private readonly deletingConversations = new Set<string>();
 	private closePromise: Promise<void> | undefined;
+	private recoveryPromise: Promise<number> | undefined;
 	private closed = false;
 	constructor(
 		private readonly db: AppDatabase,
@@ -124,6 +152,7 @@ export class ExternalAgentRunService {
 		private readonly runRoot: string,
 		private readonly resolvePiModel: (
 			conversationId: string,
+			pinned?: { providerId: string; modelId: string },
 		) => Promise<ExecutorTask["modelRoute"]>,
 		private readonly onTerminal?: (
 			result: TerminalRunResult,
@@ -135,6 +164,7 @@ export class ExternalAgentRunService {
 			conversationId: string,
 			event: ExecutorEvent,
 		) => void,
+		private readonly captureLimits: Readonly<ArtifactCaptureLimits> = DEFAULT_ARTIFACT_CAPTURE_LIMITS,
 	) {
 		mkdirSync(runRoot, { recursive: true });
 	}
@@ -174,7 +204,7 @@ export class ExternalAgentRunService {
 			throw { kind: "validation_failed", reason: "tool_call_id_invalid" };
 		const existing = () =>
 			this.db
-				.select({ id: runs.id })
+				.select({ id: runs.id, executorProfile: runs.executorProfile })
 				.from(runs)
 				.where(
 					and(
@@ -184,19 +214,32 @@ export class ExternalAgentRunService {
 				)
 				.get();
 		const admitted = existing();
-		if (admitted) return { accepted: true, runId: admitted.id, executor: "pi" };
+		if (admitted)
+			return {
+				accepted: true,
+				runId: admitted.id,
+				runnerId: admitted.executorProfile,
+				executor: this.executorRouter.profileType(admitted.executorProfile),
+			};
 		const instruction = params.instruction.trim();
 		if (!instruction)
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
 		const inputPaths = validateInputPaths(params.inputPaths);
-		this.executorRouter.validateProfile("pi-default", "pi");
-		const modelRoute = await this.resolvePiModel(params.conversationId);
-		if (!modelRoute) throw { kind: "unavailable", reason: "pi_model_unavailable" };
+		const profile = this.executorRouter.validateProfile(params.runnerId ?? "pi-default");
+		const modelRoute =
+			profile.type === "pi" ? await this.resolvePiModel(params.conversationId) : undefined;
+		if (profile.type === "pi" && !modelRoute)
+			throw { kind: "unavailable", reason: "pi_model_unavailable" };
 		return this.enqueueEvent(() => {
 			this.assertAdmissionOpen(params.conversationId);
 			const duplicate = existing();
 			if (duplicate)
-				return { accepted: true as const, runId: duplicate.id, executor: "pi" as const };
+				return {
+					accepted: true as const,
+					runId: duplicate.id,
+					runnerId: duplicate.executorProfile,
+					executor: this.executorRouter.profileType(duplicate.executorProfile),
+				};
 			const resourceOwners = this.db
 				.select({ n: count() })
 				.from(runs)
@@ -212,13 +255,13 @@ export class ExternalAgentRunService {
 					conversationId: params.conversationId,
 					triggerEntryId: params.triggerEntryId,
 					toolCallId: params.toolCallId,
-					executorProfile: "pi-default",
+					executorProfile: profile.id,
 					title:
 						instruction
 							.split(/\r?\n/)
 							.find((line) => line.trim())
 							?.trim()
-							.slice(0, 80) ?? "Pi task",
+							.slice(0, 80) ?? "Worker task",
 					instruction,
 					inputPaths,
 					status: "enqueued",
@@ -277,6 +320,7 @@ export class ExternalAgentRunService {
 								}),
 							);
 						},
+						profile,
 					);
 				})
 				.catch(async (error) => {
@@ -290,7 +334,7 @@ export class ExternalAgentRunService {
 						if (this.getRun(runId).completedAt) return;
 						const reason = safeExecutorFailureReason(safeReason(error, inputPaths));
 						this.recordEvidence(runId, "executor.launch_failed", { reason });
-						this.terminate(runId, "failed", reason, []);
+						this.terminate(runId, "failed", reason);
 					});
 				})
 				.finally(() => {
@@ -300,7 +344,7 @@ export class ExternalAgentRunService {
 			// Startup failures stay attached to the admitted identity, never reject its receipt.
 			void launch.promise.catch(() => undefined);
 			this.changed(runId);
-			return { accepted: true as const, runId, executor: "pi" as const };
+			return { accepted: true as const, runId, runnerId: profile.id, executor: profile.type };
 		});
 	}
 
@@ -319,6 +363,15 @@ export class ExternalAgentRunService {
 		}
 		if (run.completedAt) return;
 		switch (event.type) {
+			case "restored":
+				this.db
+					.update(runs)
+					.set({ status: "interrupted", permissionJson: null })
+					.where(eq(runs.id, runId))
+					.run();
+				this.recordEvidence(runId, "run.restored", { executorProfile: run.executorProfile });
+				this.changed(runId);
+				return;
 			case "started":
 				if (run.status !== "enqueued")
 					throw { kind: "conflict", reason: "executor_started_invalid_run_state" };
@@ -339,43 +392,86 @@ export class ExternalAgentRunService {
 					throw { kind: "conflict", reason: "executor_needs_user_invalid_run_state" };
 				return;
 			case "completed": {
+				if (this.closed || this.deletingConversations.has(run.conversationId)) {
+					this.terminate(
+						runId,
+						this.closed ? "forced_termination" : "cancelled",
+						"output_capture_stopped",
+					);
+					return;
+				}
 				const normalizedSummary = event.summary
 					? sanitizeText(event.summary, paths).slice(0, 12_000)
 					: null;
-				try {
-					const outputs = captureArtifacts(
-						this.artifacts,
-						runId,
-						outputDirectory,
-						canonicalOutputDirectory,
-					);
-					this.terminate(runId, "completed", normalizedSummary, outputs);
-				} catch {
-					this.recordEvidence(runId, "executor.failed", { reason: "output_snapshot_failed" });
-					this.terminate(runId, "failed", "output_snapshot_failed", []);
-				}
+				this.captureResult(run, outputDirectory, canonicalOutputDirectory, normalizedSummary);
 				return;
 			}
 			case "failed":
-				this.terminate(runId, "failed", safeExecutorFailureReason(event.reason), []);
+				this.terminate(runId, "failed", safeExecutorFailureReason(event.reason));
 				return;
 			case "cancelled":
-				this.terminate(
-					runId,
-					"cancelled",
-					event.reason ? safeReason(event.reason, paths) : null,
-					[],
-				);
+				this.terminate(runId, "cancelled", event.reason ? safeReason(event.reason, paths) : null);
 				return;
 		}
 	}
 
-	private terminate(
-		runId: string,
-		status: TerminalRunStatus,
+	private captureResult(
+		run: RunRow,
+		outputDirectory: string,
+		canonicalOutputDirectory: string,
 		summary: string | null,
-		outputs: ArtifactRecord[],
-	): RunSummary {
+	): void {
+		if (
+			this.closed ||
+			this.deletingConversations.has(run.conversationId) ||
+			this.captures.has(run.id)
+		)
+			return;
+		const controller = new AbortController();
+		const capture: OutputCapture = {
+			conversationId: run.conversationId,
+			controller,
+			promise: Promise.resolve(),
+		};
+		// Completion has released the executor. Files are copied outside the
+		// Run transition queue so other Runs can still be controlled while copying.
+		capture.promise = captureArtifacts(
+			this.artifacts,
+			run.id,
+			outputDirectory,
+			canonicalOutputDirectory,
+			this.captureLimits,
+			controller.signal,
+		)
+			.then(() =>
+				this.enqueueEvent(() => {
+					if (
+						!controller.signal.aborted &&
+						!this.closed &&
+						!this.deletingConversations.has(run.conversationId)
+					)
+						this.terminate(run.id, "completed", summary);
+				}),
+			)
+			.catch(async (error) => {
+				if (
+					controller.signal.aborted ||
+					this.closed ||
+					this.deletingConversations.has(run.conversationId)
+				)
+					return;
+				await this.enqueueEvent(() => {
+					const reason = outputCaptureFailure(error);
+					this.recordEvidence(run.id, "executor.failed", { reason });
+					this.terminate(run.id, "failed", reason);
+				});
+			})
+			.finally(() => this.captures.delete(run.id));
+		this.captures.set(run.id, capture);
+		this.trackDetached(capture.promise);
+	}
+
+	private terminate(runId: string, status: TerminalRunStatus, summary: string | null): RunSummary {
 		const run = this.getRun(runId);
 		if (run.completedAt) return summarize(run);
 		const update = this.db
@@ -386,7 +482,7 @@ export class ExternalAgentRunService {
 		if (!update.changes) return summarize(this.getRun(runId));
 		this.changed(runId);
 		const result = summarize(this.getRun(runId));
-		void this.reconcileRun(runId, outputs);
+		void this.reconcileRun(runId);
 		return result;
 	}
 
@@ -415,7 +511,7 @@ export class ExternalAgentRunService {
 			title: run.title,
 			status: run.status,
 			controller: runtime.controller,
-			actions,
+			actions: this.closed || this.deletingConversations.has(row.conversationId) ? [] : actions,
 			...(row.resultReportedAt ? { resultReportedAt: row.resultReportedAt } : {}),
 			artifacts: this.artifacts.list(row.id).map((artifact) => ({
 				id: artifact.id,
@@ -423,7 +519,9 @@ export class ExternalAgentRunService {
 				mime: artifact.mime,
 				bytes: artifact.bytes,
 				sha256: artifact.sha256,
-				status: artifact.status,
+				verification: artifact.verification,
+				saved: artifact.saved,
+				adopted: artifact.adopted,
 				createdAt: artifact.createdAt,
 			})),
 			...(run.summary ? { summary: safeRunText(run.summary, 4_096) } : {}),
@@ -482,11 +580,7 @@ export class ExternalAgentRunService {
 		return row;
 	}
 
-	private reconcileRun(
-		runId: string,
-		capturedOutputs?: ArtifactRecord[],
-		options: ReconciliationAttemptOptions = {},
-	): Promise<void> {
+	private reconcileRun(runId: string, options: ReconciliationAttemptOptions = {}): Promise<void> {
 		if (this.closed) return Promise.resolve();
 		const pending = this.reconciliationTasks.get(runId);
 		if (pending) return pending.promise;
@@ -498,15 +592,24 @@ export class ExternalAgentRunService {
 		const task = (async () => {
 			try {
 				const row = this.getRun(runId);
-				if (!row.completedAt || row.resultReportedAt || !this.onTerminal) {
+				if (
+					!row.completedAt ||
+					row.resultReportedAt ||
+					!this.onTerminal ||
+					this.deletingConversations.has(row.conversationId)
+				) {
 					return;
 				}
 				const needsResultReport = !row.resultReportedAt;
 				const delivery = Promise.resolve(
 					this.onTerminal(
 						{
-							run: summarize(row),
-							outputs: capturedOutputs ?? this.artifacts.list(row.id),
+							run: summarize(
+								row,
+								this.artifacts
+									.list(row.id)
+									.filter((artifact) => artifact.verification === "verified"),
+							),
 							needsResultReport,
 						},
 						controller.signal,
@@ -577,7 +680,7 @@ export class ExternalAgentRunService {
 				)
 				.all(),
 		);
-		await Promise.all(pending.map(({ id }) => this.reconcileRun(id, undefined, options)));
+		await Promise.all(pending.map(({ id }) => this.reconcileRun(id, options)));
 		return pending.length;
 	}
 	private executorRun(row: RunRow): ExecutorRun {
@@ -807,7 +910,7 @@ export class ExternalAgentRunService {
 			throw error;
 		}
 		this.launches.delete(runId);
-		return this.enqueueEvent(() => this.terminate(runId, "cancelled", null, []));
+		return this.enqueueEvent(() => this.terminate(runId, "cancelled", null));
 	}
 
 	private assertAction(row: RunRow, action: NonNullable<WireRun["actions"]>[number]): void {
@@ -867,6 +970,7 @@ export class ExternalAgentRunService {
 		const page = rows.slice(0, limit);
 		return {
 			run: this.project(summarize(row)),
+			provenance: this.provenance(row),
 			instruction: safeRunText(row.instruction, Number.POSITIVE_INFINITY),
 			inputPaths: row.inputPaths.map((path) => safeRunText(basename(path), 1_024)),
 			evidence: page.map((item) => ({
@@ -879,6 +983,28 @@ export class ExternalAgentRunService {
 				? { nextCursor: encodeCursor(page[page.length - 1]!) }
 				: {}),
 		};
+	}
+
+	private provenance(run: RunRow): RunGetResponse["provenance"] {
+		const rows = this.db
+			.select({
+				manifest: sql<
+					string | null
+				>`CASE WHEN length(${runManifests.manifestJson}) <= 4096 THEN ${runManifests.manifestJson} ELSE NULL END`,
+			})
+			.from(runManifests)
+			.where(eq(runManifests.runId, run.id))
+			.orderBy(desc(sql`${runManifests}.rowid`))
+			.limit(21)
+			.all();
+		const entries: RunGetResponse["provenance"]["entries"] = [];
+		let unavailableCount = 0;
+		for (const { manifest } of rows.slice(0, 20)) {
+			const entry = projectRunManifest(manifest, run);
+			if (entry) entries.push(entry);
+			else unavailableCount++;
+		}
+		return { entries, unavailableCount, hasMore: rows.length > 20 };
 	}
 
 	listPage(companionId: string, request: RunListRequest = {}): RunListResponse {
@@ -989,11 +1115,22 @@ export class ExternalAgentRunService {
 		if (this.closePromise) return this.closePromise;
 		this.closed = true;
 		for (const launch of this.launches.values()) launch.cancelled = true;
-		this.closePromise = this.stopExecutorsAndDrain();
+		const completedExecutors = new Set(this.captures.keys());
+		for (const capture of this.captures.values()) capture.controller.abort();
+		this.closePromise = this.stopExecutorsAndDrain(completedExecutors).catch((error) => {
+			// Keep admissions closed, but let the owning runtime retry resource release.
+			this.closePromise = undefined;
+			throw error;
+		});
 		return this.closePromise;
 	}
 
-	private async stopExecutorsAndDrain(): Promise<void> {
+	/** Called after stop/drain and before a character runtime is physically deleted. */
+	assertRuntimeDeletable(): void {
+		assertRuntimeDeletable(this.db);
+	}
+
+	private async stopExecutorsAndDrain(completedExecutors: ReadonlySet<string>): Promise<void> {
 		await Promise.allSettled([...this.admissions]);
 		const unfinished = await this.enqueueEvent(() =>
 			this.db
@@ -1003,7 +1140,7 @@ export class ExternalAgentRunService {
 				.all(),
 		);
 		const attached = new Set<string>();
-		const confirmedLost = new Set<string>();
+		const confirmedLost = new Set(completedExecutors);
 		const ownedStartups = new Set(this.launches.keys());
 		for (const row of unfinished) {
 			if (ownedStartups.has(row.id)) {
@@ -1020,13 +1157,14 @@ export class ExternalAgentRunService {
 		}
 
 		let failure: unknown;
+		const preserved = new Set<string>();
 		try {
-			await this.executorRouter.close();
+			for (const id of await this.executorRouter.suspend()) preserved.add(id);
 		} catch (error) {
 			failure = error;
 		}
 		await Promise.allSettled([...this.launches.values()].map((launch) => launch.promise));
-		this.launches.clear();
+		if (!failure) this.launches.clear();
 		for (const attempt of this.reconciliationTasks.values()) attempt.controller.abort();
 		await Promise.allSettled([...this.controls.keys()]);
 		await this.drainDetachedTasks();
@@ -1034,9 +1172,15 @@ export class ExternalAgentRunService {
 			...confirmedLost,
 			// Successful close proves release of attached handles and locally
 			// owned startups, including those still awaiting an ACP session.
-			...(failure ? [] : [...attached, ...ownedStartups]),
+			...(failure ? [] : [...attached, ...ownedStartups].filter((id) => !preserved.has(id))),
 		];
 		await this.enqueueEvent(() => {
+			for (const id of preserved)
+				this.db
+					.update(runs)
+					.set({ status: "interrupted", permissionJson: null })
+					.where(and(eq(runs.id, id), isNull(runs.completedAt)))
+					.run();
 			const stopped =
 				stoppableIds.length > 0
 					? this.db
@@ -1094,7 +1238,14 @@ export class ExternalAgentRunService {
 		this.detachedTasks.clear();
 	}
 
-	async recoverUnfinishedRuns(): Promise<number> {
+	recoverUnfinishedRuns(): Promise<number> {
+		this.recoveryPromise ??= this.recoverExecutors().finally(() => {
+			this.recoveryPromise = undefined;
+		});
+		return this.recoveryPromise;
+	}
+
+	private async recoverExecutors(): Promise<number> {
 		const unrecoverable = await this.enqueueEvent(() =>
 			this.db
 				.select()
@@ -1107,7 +1258,45 @@ export class ExternalAgentRunService {
 			const run = this.executorRun(row);
 			let recovery: "attached" | "confirmed_lost" | "unknown";
 			try {
-				recovery = await this.executorRouter.recover(run);
+				const prepared = prepareRunDirectories(join(this.runRoot, row.id), row.inputPaths);
+				const recoveryIdentity = readAcpRecovery({
+					run,
+					profile: this.executorRouter.profile(row.executorProfile),
+					task: {
+						instruction: row.instruction,
+						workspace: prepared.workspace,
+						outputDirectory: prepared.outputDirectory,
+					},
+					emit() {},
+				});
+				const modelRoute =
+					this.executorRouter.profileType(row.executorProfile) === "pi"
+						? await this.resolvePiModel(row.conversationId, recoveryIdentity?.modelRoute)
+						: undefined;
+				recovery = await this.executorRouter.restore(
+					run,
+					{
+						instruction: row.instruction,
+						workspace: prepared.workspace,
+						outputDirectory: prepared.outputDirectory,
+						readOnlyPaths: row.inputPaths,
+						modelRoute,
+					},
+					(event) => {
+						if (this.closed || this.deletingConversations.has(row.conversationId)) return;
+						this.trackDetached(
+							this.enqueueEvent(() =>
+								this.applyExecutorEvent(
+									row.id,
+									event,
+									prepared.outputDirectory,
+									prepared.canonicalOutputDirectory,
+									[...row.inputPaths, prepared.workspace, prepared.outputDirectory],
+								),
+							),
+						);
+					},
+				);
 			} catch (error) {
 				await this.enqueueEvent(() => {
 					this.recordEvidence(row.id, "run.recovery_deferred", { reason: safeReason(error, []) });
@@ -1142,6 +1331,12 @@ export class ExternalAgentRunService {
 
 	async prepareConversationDeletion(conversationId: string): Promise<void> {
 		this.deletingConversations.add(conversationId);
+		const captures = [...this.captures].filter(
+			([, capture]) => capture.conversationId === conversationId,
+		);
+		const completedExecutors = new Set(captures.map(([id]) => id));
+		for (const [, capture] of captures) capture.controller.abort();
+		await Promise.all(captures.map(([, capture]) => capture.promise));
 		await Promise.allSettled([...this.admissions]);
 		const owned = await this.enqueueEvent(() =>
 			this.db.select().from(runs).where(eq(runs.conversationId, conversationId)).all(),
@@ -1166,6 +1361,10 @@ export class ExternalAgentRunService {
 		};
 		try {
 			for (const row of unfinished) {
+				if (completedExecutors.has(row.id)) {
+					await recordStopped(row.id);
+					continue;
+				}
 				const launch = this.launches.get(row.id);
 				if (launch) launch.cancelled = true;
 				if (launch?.started) {
@@ -1338,6 +1537,52 @@ async function waitForReconciliationAttempt<T>(
 	}
 }
 
+/** Only adapter-owned launch facts cross the boundary; raw manifests and local paths never do. */
+function projectRunManifest(
+	encoded: string | null,
+	run: RunRow,
+): RunGetResponse["provenance"]["entries"][number] | undefined {
+	if (encoded === null) return undefined;
+	let value: unknown;
+	try {
+		value = JSON.parse(encoded);
+	} catch {
+		return undefined;
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const manifest = value as Record<string, unknown>;
+	if (
+		manifest.schemaVersion !== 1 ||
+		(manifest.executor !== "pi-acp" &&
+			manifest.executor !== "codex" &&
+			manifest.executor !== "custom") ||
+		manifest.runId !== run.id ||
+		manifest.profileId !== run.executorProfile ||
+		typeof manifest.profileId !== "string" ||
+		!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(manifest.profileId) ||
+		typeof manifest.launchedAt !== "string" ||
+		manifest.launchedAt.length > 64 ||
+		!Number.isFinite(Date.parse(manifest.launchedAt))
+	)
+		return undefined;
+	const entry: RunGetResponse["provenance"]["entries"][number] = {
+		executor: manifest.executor,
+		profileId: manifest.profileId,
+		launchedAt: new Date(manifest.launchedAt).toISOString(),
+	};
+	if (manifest.executor === "codex") {
+		if (
+			typeof manifest.version === "string" &&
+			manifest.version.length <= 128 &&
+			/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(manifest.version)
+		)
+			entry.version = manifest.version;
+		if (typeof manifest.sha256 === "string" && /^[a-f0-9]{64}$/.test(manifest.sha256))
+			entry.sha256 = manifest.sha256;
+	}
+	return entry;
+}
+
 function reconciliationError(error: unknown): string {
 	if (error instanceof Error) return error.message.slice(0, 1_024);
 	if (typeof error === "object" && error !== null && "reason" in error) {
@@ -1346,12 +1591,10 @@ function reconciliationError(error: unknown): string {
 	return String(error).slice(0, 1_024);
 }
 
-export function externalAgentResultMessage(
-	result: Pick<TerminalRunResult, "run" | "outputs">,
-): string {
+export function externalAgentResultMessage(result: Pick<TerminalRunResult, "run">): string {
 	const title = sanitizeExternalAgentMemoryText(result.run.title, 512);
 	const summary = sanitizeExternalAgentMemoryText(result.run.summary ?? "No result text.", 4_000);
-	const artifacts = result.outputs
+	const artifacts = result.run.artifacts
 		.slice(0, 50)
 		.map((output) => sanitizeExternalAgentMemoryText(output.logicalName, 256));
 	return sanitizeExternalAgentMemoryText(
@@ -1529,138 +1772,6 @@ function prepareRunDirectories(runDirectory: string, paths: readonly string[]) {
 	};
 }
 
-function captureArtifacts(
-	store: ArtifactStore,
-	runId: string,
-	outputDirectory: string,
-	expectedRoot: string,
-): ArtifactRecord[] {
-	const initialRoot = lstatSync(outputDirectory);
-	if (initialRoot.isSymbolicLink() || !initialRoot.isDirectory()) {
-		throw new Error("run_output_root_invalid");
-	}
-	const root = realpathSync.native(outputDirectory);
-	if (root !== expectedRoot) throw new Error("run_output_root_changed");
-	const rootStat = lstatSync(root);
-	if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-		throw new Error("run_output_root_invalid");
-	}
-	const pending = [{ path: root, depth: 0 }];
-	const files: Array<{ path: string; logicalName: string; stat: Stats }> = [];
-	let totalBytes = 0;
-	while (pending.length) {
-		const directory = pending.pop();
-		if (!directory) break;
-		const directoryStat = lstatSync(directory.path);
-		if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
-			throw new Error("run_output_directory_invalid");
-		}
-		if (!within(root, realpathSync.native(directory.path))) throw new Error("run_output_escape");
-		for (const entry of readdirSync(directory.path, { withFileTypes: true })) {
-			const path = join(directory.path, entry.name);
-			const stat = lstatSync(path);
-			if (stat.isSymbolicLink()) continue;
-			if (stat.isDirectory()) {
-				pending.push({ path, depth: directory.depth + 1 });
-				continue;
-			}
-			if (!stat.isFile()) throw new Error("run_output_entry_invalid");
-			const canonical = realpathSync.native(path);
-			if (!within(root, canonical)) throw new Error("run_output_escape");
-			totalBytes += stat.size;
-			if (!Number.isSafeInteger(totalBytes)) {
-				throw new Error("run_output_total_too_large");
-			}
-			files.push({
-				path: canonical,
-				logicalName: relative(root, canonical).replaceAll("\\", "/"),
-				stat,
-			});
-		}
-	}
-	return files
-		.sort((a, b) => a.logicalName.localeCompare(b.logicalName))
-		.map((file) => {
-			const current = lstatSync(file.path);
-			if (!sameFile(current, file.stat)) throw new Error("run_output_changed_before_capture");
-			const artifact = store.createFromPathSync({
-				logicalName: file.logicalName,
-				path: file.path,
-				mime: "application/octet-stream",
-				sniffMime: (header) => outputMime(file.path, header),
-				producerRunId: runId,
-			});
-			store.markVerified(artifact.id);
-			return { ...artifact, status: "verified" as const };
-		});
-}
-
-function within(root: string, candidate: string): boolean {
-	const child = relative(root, candidate);
-	return (
-		child === "" ||
-		(!isAbsolute(child) && child !== ".." && !child.startsWith("../") && !child.startsWith("..\\"))
-	);
-}
-
-function sameFile(left: Stats, right: Stats): boolean {
-	return (
-		left.isFile() &&
-		left.dev === right.dev &&
-		left.ino === right.ino &&
-		left.size === right.size &&
-		left.mtimeMs === right.mtimeMs
-	);
-}
-
-function outputMime(path: string, header: Uint8Array): string {
-	const bytes = Buffer.from(header.buffer, header.byteOffset, header.byteLength);
-	const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-	if (bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) return "application/pdf";
-	if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
-		return "image/png";
-	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-	if (
-		bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
-		bytes.subarray(0, 6).toString("ascii") === "GIF89a"
-	)
-		return "image/gif";
-	if (
-		bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
-		bytes.subarray(8, 12).toString("ascii") === "WEBP"
-	)
-		return "image/webp";
-	if (
-		bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
-		bytes.subarray(8, 12).toString("ascii") === "WAVE"
-	)
-		return "audio/wav";
-	if (
-		bytes.subarray(0, 3).toString("ascii") === "ID3" ||
-		(bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)
-	)
-		return "audio/mpeg";
-	if (bytes.subarray(4, 8).toString("ascii") === "ftyp") return "video/mp4";
-	if (bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return "video/webm";
-	const zip = bytes[0] === 0x50 && bytes[1] === 0x4b && [0x03, 0x05, 0x07].includes(bytes[2] ?? -1);
-	return (
-		(
-			{
-				txt: "text/plain",
-				md: "text/markdown",
-				json: "application/json",
-				csv: "text/csv",
-				...(zip
-					? {
-							docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-							xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-							pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-						}
-					: {}),
-			} as Record<string, string>
-		)[extension] ?? "application/octet-stream"
-	);
-}
 function sanitizeText(value: string, paths: string[]): string {
 	let text = stripControlSequences(value);
 	for (const path of [...paths].sort((a, b) => b.length - a.length))
@@ -1678,7 +1789,7 @@ function safeReason(error: unknown, paths: string[]): string {
 
 function safeExecutorFailureReason(reason: string): string {
 	if (
-		/^(?:acp_executor_failed|acp_start_failed|acp_process_spawn_failed|acp_process_stdio_failed|acp_agent_terminated_by_signal|acp_agent_exit_unknown)$/.test(
+		/^(?:acp_executor_failed|acp_start_failed|acp_process_spawn_failed|acp_process_stdio_failed|acp_agent_terminated_by_signal|acp_agent_exit_unknown|runner_startup_timeout|runner_authentication_required|runner_auth_method_unavailable|runner_credential_missing|runner_recovery_unsupported|runner_final_result_missing)$/.test(
 			reason,
 		) ||
 		/^acp_agent_exit_code:-?\d{1,10}$/.test(reason)

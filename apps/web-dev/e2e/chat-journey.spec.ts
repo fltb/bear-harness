@@ -14,7 +14,7 @@ async function nativeEntries(page: Page, conversationId: string) {
 	const { token } = await getBootstrap(page);
 	const response = await page.request.post("/rpc/conversation.open", {
 		headers: { "x-bear-web-dev-token": token },
-		data: { conversationId },
+		data: { characterId: "jizhou", conversationId },
 	});
 	const envelope = await response.json();
 	expect(envelope).toMatchObject({ ok: true });

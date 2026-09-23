@@ -1,13 +1,17 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import { describe, expect, it } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, FORK_PRODUCT } from "./fixtures.js";
 
 describe("idle homepage (fork config injection, no bridge)", () => {
-	it("renders the locale-owned app title with the fork shell frame", () => {
+	it("renders the locale-owned app title with the fork shell frame", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={FORK_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		expect(document.title).toBe(zhCN.shell.productName);
 		expect(screen.getByRole("application", { name: zhCN.shell.productName })).toBeInTheDocument();
@@ -20,9 +24,12 @@ describe("idle homepage (fork config injection, no bridge)", () => {
 		expect(screen.getByRole("button", { name: zhCN.sidebar.createConversation })).toBeEnabled();
 	});
 
-	it("renders the fork-identity shell with accessibility landmarks", () => {
+	it("renders the fork-identity shell with accessibility landmarks", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={FORK_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		expect(
 			screen.getByRole("navigation", { name: zhCN.sidebar.conversations }),

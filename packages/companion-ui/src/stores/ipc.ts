@@ -15,7 +15,7 @@
  * payloads are dropped, never projected.
  */
 
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type { CharacterClient as CompanionClient } from "@bear-harness/companion-client";
 import type * as Wire from "@bear-harness/protocol";
 import type { RpcEnvelope } from "@bear-harness/protocol";
 import { unwrap } from "../lib/ipc.js";
@@ -133,7 +133,7 @@ export type CharacterOnboardingChoiceStep = Extract<CharacterOnboardingStep, { k
 export type CharacterOnboardingFlow = Wire.CharacterOnboardingFlow;
 export type CharacterTheme = Wire.CharacterTheme;
 export type CharacterDisplay = Wire.CharacterDisplay;
-export type CharacterSummary = Wire.CharacterSummary;
+export type CharacterSummary = Wire.CharacterSummary & { active: boolean };
 export type CharacterListData = Wire.CharacterListResponse;
 export type CharacterPackageDocument = Wire.CharacterPackageDocument;
 export type CharacterDeletionStatus = Wire.CharacterDeletionStatus;

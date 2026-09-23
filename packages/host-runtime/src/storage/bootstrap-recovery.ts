@@ -22,7 +22,6 @@ const SYSTEM_TABLES = [
 	"installation_identity",
 	"companion_packages",
 	"companion_identity",
-	"active_character",
 	"app_settings",
 	"provider_accounts",
 	"configured_models",
@@ -35,7 +34,7 @@ const SYSTEM_TABLES = [
 const COMPANION_TABLES = [
 	"runtime_identity",
 	"conversations",
-	"active_conversations",
+	"character_memory_settings",
 	"model_route_settings",
 	"onboarding_state",
 	"runs",
@@ -57,7 +56,7 @@ const JSON_COLUMNS = new Set([
 	"memory_vector_service",
 	"system_model_defaults",
 	"model_download_mirror",
-	"capability_json",
+	"config_json",
 	"files_json",
 	"state_json",
 	"input_paths",
@@ -77,7 +76,7 @@ const SYSTEM_JSON_STORAGE: Readonly<Record<string, readonly string[]>> = {
 		"system_model_defaults",
 		"model_download_mirror",
 	],
-	executor_profiles: ["capability_json"],
+	executor_profiles: ["config_json"],
 	character_draft_revisions: ["files_json"],
 };
 
@@ -108,7 +107,7 @@ export type BootstrapFatalIssue =
 	  };
 
 export type BootstrapHealth =
-	| { status: "ok"; activeCharacterId: string }
+	| { status: "ok"; defaultCharacterId: string }
 	| { status: "fatal"; issue: BootstrapFatalIssue };
 
 export interface BootstrapInspectionOptions {
@@ -170,21 +169,6 @@ function databaseIntegrity(path: string, requiredTables: readonly string[]): boo
 		return false;
 	} finally {
 		database?.close();
-	}
-}
-
-function readActiveCharacter(path: string, fallback: string): string {
-	if (!existsSync(path)) return fallback;
-	const database = new DatabaseSync(path, { readOnly: true });
-	try {
-		const row = database
-			.prepare("SELECT character_id FROM active_character WHERE singleton = 1")
-			.get() as { character_id?: unknown } | undefined;
-		return typeof row?.character_id === "string" && row.character_id
-			? requireCompanionId(row.character_id)
-			: fallback;
-	} finally {
-		database.close();
 	}
 }
 
@@ -322,15 +306,7 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 			},
 		};
 	}
-	let activeCharacterId: string;
-	try {
-		activeCharacterId = readActiveCharacter(layout.systemDatabase, options.defaultCharacterId);
-	} catch (error) {
-		return {
-			status: "fatal",
-			issue: { kind: "settings_database", path: layout.systemDatabase, message: message(error) },
-		};
-	}
+	const { defaultCharacterId } = options;
 	let loader: CharacterLoader;
 	try {
 		loader = new CharacterLoader(options.characterSeedRoot, layout.charactersRoot);
@@ -347,32 +323,32 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 		};
 	}
 	try {
-		if (!loader.load(activeCharacterId)) throw new Error("character package is missing");
+		if (!loader.load(defaultCharacterId)) throw new Error("character package is missing");
 	} catch (error) {
 		return {
 			status: "fatal",
 			issue: {
 				kind: "character_package",
-				characterId: activeCharacterId,
-				defaultCharacter: activeCharacterId === options.defaultCharacterId,
+				characterId: defaultCharacterId,
+				defaultCharacter: true,
 				message: message(error),
 			},
 		};
 	}
-	const companion = layout.companion(activeCharacterId);
+	const companion = layout.companion(defaultCharacterId);
 	try {
 		recoverPendingDatabaseRepairs(companion.root, "runtime.db", COMPANION_TABLES);
 	} catch (error) {
 		return { status: "fatal", issue: { kind: "filesystem", message: message(error) } };
 	}
 	try {
-		validateCompanionDatabase(companion.database, activeCharacterId);
+		validateCompanionDatabase(companion.database, defaultCharacterId);
 	} catch (error) {
 		return {
 			status: "fatal",
 			issue: {
 				kind: "companion_database",
-				characterId: activeCharacterId,
+				characterId: defaultCharacterId,
 				path: companion.database,
 				message: message(error),
 			},
@@ -380,19 +356,19 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 	}
 	if (
 		!databaseIntegrity(companion.database, COMPANION_TABLES) ||
-		!validateCompanionIdentity(companion.database, activeCharacterId)
+		!validateCompanionIdentity(companion.database, defaultCharacterId)
 	) {
 		return {
 			status: "fatal",
 			issue: {
 				kind: "companion_database",
-				characterId: activeCharacterId,
+				characterId: defaultCharacterId,
 				path: companion.database,
 				message: "Character runtime database is damaged or belongs to another character",
 			},
 		};
 	}
-	return { status: "ok", activeCharacterId };
+	return { status: "ok", defaultCharacterId };
 }
 
 /** Finish any user-authorized product reset before Host-owned directories are opened. */
@@ -670,13 +646,6 @@ export function selectDefaultCharacter(options: BootstrapInspectionOptions): voi
 	loader.bootstrapLibrary(options.defaultCharacterId);
 	const character = loader.load(options.defaultCharacterId);
 	if (!character) throw new Error("default character package is missing");
-	const database = new SystemDatabase(layout.systemDatabase);
-	try {
-		database.initialize(SYSTEM_SCHEMA_SQL);
-		loader.activate(database.orm, character);
-	} finally {
-		database.close();
-	}
 }
 
 export function restoreDefaultCharacterPackage(

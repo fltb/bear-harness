@@ -12,6 +12,7 @@ import {
 	SYSTEM_SCHEMA_SQL,
 	SystemDatabase,
 } from "../src/storage/database.js";
+import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 
 const facts: ModelProjectionFacts = {
 	providers: [{ providerId: "relay", providerName: "Relay", authenticated: true }],
@@ -46,6 +47,7 @@ describe("ModelRegistry", () => {
 			{ invalidate: publish } as never,
 			new AppSettingsStore(systemDatabase.orm),
 			(visit) => visit(companionDatabase.orm),
+			new InvalidationHub(),
 		);
 	});
 
@@ -249,6 +251,7 @@ describe("ModelRegistry", () => {
 					visit(companionDatabase.orm);
 					visit(secondDatabase.orm);
 				},
+				new InvalidationHub(),
 			);
 			expect(second.seedFromSystemDefaults("second-character", facts)).toBe("seeded");
 			expect(second.defaults("second-character", facts).reply?.modelId).toBe("b");
@@ -330,6 +333,7 @@ describe("ModelRegistry", () => {
 				{ invalidate: publish } as never,
 				settings,
 				(visit) => visit(companionDatabase.orm),
+				new InvalidationHub(),
 			);
 			expect(settings.load()).toMatchObject({
 				systemModelOnboardingComplete: true,

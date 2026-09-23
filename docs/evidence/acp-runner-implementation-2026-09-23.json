@@ -1,0 +1,507 @@
+{
+	"schemaVersion": 1,
+	"date": "2026-09-23",
+	"branch": "codex/execution-core-audit",
+	"baseCommit": "bf3cbfb0d94f39acb54e250695a29a47e176c4c3",
+	"phaseBaseline": "working tree captured before ACP runner implementation",
+	"files": [
+		{
+			"path": "apps/web-dev/e2e/runner-settings.spec.ts",
+			"newInPhase": true,
+			"lines": 96,
+			"sha256": "c8e428bc6bdc8b36e6f1a1c5d10b4eee0ab25f385c67b4061788d50ef88a3a50"
+		},
+		{
+			"path": "packages/companion-ui/src/features/RunnerSettings.tsx",
+			"newInPhase": true,
+			"lines": 280,
+			"sha256": "564894fa27fd253778d282c31af6bde6d27eb282494fbb39b80279cb24bfd787"
+		},
+		{
+			"path": "packages/companion-ui/tests/runner-settings.spec.tsx",
+			"newInPhase": true,
+			"lines": 94,
+			"sha256": "1c11a554a4d50d9ed0b85c40bc56a1ddaa77b4f49f56e69ecb0410c7acaf3202"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/acp-dialect.ts",
+			"newInPhase": true,
+			"lines": 108,
+			"sha256": "36ef59d993b3c92c3dea0326a71c4f9f60ae970074b3a052011bbb8ad7e0e1ba"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/acp-recovery.ts",
+			"newInPhase": true,
+			"lines": 71,
+			"sha256": "991484e2f921cb2ec6c0277819d3449de2afafda0d19b6c4876a38a737c61ea1"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/acp-run-io.ts",
+			"newInPhase": true,
+			"lines": 247,
+			"sha256": "d714d1f3dccc623b0be44a18c6c523144295cf1b45f9eed0b7a1c0a6ab6e7ace"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/custom-adapter.ts",
+			"newInPhase": true,
+			"lines": 52,
+			"sha256": "cd6e0ac9ab2af337d3f6a85a861ddd04ea024daffcb400bce1d7d06a0fa6e678"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/profiles.ts",
+			"newInPhase": true,
+			"lines": 183,
+			"sha256": "f731edb44c17bfb0cd8bbc989047a835da089c2761432114579892d50d156e54"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/rpc.ts",
+			"newInPhase": true,
+			"lines": 88,
+			"sha256": "4298eb89868eb031189b37298bfde5edbca375093296aef8947ba29df5e83e6e"
+		},
+		{
+			"path": "packages/host-runtime/tests/acp-dialect.spec.ts",
+			"newInPhase": true,
+			"lines": 43,
+			"sha256": "53a05cdb98822c9116304c55700e538c494e4d8efe5cca59c28129fc5582e3e7"
+		},
+		{
+			"path": "packages/host-runtime/tests/custom-acp.spec.ts",
+			"newInPhase": true,
+			"lines": 80,
+			"sha256": "9db03e1c99c774f2e22b0c3e279aad150882fe53ca01d1a936dc99a7a1b7abe3"
+		},
+		{
+			"path": "packages/host-runtime/tests/fixtures/acp-custom.mjs",
+			"newInPhase": true,
+			"lines": 79,
+			"sha256": "3d9b0a53d2392db407d2fe2293bd0e0c9a5188325ec6174ae5c66211ae10a356"
+		},
+		{
+			"path": "packages/host-runtime/tests/runner-profiles.spec.ts",
+			"newInPhase": true,
+			"lines": 153,
+			"sha256": "3a86216e0eddef3f515457339e16221e3838340908a894dea42e12e852a7d7dc"
+		},
+		{
+			"path": "apps/desktop/electron-builder.config.ts",
+			"newInPhase": false,
+			"lines": 196,
+			"sha256": "9adb37b2c5e45f651a657f8e50ade09c37e59e4b2ca96c61fa4637607d2707d5"
+		},
+		{
+			"path": "apps/desktop/scripts/verify-package-boundary.mjs",
+			"newInPhase": false,
+			"lines": 102,
+			"sha256": "2f33924e1725e59f3334a0cadc71d9dcc891af2cca115de605f6b04953cc95d5"
+		},
+		{
+			"path": "apps/desktop/tests/electron-builder-config.spec.ts",
+			"newInPhase": false,
+			"lines": 182,
+			"sha256": "4cf7557e933e86c8855b4de8693c86ad36d783618697f9af78fd67cd0dafa5a9"
+		},
+		{
+			"path": "apps/web-dev/e2e/layout-dom.spec.ts",
+			"newInPhase": false,
+			"lines": 550,
+			"sha256": "ffa582c8878522f94531b9d3f985ce0c88edf758f938b9d9a567f1b3a71b3224"
+		},
+		{
+			"path": "apps/web-dev/e2e/live-model.spec.ts",
+			"newInPhase": false,
+			"lines": 1154,
+			"sha256": "e9b9e92a7eb9765952ac169e8cb9edf550e0b189355239167d0bd97b45e9b52f"
+		},
+		{
+			"path": "apps/web-dev/e2e/rule-provider-server.ts",
+			"newInPhase": false,
+			"lines": 715,
+			"sha256": "82fb4124ba4f241c5cf1c9e178d2835f906bbf77bc398f60130ebef0836fa463"
+		},
+		{
+			"path": "docs/refernece/companion-ui.md",
+			"newInPhase": false,
+			"lines": 121,
+			"sha256": "fbedc8382b52aaf9dbc24b912d2bad3bc6f39966493f78a26cdd1f81becc0e2a"
+		},
+		{
+			"path": "docs/refernece/host-runtime.md",
+			"newInPhase": false,
+			"lines": 167,
+			"sha256": "fd2a37c86259511d1e0ff17d2aec480def85707d710d0908c06c09c79e587d27"
+		},
+		{
+			"path": "docs/refernece/protocol-schema.md",
+			"newInPhase": false,
+			"lines": 131,
+			"sha256": "5ff07b7435884e8851c5270a0b23afd694c27b27653fcab591d3bb0763d60556"
+		},
+		{
+			"path": "package-lock.json",
+			"newInPhase": false,
+			"lines": 19741,
+			"sha256": "80325890da5abd5a018d69893ab98d531a701865ebdf925ec4955a420c64e5ac"
+		},
+		{
+			"path": "packages/companion-ui/src/features/SettingsSheet.tsx",
+			"newInPhase": false,
+			"lines": 178,
+			"sha256": "2087fb7f4d9926c47cbe3aef593e94360b4400a3c2da1aebd4a31673f6152f18"
+		},
+		{
+			"path": "packages/companion-ui/src/stores/external-agent-api.ts",
+			"newInPhase": false,
+			"lines": 17,
+			"sha256": "875ff7a7813f77b1d6035ac20e0f728f14a6316b15ecd92834903745cecf327b"
+		},
+		{
+			"path": "packages/companion-ui/src/stores/supplementary-api.ts",
+			"newInPhase": false,
+			"lines": 291,
+			"sha256": "c870f6a95ec66cb9c5212a02506632f881711e7a53dc5e26ca9832a888acc2f4"
+		},
+		{
+			"path": "packages/companion-ui/tests/fixtures.ts",
+			"newInPhase": false,
+			"lines": 872,
+			"sha256": "dc176c6c2afbb3bd7ef9440968a62e10ba36ec1a39322d86b5f16cecdf16467f"
+		},
+		{
+			"path": "packages/companion-ui/tests/settings-workbench.spec.tsx",
+			"newInPhase": false,
+			"lines": 59,
+			"sha256": "b1ad400f665c8e78e157d623023da11acf9077d23503b255708b29a8dd4837b9"
+		},
+		{
+			"path": "packages/host-runtime/package.json",
+			"newInPhase": false,
+			"lines": 52,
+			"sha256": "a49f21d879021016c902cb1d24cf61b7d475fee7316bbd955c127a74885a6b72"
+		},
+		{
+			"path": "packages/host-runtime/src/character-runtime.ts",
+			"newInPhase": false,
+			"lines": 484,
+			"sha256": "835673cabf7c5acc06e406ae70c0e3fbdffe58d82cefa203195f59bdf733f52d"
+		},
+		{
+			"path": "packages/host-runtime/src/companion/host-tool-register.ts",
+			"newInPhase": false,
+			"lines": 456,
+			"sha256": "408532f84af3746d00e477520e459fce790ae344c156c22cd0d58ea66742be6b"
+		},
+		{
+			"path": "packages/host-runtime/src/companion/pi-runtime.ts",
+			"newInPhase": false,
+			"lines": 1196,
+			"sha256": "3953d5a802fe8441a523fab22e981e00d9738cc74079bf29533b202fb3cc0cf1"
+		},
+		{
+			"path": "packages/host-runtime/src/composition.ts",
+			"newInPhase": false,
+			"lines": 1207,
+			"sha256": "9d6cef6527ec6a31aefa57c1cf4220dbe1d3bba42537f57903ce45b1e86c1b2a"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/acp-client.ts",
+			"newInPhase": false,
+			"lines": 497,
+			"sha256": "99e08c93839f5af043fc3aa5fb8af63bd26167c60ca851e6213fb11e73430f37"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/acp-executor.ts",
+			"newInPhase": false,
+			"lines": 598,
+			"sha256": "8ba652755b7b48ef6982e46c007dec9654128b3a2e7e0b8f91bdedc95aabc1a6"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/codex-adapter.ts",
+			"newInPhase": false,
+			"lines": 587,
+			"sha256": "33a9b4b35ed58e40eac88f04fc43928a48d478a354c82df24fcebbd9b4ff592a"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/confinement.ts",
+			"newInPhase": false,
+			"lines": 332,
+			"sha256": "74682a3e0b051384b088a90afdebe514921aec24f50ede407c85096f844e57d6"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/pi-acp-worker.ts",
+			"newInPhase": false,
+			"lines": 492,
+			"sha256": "bc5a56f31c0acf6565ec369068bcd5aa3295473348139d890e8bce6aa9fb319f"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/pi-adapter.ts",
+			"newInPhase": false,
+			"lines": 151,
+			"sha256": "b1ce5e6e74ac5fe8577a6334e78b8cf5846cfe729d31e6376699347b5e9a9df8"
+		},
+		{
+			"path": "packages/host-runtime/src/executors/router.ts",
+			"newInPhase": false,
+			"lines": 238,
+			"sha256": "7353a70681b7ce2328a71e6cae290bf6912243060f022b8cf302b4bdbd3ca3ed"
+		},
+		{
+			"path": "packages/host-runtime/src/external-agents/run-service.ts",
+			"newInPhase": false,
+			"lines": 1799,
+			"sha256": "ff6766b59839e590904fafbf449c33f55daa30c7c970d89eef330601899df2c6"
+		},
+		{
+			"path": "packages/host-runtime/src/runtime.ts",
+			"newInPhase": false,
+			"lines": 694,
+			"sha256": "68befac05c39aa44c08ef5fa20b859c75db8509c4c2d8e2571004ddd80763c2c"
+		},
+		{
+			"path": "packages/host-runtime/src/storage/bootstrap-recovery.ts",
+			"newInPhase": false,
+			"lines": 674,
+			"sha256": "4c2e0fc477b0783efe1c88c94d92e77b161c92510edc7d13fb000df736803a24"
+		},
+		{
+			"path": "packages/host-runtime/src/storage/database.ts",
+			"newInPhase": false,
+			"lines": 468,
+			"sha256": "7007eb17a781bd80bda56bddd5d1094196a51549d5312add27e79fb480665dc5"
+		},
+		{
+			"path": "packages/host-runtime/src/storage/schema-sql.ts",
+			"newInPhase": false,
+			"lines": 282,
+			"sha256": "fd469fcc205e58ef3e7d516df74dc0b30a80f6487e6dea56d0dcbaccde6466c5"
+		},
+		{
+			"path": "packages/host-runtime/src/storage/schema.ts",
+			"newInPhase": false,
+			"lines": 478,
+			"sha256": "dd4f0fdff342c921a85d6a3a0037918b88d9cadcd79997b23267dbf4f8f650b5"
+		},
+		{
+			"path": "packages/host-runtime/tests/acp-executor.spec.ts",
+			"newInPhase": false,
+			"lines": 902,
+			"sha256": "285fd18337329e3470d71daaabf1e2bc2c8679c317e3d44e38d22b3a126957c3"
+		},
+		{
+			"path": "packages/host-runtime/tests/artifact-rpc.spec.ts",
+			"newInPhase": false,
+			"lines": 532,
+			"sha256": "3d25256cc1a175c981b5d74e289729e5ecaeb1c87a8051032e34adc477174800"
+		},
+		{
+			"path": "packages/host-runtime/tests/document-read-tool.spec.ts",
+			"newInPhase": false,
+			"lines": 231,
+			"sha256": "ffd8f9b0465be5f1f68e4fae1e1de96865ce15c43fd9601c097ce6faf05488b2"
+		},
+		{
+			"path": "packages/host-runtime/tests/executor-adapters.spec.ts",
+			"newInPhase": false,
+			"lines": 336,
+			"sha256": "19924acd9138019562ecbaa61c883fd43a40511e87a2b329e13f4fea0291f65e"
+		},
+		{
+			"path": "packages/host-runtime/tests/executor-confinement.spec.ts",
+			"newInPhase": false,
+			"lines": 410,
+			"sha256": "cd63fee242729d6de98395a0b1616b9c7654dae6e062966421d5d9973fb4c3df"
+		},
+		{
+			"path": "packages/host-runtime/tests/external-agent-run-service.spec.ts",
+			"newInPhase": false,
+			"lines": 1567,
+			"sha256": "3ee1b7e1e656e85c8a57d3cbef7ccd2cbd6c69bcf9abccd5fc0989083f334603"
+		},
+		{
+			"path": "packages/i18n/src/locales/en.ts",
+			"newInPhase": false,
+			"lines": 980,
+			"sha256": "fb80d0108be6a19b71c80b87901677557c3613fff8861a1affacca0fd5cc6de5"
+		},
+		{
+			"path": "packages/i18n/src/locales/zh-CN.ts",
+			"newInPhase": false,
+			"lines": 931,
+			"sha256": "4cc56adb31c4c82369137fed571240c869472ef55f39791c9ffd8f2a48660f49"
+		},
+		{
+			"path": "packages/i18n/src/locales/zh-TW.generated.ts",
+			"newInPhase": false,
+			"lines": 917,
+			"sha256": "b506e99ee5f9f51084463d67abd5999c1801c725a710eea13d0290db0eabdfdf"
+		},
+		{
+			"path": "packages/protocol/src/index.ts",
+			"newInPhase": false,
+			"lines": 453,
+			"sha256": "9da619e8c27cf9fa1cfef111a7ca208afb8fc01d2ea727798c77ccaea4e945e1"
+		},
+		{
+			"path": "packages/protocol/src/schema.ts",
+			"newInPhase": false,
+			"lines": 2813,
+			"sha256": "c63a07b1babf5b58bc2ec8661bc6273409cbd025220c28ad877a0b885fc9fd5a"
+		},
+		{
+			"path": "scripts/check-persistent-format-v1.mjs",
+			"newInPhase": false,
+			"lines": 90,
+			"sha256": "b024290258c35272cbe9f478e6ef76f30717ba688991b8e86d98df063fb390ac"
+		},
+		{
+			"path": "scripts/check-role-tool-surface.mjs",
+			"newInPhase": false,
+			"lines": 103,
+			"sha256": "4e728133e743f80a008559403a188aa9ffe77506b5a35edfc47f92f83e098542"
+		}
+	],
+	"modules": {
+		"executor": {
+			"files": 14,
+			"lines": 3729
+		},
+		"runner UI": {
+			"files": 1,
+			"lines": 280
+		},
+		"run service": {
+			"files": 1,
+			"lines": 1799
+		}
+	},
+	"verification": {
+		"lint": "passed",
+		"typecheck": "passed",
+		"build": "passed",
+		"unit": {
+			"passed": 1231,
+			"skipped": 3
+		},
+		"coverage": {
+			"host": {
+				"statements": 79.17,
+				"branches": 68.94,
+				"functions": 80.62,
+				"lines": 82.75
+			},
+			"ui": {
+				"statements": 80.45,
+				"branches": 70.28,
+				"functions": 80.35,
+				"lines": 83.83
+			},
+			"desktop": {
+				"statements": 86.18,
+				"branches": 76.08,
+				"functions": 92.93,
+				"lines": 89.52
+			}
+		},
+		"web": {
+			"fullRun": {
+				"passed": 67,
+				"failed": 1,
+				"skipped": 2
+			},
+			"failure": "obsolete desktop-button assertion on mobile settings navigation",
+			"afterFix": {
+				"passed": 4,
+				"cases": [
+					"1920x1080 settings reachability",
+					"1280x800 settings reachability",
+					"390x844 settings reachability",
+					"custom ACP configure/connect/run/download"
+				]
+			}
+		},
+		"electron": {
+			"passed": 4
+		},
+		"recovery": {
+			"passed": 75
+		},
+		"nativeWorkerRecovery": "real Pi transcript and standard custom ACP session restoration passed",
+		"codexLive": {
+			"binaryVersion": "0.156.0",
+			"adapterVersion": "1.2.0",
+			"handshake": "passed",
+			"capabilities": {
+				"loadSession": true,
+				"resume": true,
+				"steer": true
+			},
+			"model": "gpt-6-astra",
+			"execution": "passed",
+			"summary": "ACP_RUNNER_OK",
+			"log": "/private/tmp/bear-acp-live-codex-upgraded.log",
+			"installationUpgrade": {
+				"method": "Homebrew cask",
+				"from": "0.149.1",
+				"to": "0.156.0"
+			},
+			"profileScope": "stable installation registration; executable resolved for each new Run; old Run recovery remains pinned",
+			"previousFailure": {
+				"binaryVersion": "0.149.1",
+				"reason": "runner_final_result_missing",
+				"providerDiagnostic": "The configured model requires a newer Codex version."
+			}
+		},
+		"piLiveMemory": {
+			"provider": "openai-codex",
+			"model": "gpt-5.6-terra",
+			"result": "passed",
+			"freshSessions": 1,
+			"passed": 1,
+			"testDurationSeconds": 14.8,
+			"totalDurationSeconds": 27.1,
+			"log": "/private/tmp/bear-acp-live-codex-memory.log",
+			"scope": "existing identity and explicit-memory boundary regression; not full character quality acceptance",
+			"previousAttempts": {
+				"provider": "openai",
+				"freshSessions": 2,
+				"result": "failed on incorrectly selected route",
+				"cause": "HTTP 502/503 with empty native assistant error entries; not evidence about openai-codex availability"
+			}
+		},
+		"securityAudit": "not run, per user instruction",
+		"freshPackages": "not built",
+		"releaseDecision": "not approved: dirty uncommitted tree, no fresh platform packages or packaged smoke; identity/memory regression and external Codex minimal live task passed",
+		"finalGenericBoundaryTests": {
+			"passed": 21,
+			"skipped": 1
+		},
+		"codexStableRegistration": {
+			"hostUnit": {
+				"passed": 667,
+				"skipped": 2
+			},
+			"targetedPassed": 18,
+			"lint": "passed",
+			"typecheck": "passed",
+			"hostBuild": "passed",
+			"live": "completed: ACP_RUNNER_OK",
+			"liveLog": "/private/tmp/bear-acp-live-codex-stable.log",
+			"recovery": "original Run snapshot verified; no replacement on missing or changed binary",
+			"scope": "UI/Electron/coverage/package checks not rerun for this follow-up"
+		},
+		"releaseFollowUp": {
+			"version": "1.1.0",
+			"windowSelectionRace": "background snapshots no longer cancel local selection",
+			"selectionRegressionPassed": 48,
+			"browserRegressionPassed": 6,
+			"browserRegressionRepeats": 3,
+			"releaseDecision": "local checks passed; publication pending same-commit remote CI",
+			"localTestCi": "quality, upstream-brand, recovery, web-e2e passed",
+			"web": {
+				"passed": 68,
+				"skipped": 2
+			},
+			"foregroundPolicy": "No local Electron, Crashpad or packaged UI launched; desktop runtime checks delegated to remote CI"
+		}
+	}
+}

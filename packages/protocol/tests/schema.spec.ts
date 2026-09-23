@@ -4,11 +4,13 @@ import {
 	ArtifactSummary,
 	CacheKey,
 	CHANNEL_CONTRACTS,
+	InvalidationNotice,
 	LivePush,
 	LivePushBatch,
 	MAX_ARTIFACT_READ_BYTES,
 	RPC,
 	Run,
+	RunProvenance,
 } from "../src/schema.js";
 
 describe("protocol authority boundaries", () => {
@@ -57,21 +59,24 @@ describe("protocol authority boundaries", () => {
 		}
 	});
 
-	it("forwards native Pi events with only conversation routing", () => {
+	it("forwards native Pi events with explicit character and conversation routing", () => {
 		expect(
 			LivePush.parse({
 				type: "pi",
+				characterId: "jizhou",
 				conversationId: "session-1",
 				event: { type: "agent_settled" },
 			}),
 		).toEqual({
 			type: "pi",
+			characterId: "jizhou",
 			conversationId: "session-1",
 			event: { type: "agent_settled" },
 		});
 		expect(
 			LivePush.safeParse({
 				type: "pi",
+				characterId: "jizhou",
 				event: { type: "agent_settled" },
 			}),
 		).toMatchObject({ success: false });
@@ -80,6 +85,7 @@ describe("protocol authority boundaries", () => {
 	it("requires stage invocation and session ownership without conflating memory failure with generation", () => {
 		const capture = {
 			type: "conversationActivity",
+			characterId: "jizhou",
 			conversationId: "session-1",
 			operationId: "capture-1",
 			activity: "memory_capture",
@@ -123,7 +129,9 @@ describe("protocol authority boundaries", () => {
 			mime: "text/plain",
 			bytes: 10,
 			sha256: "a".repeat(64),
-			status: "verified" as const,
+			verification: "verified" as const,
+			saved: false,
+			adopted: false,
 			createdAt: "2026-08-31T00:00:00.000Z",
 		};
 		expect(ArtifactSummary.safeParse(artifact)).toMatchObject({ success: true });
@@ -152,6 +160,34 @@ describe("protocol authority boundaries", () => {
 				evidence: [...run.evidence, run.evidence[0]],
 			}),
 		).toMatchObject({ success: false });
+	});
+
+	it("keeps usage independent of verification and bounds safe manifest projections", () => {
+		const artifact = {
+			id: "a",
+			name: "report",
+			mime: "text/plain",
+			bytes: 1,
+			sha256: "a".repeat(64),
+			createdAt: "2026-09-23T00:00:00.000Z",
+			verification: "failed",
+			saved: true,
+			adopted: true,
+		};
+		expect(ArtifactSummary.safeParse(artifact).success).toBe(true);
+		expect(ArtifactSummary.safeParse({ ...artifact, status: "saved" }).success).toBe(false);
+		const entry = { executor: "pi-acp", profileId: "pi-default", launchedAt: artifact.createdAt };
+		const provenance = { entries: [entry], unavailableCount: 0, hasMore: false };
+		expect(RunProvenance.safeParse(provenance).success).toBe(true);
+		expect(
+			RunProvenance.safeParse({
+				...provenance,
+				entries: [{ ...entry, workerPath: "/private/runtime/worker.js" }],
+			}).success,
+		).toBe(false);
+		expect(RunProvenance.safeParse({ ...provenance, entries: Array(21).fill(entry) }).success).toBe(
+			false,
+		);
 	});
 
 	it("accepts a remote embedding key only on settings writes", () => {
@@ -201,7 +237,6 @@ describe("protocol authority boundaries", () => {
 			RPC.character.deletionStatusGet.response.parse({
 				status: {
 					characterId: "inactive-role",
-					active: false,
 					default: false,
 					runtimePresent: true,
 					packagePresent: true,
@@ -210,7 +245,6 @@ describe("protocol authority boundaries", () => {
 		).toEqual({
 			status: {
 				characterId: "inactive-role",
-				active: false,
 				default: false,
 				runtimePresent: true,
 				packagePresent: true,
@@ -255,6 +289,7 @@ describe("protocol authority boundaries", () => {
 		expect(Object.keys(RPC.message)).not.toContain("regenerate");
 		expect(
 			RPC.message.correct.request.safeParse({
+				characterId: "jizhou",
 				conversationId: "conversation-1",
 				entryId: "assistant-1",
 				feedback: "这不像极昼",
@@ -262,9 +297,47 @@ describe("protocol authority boundaries", () => {
 		).toMatchObject({ success: true });
 		expect(
 			RPC.message.correct.request.safeParse({
+				characterId: "jizhou",
 				conversationId: "conversation-1",
 				entryId: "assistant-1",
 			}),
 		).toMatchObject({ success: false });
+	});
+	it("requires character ownership at each character endpoint and keeps system bootstrap independent", () => {
+		for (const endpoint of Object.values(CHANNEL_CONTRACTS))
+			expect(["system", "character"]).toContain(endpoint.scope);
+		expect(RPC.bootstrap.get.scope).toBe("system");
+		expect(RPC.bootstrap.get.request.parse({})).toEqual({});
+		expect(RPC.bootstrap.get.response.parse({ defaultCharacterId: "jizhou" })).toEqual({
+			defaultCharacterId: "jizhou",
+		});
+		expect(RPC.snapshot.get.scope).toBe("character");
+		expect(RPC.snapshot.get.request.safeParse({}).success).toBe(false);
+		expect(RPC.snapshot.get.request.safeParse({ characterId: "../role" }).success).toBe(false);
+		expect(RPC.snapshot.get.request.parse({ characterId: "jizhou" })).toEqual({
+			characterId: "jizhou",
+		});
+		expect(RPC.conversation.open.request.safeParse({ conversationId: "session" }).success).toBe(
+			false,
+		);
+		expect(
+			RPC.character.memorySet.request.parse({ characterId: "jizhou", enabled: false }),
+		).toEqual({ characterId: "jizhou", enabled: false });
+		expect(RPC.conversation).not.toHaveProperty("activeGet");
+		expect(RPC.conversation).not.toHaveProperty("select");
+		expect(RPC.character).not.toHaveProperty("activate");
+	});
+	it("tags product invalidations separately from native session signals", () => {
+		expect(InvalidationNotice.safeParse({ keys: [["settings"]] }).success).toBe(false);
+		expect(InvalidationNotice.safeParse({ scope: "character", keys: [["snapshot"]] }).success).toBe(
+			false,
+		);
+		expect(
+			InvalidationNotice.parse({ scope: "character", characterId: "jizhou", keys: [["snapshot"]] }),
+		).toEqual({ scope: "character", characterId: "jizhou", keys: [["snapshot"]] });
+		expect(InvalidationNotice.parse({ scope: "system", keys: [["settings"]] })).toEqual({
+			scope: "system",
+			keys: [["settings"]],
+		});
 	});
 });

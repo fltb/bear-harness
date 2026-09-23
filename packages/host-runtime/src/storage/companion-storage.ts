@@ -55,12 +55,11 @@ export class CompanionStorageRegistry {
 		return this.handles.get(requireCompanionId(companionId));
 	}
 
-	closeCompanion(companionId: string): void {
-		const id = requireCompanionId(companionId);
-		const handle = this.handles.get(id);
-		if (!handle) return;
-		this.handles.delete(id);
+	release(handle: CompanionStorageHandle): void {
+		const id = handle.paths.id;
+		if (this.handles.get(id) !== handle) return;
 		handle.database.close();
+		this.handles.delete(id);
 	}
 
 	hasCompanionRuntime(companionId: string): boolean {
@@ -69,20 +68,22 @@ export class CompanionStorageRegistry {
 
 	deleteCompanionRuntime(companionId: string): boolean {
 		const id = requireCompanionId(companionId);
-		this.closeCompanion(id);
+		if (this.handles.has(id)) throw new Error("character database must be closed before deletion");
 		return this.layout.removeCompanionRuntime(id);
 	}
 
-	forEachCompanionDatabase(visit: (database: CompanionDatabase["orm"]) => void): void {
+	forEachCompanionDatabase(
+		visit: (database: CompanionDatabase["orm"], characterId: string) => void,
+	): void {
 		for (const entry of readdirSync(this.layout.companionsRoot, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			const id = requireCompanionId(entry.name);
 			const existing = this.handles.get(id);
 			const handle = existing ?? this.open(id);
 			try {
-				visit(handle.database.orm);
+				visit(handle.database.orm, id);
 			} finally {
-				if (!existing) this.closeCompanion(id);
+				if (!existing) this.release(handle);
 			}
 		}
 	}

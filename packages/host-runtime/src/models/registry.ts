@@ -58,15 +58,13 @@ export interface ModelDefaults {
 
 export type SystemModelDefaults = Omit<ModelDefaults, "onboardingComplete">;
 
-export class ModelRegistry {
+export class SystemModelRegistry {
 	constructor(
-		private readonly systemDb: AppDatabase,
-		private readonly companionDb: AppDatabase,
-		private readonly invalidations: InvalidationHub,
-		private readonly appSettings: AppSettingsStore,
+		protected readonly systemDb: AppDatabase,
+		protected readonly invalidations: InvalidationHub,
+		protected readonly appSettings: AppSettingsStore,
 		private readonly forEachCompanionDatabase: (visit: (database: AppDatabase) => void) => void,
 	) {}
-
 	list(facts: ModelProjectionFacts): ModelRecord[] {
 		const project = this.projector(facts);
 		return this.systemDb
@@ -82,7 +80,7 @@ export class ModelRegistry {
 			.map(project);
 	}
 
-	private upsert(
+	protected upsert(
 		input: {
 			providerId: string;
 			modelId: string;
@@ -123,7 +121,6 @@ export class ModelRegistry {
 		return model;
 	}
 
-	/** Reproject provider metadata without re-enabling an explicitly disabled route. */
 	sync(
 		input: {
 			providerId: string;
@@ -294,6 +291,185 @@ export class ModelRegistry {
 		return this.systemDefaults(facts);
 	}
 
+	multimodalFallback(facts: ModelProjectionFacts): ModelRecord | undefined {
+		const vision = this.systemDefaults(facts).vision;
+		return vision.mode === "manual" && vision.route.readiness === "ready"
+			? vision.route
+			: undefined;
+	}
+
+	get(providerId: string, modelId: string, facts: ModelProjectionFacts): ModelRecord | undefined {
+		const stored = this.getStored(providerId, modelId);
+		return stored ? this.projector(facts)(stored) : undefined;
+	}
+
+	protected getStored(providerId: string, modelId: string): StoredModelRecord | undefined {
+		const row = this.systemDb
+			.select()
+			.from(configuredModels)
+			.where(
+				and(eq(configuredModels.providerId, providerId), eq(configuredModels.modelId, modelId)),
+			)
+			.get();
+		return row ? toStoredRecord(row) : undefined;
+	}
+
+	protected projector(facts: ModelProjectionFacts): (model: StoredModelRecord) => ModelRecord {
+		const providers = new Map(facts.providers.map((provider) => [provider.providerId, provider]));
+		const catalogModels = new Map(
+			facts.catalogModels.map((model) => [modelKey(model.providerId, model.modelId), model]),
+		);
+		const removingProviders = new Set([
+			...facts.removingProviderIds,
+			...this.listPendingProviderRemovalIds(),
+		]);
+		return (model) => {
+			const provider = providers.get(model.providerId);
+			const catalogModel = catalogModels.get(modelKey(model.providerId, model.modelId));
+			const readiness: ModelReadiness = removingProviders.has(model.providerId)
+				? "provider_removing"
+				: !model.enabled
+					? "disabled"
+					: !catalogModel
+						? "catalog_missing"
+						: !provider?.authenticated
+							? "provider_auth_required"
+							: "ready";
+			return {
+				...model,
+				...(provider ? { providerName: provider.providerName } : {}),
+				...(catalogModel?.thinkingLevels
+					? { thinkingLevels: [...catalogModel.thinkingLevels] }
+					: {}),
+				readiness,
+			};
+		};
+	}
+
+	protected validateSystemDefaults(
+		value: {
+			reply: { providerId: string; modelId: string };
+			thinkingLevel?: ModelThinkingLevel;
+			vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
+		},
+		facts: ModelProjectionFacts,
+	): void {
+		const reply = this.requireReady(this.get(value.reply.providerId, value.reply.modelId, facts));
+		if (value.thinkingLevel && !reply.thinkingLevels?.includes(value.thinkingLevel))
+			throw { kind: "invalid_request", reason: "model_thinking_level_unsupported" };
+		const vision =
+			value.vision.mode === "manual"
+				? this.requireReady(
+						this.get(value.vision.route.providerId, value.vision.route.modelId, facts),
+					)
+				: undefined;
+		if (vision && !vision.supportsImages)
+			throw { kind: "invalid_request", reason: "model_does_not_support_images" };
+		if (vision && reply.supportsImages)
+			throw { kind: "invalid_request", reason: "reply_model_handles_images" };
+	}
+
+	protected requireReady(model: ModelRecord | undefined): ModelRecord {
+		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
+		if (model.readiness !== "ready") {
+			throw {
+				kind: "unavailable",
+				reason: "configured_model_not_ready",
+				details: {
+					providerId: model.providerId,
+					modelId: model.modelId,
+					readiness: model.readiness,
+				},
+			};
+		}
+		return model;
+	}
+
+	protected clearCompanionModelReferences(providerId: string, modelId: string): number {
+		let changes = 0;
+		this.forEachCompanionDatabase((database) => {
+			changes += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						textProviderId: null,
+						textModelId: null,
+						textThinkingLevel: null,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(
+						and(
+							eq(modelRouteSettings.textProviderId, providerId),
+							eq(modelRouteSettings.textModelId, modelId),
+						),
+					)
+					.run().changes,
+			);
+			changes += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						visionMode: "auto",
+						multimodalProviderId: null,
+						multimodalModelId: null,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(
+						and(
+							eq(modelRouteSettings.multimodalProviderId, providerId),
+							eq(modelRouteSettings.multimodalModelId, modelId),
+						),
+					)
+					.run().changes,
+			);
+		});
+		return changes;
+	}
+
+	protected clearCompanionProviderReferences(providerId: string): number {
+		let changes = 0;
+		this.forEachCompanionDatabase((database) => {
+			changes += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						textProviderId: null,
+						textModelId: null,
+						textThinkingLevel: null,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(eq(modelRouteSettings.textProviderId, providerId))
+					.run().changes,
+			);
+			changes += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						visionMode: "auto",
+						multimodalProviderId: null,
+						multimodalModelId: null,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(eq(modelRouteSettings.multimodalProviderId, providerId))
+					.run().changes,
+			);
+		});
+		return changes;
+	}
+}
+
+/** Character defaults over the shared installation model pool. */
+export class ModelRegistry extends SystemModelRegistry {
+	constructor(
+		systemDb: AppDatabase,
+		private readonly companionDb: AppDatabase,
+		private readonly characterInvalidations: InvalidationHub,
+		appSettings: AppSettingsStore,
+		forEachCompanionDatabase: (visit: (database: AppDatabase) => void) => void,
+		systemInvalidations: InvalidationHub,
+	) {
+		super(systemDb, systemInvalidations, appSettings, forEachCompanionDatabase);
+	}
 	seedFromSystemDefaults(
 		companionId: string,
 		facts: ModelProjectionFacts,
@@ -323,7 +499,7 @@ export class ModelRegistry {
 				onboardingComplete: 0,
 			})
 			.run();
-		this.invalidations.invalidate(CacheKey.modelDefaults());
+		this.characterInvalidations.invalidate(CacheKey.modelDefaults());
 		return "seeded";
 	}
 
@@ -384,7 +560,7 @@ export class ModelRegistry {
 				},
 			})
 			.run();
-		this.invalidations.invalidate(CacheKey.modelDefaults());
+		this.characterInvalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId, facts);
 	}
 
@@ -398,7 +574,7 @@ export class ModelRegistry {
 			.where(eq(modelRouteSettings.companionId, companionId))
 			.run();
 		if (!updated.changes) throw { kind: "unavailable", reason: "character_default_model_required" };
-		this.invalidations.invalidate(CacheKey.modelDefaults());
+		this.characterInvalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId, facts);
 	}
 
@@ -434,174 +610,8 @@ export class ModelRegistry {
 				},
 			})
 			.run();
-		this.invalidations.invalidate(CacheKey.modelDefaults());
+		this.characterInvalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId, facts);
-	}
-
-	multimodalFallback(facts: ModelProjectionFacts): ModelRecord | undefined {
-		const vision = this.systemDefaults(facts).vision;
-		return vision.mode === "manual" && vision.route.readiness === "ready"
-			? vision.route
-			: undefined;
-	}
-
-	get(providerId: string, modelId: string, facts: ModelProjectionFacts): ModelRecord | undefined {
-		const stored = this.getStored(providerId, modelId);
-		return stored ? this.projector(facts)(stored) : undefined;
-	}
-
-	private getStored(providerId: string, modelId: string): StoredModelRecord | undefined {
-		const row = this.systemDb
-			.select()
-			.from(configuredModels)
-			.where(
-				and(eq(configuredModels.providerId, providerId), eq(configuredModels.modelId, modelId)),
-			)
-			.get();
-		return row ? toStoredRecord(row) : undefined;
-	}
-
-	private projector(facts: ModelProjectionFacts): (model: StoredModelRecord) => ModelRecord {
-		const providers = new Map(facts.providers.map((provider) => [provider.providerId, provider]));
-		const catalogModels = new Map(
-			facts.catalogModels.map((model) => [modelKey(model.providerId, model.modelId), model]),
-		);
-		const removingProviders = new Set([
-			...facts.removingProviderIds,
-			...this.listPendingProviderRemovalIds(),
-		]);
-		return (model) => {
-			const provider = providers.get(model.providerId);
-			const catalogModel = catalogModels.get(modelKey(model.providerId, model.modelId));
-			const readiness: ModelReadiness = removingProviders.has(model.providerId)
-				? "provider_removing"
-				: !model.enabled
-					? "disabled"
-					: !catalogModel
-						? "catalog_missing"
-						: !provider?.authenticated
-							? "provider_auth_required"
-							: "ready";
-			return {
-				...model,
-				...(provider ? { providerName: provider.providerName } : {}),
-				...(catalogModel?.thinkingLevels
-					? { thinkingLevels: [...catalogModel.thinkingLevels] }
-					: {}),
-				readiness,
-			};
-		};
-	}
-
-	private validateSystemDefaults(
-		value: {
-			reply: { providerId: string; modelId: string };
-			thinkingLevel?: ModelThinkingLevel;
-			vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
-		},
-		facts: ModelProjectionFacts,
-	): void {
-		const reply = this.requireReady(this.get(value.reply.providerId, value.reply.modelId, facts));
-		if (value.thinkingLevel && !reply.thinkingLevels?.includes(value.thinkingLevel))
-			throw { kind: "invalid_request", reason: "model_thinking_level_unsupported" };
-		const vision =
-			value.vision.mode === "manual"
-				? this.requireReady(
-						this.get(value.vision.route.providerId, value.vision.route.modelId, facts),
-					)
-				: undefined;
-		if (vision && !vision.supportsImages)
-			throw { kind: "invalid_request", reason: "model_does_not_support_images" };
-		if (vision && reply.supportsImages)
-			throw { kind: "invalid_request", reason: "reply_model_handles_images" };
-	}
-
-	private requireReady(model: ModelRecord | undefined): ModelRecord {
-		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
-		if (model.readiness !== "ready") {
-			throw {
-				kind: "unavailable",
-				reason: "configured_model_not_ready",
-				details: {
-					providerId: model.providerId,
-					modelId: model.modelId,
-					readiness: model.readiness,
-				},
-			};
-		}
-		return model;
-	}
-
-	private clearCompanionModelReferences(providerId: string, modelId: string): number {
-		let changes = 0;
-		this.forEachCompanionDatabase((database) => {
-			changes += Number(
-				database
-					.update(modelRouteSettings)
-					.set({
-						textProviderId: null,
-						textModelId: null,
-						textThinkingLevel: null,
-						updatedAt: sql`datetime('now')`,
-					})
-					.where(
-						and(
-							eq(modelRouteSettings.textProviderId, providerId),
-							eq(modelRouteSettings.textModelId, modelId),
-						),
-					)
-					.run().changes,
-			);
-			changes += Number(
-				database
-					.update(modelRouteSettings)
-					.set({
-						visionMode: "auto",
-						multimodalProviderId: null,
-						multimodalModelId: null,
-						updatedAt: sql`datetime('now')`,
-					})
-					.where(
-						and(
-							eq(modelRouteSettings.multimodalProviderId, providerId),
-							eq(modelRouteSettings.multimodalModelId, modelId),
-						),
-					)
-					.run().changes,
-			);
-		});
-		return changes;
-	}
-
-	private clearCompanionProviderReferences(providerId: string): number {
-		let changes = 0;
-		this.forEachCompanionDatabase((database) => {
-			changes += Number(
-				database
-					.update(modelRouteSettings)
-					.set({
-						textProviderId: null,
-						textModelId: null,
-						textThinkingLevel: null,
-						updatedAt: sql`datetime('now')`,
-					})
-					.where(eq(modelRouteSettings.textProviderId, providerId))
-					.run().changes,
-			);
-			changes += Number(
-				database
-					.update(modelRouteSettings)
-					.set({
-						visionMode: "auto",
-						multimodalProviderId: null,
-						multimodalModelId: null,
-						updatedAt: sql`datetime('now')`,
-					})
-					.where(eq(modelRouteSettings.multimodalProviderId, providerId))
-					.run().changes,
-			);
-		});
-		return changes;
 	}
 }
 

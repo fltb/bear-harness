@@ -1,0 +1,446 @@
+{
+	"audit_date": "2026-09-22",
+	"base_commit": "bf3cbfb0d94f39acb54e250695a29a47e176c4c3",
+	"branch": "codex/execution-core-audit",
+	"product_source_modified": false,
+	"toolchain": {
+		"node": "24.19.0",
+		"npm": "11.17.0",
+		"launcher": "fnm exec --using=.nvmrc"
+	},
+	"metrics": {
+		"host_runtime_all": {
+			"files": 73,
+			"lines": 26693,
+			"paths": [
+				"packages/host-runtime/src/artifacts/index.ts",
+				"packages/host-runtime/src/artifacts/presentation.ts",
+				"packages/host-runtime/src/await-source.ts",
+				"packages/host-runtime/src/canon/package-schema.ts",
+				"packages/host-runtime/src/canon/service.ts",
+				"packages/host-runtime/src/character-runtime.ts",
+				"packages/host-runtime/src/companion/behavior-schema.ts",
+				"packages/host-runtime/src/companion/character-archive-import.ts",
+				"packages/host-runtime/src/companion/character-draft-service.ts",
+				"packages/host-runtime/src/companion/character-loader.ts",
+				"packages/host-runtime/src/companion/companion-store.ts",
+				"packages/host-runtime/src/companion/context-pack.ts",
+				"packages/host-runtime/src/companion/core-zod-tools.ts",
+				"packages/host-runtime/src/companion/first-meeting.ts",
+				"packages/host-runtime/src/companion/host-tool-register.ts",
+				"packages/host-runtime/src/companion/media-schema.ts",
+				"packages/host-runtime/src/companion/onboarding-schema.ts",
+				"packages/host-runtime/src/companion/pi-live-events.ts",
+				"packages/host-runtime/src/companion/pi-runtime.ts",
+				"packages/host-runtime/src/companion/role-resources.ts",
+				"packages/host-runtime/src/companion/session-catalog.ts",
+				"packages/host-runtime/src/companion/state-schema.ts",
+				"packages/host-runtime/src/companion/theme.ts",
+				"packages/host-runtime/src/composition.ts",
+				"packages/host-runtime/src/diagnostics/character-trace.ts",
+				"packages/host-runtime/src/diagnostics/contracts.ts",
+				"packages/host-runtime/src/diagnostics/crashpad.ts",
+				"packages/host-runtime/src/diagnostics/index.ts",
+				"packages/host-runtime/src/diagnostics/levels.ts",
+				"packages/host-runtime/src/diagnostics/query.ts",
+				"packages/host-runtime/src/diagnostics/redaction.ts",
+				"packages/host-runtime/src/diagnostics/retention.ts",
+				"packages/host-runtime/src/diagnostics/storage.ts",
+				"packages/host-runtime/src/diagnostics/trace.ts",
+				"packages/host-runtime/src/dispatcher.ts",
+				"packages/host-runtime/src/executors/acp-client.ts",
+				"packages/host-runtime/src/executors/acp-executor.ts",
+				"packages/host-runtime/src/executors/codex-adapter.ts",
+				"packages/host-runtime/src/executors/confinement.ts",
+				"packages/host-runtime/src/executors/environment.ts",
+				"packages/host-runtime/src/executors/pi-acp-worker.ts",
+				"packages/host-runtime/src/executors/pi-adapter.ts",
+				"packages/host-runtime/src/executors/router.ts",
+				"packages/host-runtime/src/external-agents/run-service.ts",
+				"packages/host-runtime/src/fsops/service.ts",
+				"packages/host-runtime/src/host-event-loop.ts",
+				"packages/host-runtime/src/index.ts",
+				"packages/host-runtime/src/memory/diagnostics.ts",
+				"packages/host-runtime/src/memory/explicit-memory.ts",
+				"packages/host-runtime/src/memory/local-embedding-acquisition.ts",
+				"packages/host-runtime/src/memory/tencentdb-host-adapter.ts",
+				"packages/host-runtime/src/memory/tencentdb-runtime.ts",
+				"packages/host-runtime/src/models/registry.ts",
+				"packages/host-runtime/src/network/native-web-search.ts",
+				"packages/host-runtime/src/network/proxy-config.ts",
+				"packages/host-runtime/src/network/system-proxy.ts",
+				"packages/host-runtime/src/providers/catalog.ts",
+				"packages/host-runtime/src/providers/credential-store.ts",
+				"packages/host-runtime/src/runtime.ts",
+				"packages/host-runtime/src/security/audit-store.ts",
+				"packages/host-runtime/src/security/fs-audit.ts",
+				"packages/host-runtime/src/settings/capabilities.ts",
+				"packages/host-runtime/src/storage/app-settings-store.ts",
+				"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+				"packages/host-runtime/src/storage/companion-storage.ts",
+				"packages/host-runtime/src/storage/database.ts",
+				"packages/host-runtime/src/storage/durable-file-sync.ts",
+				"packages/host-runtime/src/storage/durable-file-transaction.ts",
+				"packages/host-runtime/src/storage/invalidation-hub.ts",
+				"packages/host-runtime/src/storage/layout.ts",
+				"packages/host-runtime/src/storage/schema-sql.ts",
+				"packages/host-runtime/src/storage/schema.ts",
+				"packages/host-runtime/src/system-onboarding-license.ts"
+			]
+		},
+		"companion_execution": {
+			"files": 7,
+			"lines": 2314,
+			"paths": [
+				"packages/host-runtime/src/companion/context-pack.ts",
+				"packages/host-runtime/src/companion/core-zod-tools.ts",
+				"packages/host-runtime/src/companion/host-tool-register.ts",
+				"packages/host-runtime/src/companion/pi-live-events.ts",
+				"packages/host-runtime/src/companion/pi-runtime.ts",
+				"packages/host-runtime/src/companion/role-resources.ts",
+				"packages/host-runtime/src/companion/session-catalog.ts"
+			]
+		},
+		"host_composition_lifecycle": {
+			"files": 6,
+			"lines": 2888,
+			"paths": [
+				"packages/host-runtime/src/await-source.ts",
+				"packages/host-runtime/src/character-runtime.ts",
+				"packages/host-runtime/src/composition.ts",
+				"packages/host-runtime/src/dispatcher.ts",
+				"packages/host-runtime/src/host-event-loop.ts",
+				"packages/host-runtime/src/runtime.ts"
+			]
+		},
+		"external_runs_executors_artifacts": {
+			"files": 11,
+			"lines": 5159,
+			"paths": [
+				"packages/host-runtime/src/artifacts/index.ts",
+				"packages/host-runtime/src/artifacts/presentation.ts",
+				"packages/host-runtime/src/executors/acp-client.ts",
+				"packages/host-runtime/src/executors/acp-executor.ts",
+				"packages/host-runtime/src/executors/codex-adapter.ts",
+				"packages/host-runtime/src/executors/confinement.ts",
+				"packages/host-runtime/src/executors/environment.ts",
+				"packages/host-runtime/src/executors/pi-acp-worker.ts",
+				"packages/host-runtime/src/executors/pi-adapter.ts",
+				"packages/host-runtime/src/executors/router.ts",
+				"packages/host-runtime/src/external-agents/run-service.ts"
+			]
+		},
+		"storage_security": {
+			"files": 12,
+			"lines": 3753,
+			"paths": [
+				"packages/host-runtime/src/security/audit-store.ts",
+				"packages/host-runtime/src/security/fs-audit.ts",
+				"packages/host-runtime/src/storage/app-settings-store.ts",
+				"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+				"packages/host-runtime/src/storage/companion-storage.ts",
+				"packages/host-runtime/src/storage/database.ts",
+				"packages/host-runtime/src/storage/durable-file-sync.ts",
+				"packages/host-runtime/src/storage/durable-file-transaction.ts",
+				"packages/host-runtime/src/storage/invalidation-hub.ts",
+				"packages/host-runtime/src/storage/layout.ts",
+				"packages/host-runtime/src/storage/schema-sql.ts",
+				"packages/host-runtime/src/storage/schema.ts"
+			]
+		},
+		"protocol_client": {
+			"files": 5,
+			"lines": 3288,
+			"paths": [
+				"packages/companion-client/src/client.ts",
+				"packages/companion-client/src/index.ts",
+				"packages/companion-client/src/unwrap.ts",
+				"packages/protocol/src/index.ts",
+				"packages/protocol/src/schema.ts"
+			]
+		},
+		"ui_execution_projection": {
+			"files": 9,
+			"lines": 3261,
+			"paths": [
+				"packages/companion-ui/src/lib/pi-event-replay.ts",
+				"packages/companion-ui/src/stores/companion.tsx",
+				"packages/companion-ui/src/stores/conversation-workflows.ts",
+				"packages/companion-ui/src/stores/external-agent-api.ts",
+				"packages/companion-ui/src/stores/ipc.ts",
+				"packages/companion-ui/src/stores/mutation-client.ts",
+				"packages/companion-ui/src/stores/paged-rpc.ts",
+				"packages/companion-ui/src/stores/rpc-query.ts",
+				"packages/companion-ui/src/stores/run-api.ts"
+			]
+		},
+		"transports": {
+			"files": 3,
+			"lines": 946,
+			"paths": [
+				"apps/desktop/src/main/ipc-router.ts",
+				"apps/desktop/src/preload/index.cts",
+				"apps/web-dev/server/index.ts"
+			]
+		},
+		"execution_slice": {
+			"files": 53,
+			"lines": 21609,
+			"paths": [
+				"apps/desktop/src/main/ipc-router.ts",
+				"apps/desktop/src/preload/index.cts",
+				"apps/web-dev/server/index.ts",
+				"packages/companion-client/src/client.ts",
+				"packages/companion-client/src/index.ts",
+				"packages/companion-client/src/unwrap.ts",
+				"packages/companion-ui/src/lib/pi-event-replay.ts",
+				"packages/companion-ui/src/stores/companion.tsx",
+				"packages/companion-ui/src/stores/conversation-workflows.ts",
+				"packages/companion-ui/src/stores/external-agent-api.ts",
+				"packages/companion-ui/src/stores/ipc.ts",
+				"packages/companion-ui/src/stores/mutation-client.ts",
+				"packages/companion-ui/src/stores/paged-rpc.ts",
+				"packages/companion-ui/src/stores/rpc-query.ts",
+				"packages/companion-ui/src/stores/run-api.ts",
+				"packages/host-runtime/src/artifacts/index.ts",
+				"packages/host-runtime/src/artifacts/presentation.ts",
+				"packages/host-runtime/src/await-source.ts",
+				"packages/host-runtime/src/character-runtime.ts",
+				"packages/host-runtime/src/companion/context-pack.ts",
+				"packages/host-runtime/src/companion/core-zod-tools.ts",
+				"packages/host-runtime/src/companion/host-tool-register.ts",
+				"packages/host-runtime/src/companion/pi-live-events.ts",
+				"packages/host-runtime/src/companion/pi-runtime.ts",
+				"packages/host-runtime/src/companion/role-resources.ts",
+				"packages/host-runtime/src/companion/session-catalog.ts",
+				"packages/host-runtime/src/composition.ts",
+				"packages/host-runtime/src/dispatcher.ts",
+				"packages/host-runtime/src/executors/acp-client.ts",
+				"packages/host-runtime/src/executors/acp-executor.ts",
+				"packages/host-runtime/src/executors/codex-adapter.ts",
+				"packages/host-runtime/src/executors/confinement.ts",
+				"packages/host-runtime/src/executors/environment.ts",
+				"packages/host-runtime/src/executors/pi-acp-worker.ts",
+				"packages/host-runtime/src/executors/pi-adapter.ts",
+				"packages/host-runtime/src/executors/router.ts",
+				"packages/host-runtime/src/external-agents/run-service.ts",
+				"packages/host-runtime/src/host-event-loop.ts",
+				"packages/host-runtime/src/runtime.ts",
+				"packages/host-runtime/src/security/audit-store.ts",
+				"packages/host-runtime/src/security/fs-audit.ts",
+				"packages/host-runtime/src/storage/app-settings-store.ts",
+				"packages/host-runtime/src/storage/bootstrap-recovery.ts",
+				"packages/host-runtime/src/storage/companion-storage.ts",
+				"packages/host-runtime/src/storage/database.ts",
+				"packages/host-runtime/src/storage/durable-file-sync.ts",
+				"packages/host-runtime/src/storage/durable-file-transaction.ts",
+				"packages/host-runtime/src/storage/invalidation-hub.ts",
+				"packages/host-runtime/src/storage/layout.ts",
+				"packages/host-runtime/src/storage/schema-sql.ts",
+				"packages/host-runtime/src/storage/schema.ts",
+				"packages/protocol/src/index.ts",
+				"packages/protocol/src/schema.ts"
+			]
+		}
+	},
+	"source_sha256": {
+		"apps/desktop/src/main/ipc-router.ts": "844956e3da79b31f3b81aa4bc297012893c56737ccf68dc0909119a52e2d0301",
+		"apps/desktop/src/preload/index.cts": "28f7d9c23303e7e66f031716cf8cbddcbf4d5d6bb88fed582dd1e5bd85581130",
+		"apps/web-dev/server/index.ts": "6ad71b592aa49e452dcbafad7d1056b51c9e5b683164c9275cbc70936f2f70d5",
+		"packages/companion-client/src/client.ts": "a7e4df4439bcfa34922a8f9376071a7198944c87ebcd0ba181805ecdc0447573",
+		"packages/companion-client/src/index.ts": "7e48abfea8c95f64d3cda53d29a4f2d99bfe80a027ce06f32bf0fc51d8cc4f6c",
+		"packages/companion-client/src/unwrap.ts": "cb561b3617225a2a9a7795373b4a92dbf2374a761d244bbd785d177f2a64e4a3",
+		"packages/companion-ui/src/lib/pi-event-replay.ts": "e0cf609623329b5d36ab31225ea36c9628eaef2baa8f5c25b7c68bd2c9f8f6c2",
+		"packages/companion-ui/src/stores/companion.tsx": "211dc0fa898c7edee908137fccbde465c5a24831fdcab74c8772e1a65a54c99f",
+		"packages/companion-ui/src/stores/conversation-workflows.ts": "2d63447dbee11c71bf98d8584cd4f262093e1e681625c6f547bcba39ed4dc067",
+		"packages/companion-ui/src/stores/external-agent-api.ts": "5e16f4ebef12fa8c4f2b2f7c9a1ef9649f692faffba22f15687fb9cf1a7e139b",
+		"packages/companion-ui/src/stores/ipc.ts": "e77f13a4d14b9d126918415ac63ed7889cc5033416804ccb080e040a2e8fa797",
+		"packages/companion-ui/src/stores/mutation-client.ts": "23486f2640803ddd1111de64407e33598bffdd6320adca4d4b9cc6158c559512",
+		"packages/companion-ui/src/stores/paged-rpc.ts": "d57def53727baf4f6debe5644db51f0e0223dfc809c7839fd3c867a4eeaed0d8",
+		"packages/companion-ui/src/stores/rpc-query.ts": "ddbeeebfc875212c71e91365431e77cadef031f4a44b8cd1c48b6c2d962592bc",
+		"packages/companion-ui/src/stores/run-api.ts": "ba10b8b426419edf23a7c19e19a31552c648ecf8b67ae15786feb411c91881da",
+		"packages/host-runtime/src/artifacts/index.ts": "fcfd3739c7bd4a4a1ce2bf7340adb533eaec93da174fe2538f1f578a2c4993fc",
+		"packages/host-runtime/src/artifacts/presentation.ts": "821079c8721ceca731ed40e0031d4b156ab98946f3f6079bfd9105e8b6787d2d",
+		"packages/host-runtime/src/await-source.ts": "94da03395a5f85bf72ade55dce1cc2bdb15418c0052a40a783e2b83076e7afd1",
+		"packages/host-runtime/src/character-runtime.ts": "5f95afa943129aa1fe02a5e710290224f0cf8beaa265cbbcce61f572da625c2b",
+		"packages/host-runtime/src/companion/context-pack.ts": "515f8e5b419a426c8b25ea1c27dc2ac85743a341cf48522fd3e797ec7db30c6e",
+		"packages/host-runtime/src/companion/core-zod-tools.ts": "87fb965b895819cbf89181ad8f105fcf9329571fc43058381fbea5fb2ccd9482",
+		"packages/host-runtime/src/companion/host-tool-register.ts": "58a508b19291880eeab65ea898241781cf246fab89af40993aeee6837d7b0347",
+		"packages/host-runtime/src/companion/pi-live-events.ts": "845d2bd3b4ad59c95c1aa1ed1eff86d2b0f175de0a59c44ada2f599060a80c97",
+		"packages/host-runtime/src/companion/pi-runtime.ts": "4dd2097cfb02ad6b47deaba10e04e961a47fec0186e5ca9f22475bfe9c415eb3",
+		"packages/host-runtime/src/companion/role-resources.ts": "dbf78c2aab49fe0f7b8c461e3d033aba51ec39d08844dcc5d7fed1219dbd9d01",
+		"packages/host-runtime/src/companion/session-catalog.ts": "08ea2562b90776f60718b029d8700a9400075b9f859ad4b36b9bfab375a8c2d7",
+		"packages/host-runtime/src/composition.ts": "95622fea9c805f105552442850fdb0371a445b2bf4ac33036e5b14505545fb1c",
+		"packages/host-runtime/src/dispatcher.ts": "c7ef3f2bd8f29540ef30d9614835678f7d914018b618b98af31d98ed820f0578",
+		"packages/host-runtime/src/executors/acp-client.ts": "a62e1f8bbfb0f591aa54824ee8e7e882171b189111d461e89fa5036975231e70",
+		"packages/host-runtime/src/executors/acp-executor.ts": "455af23ba2b3be7755d45589dccb5fd43ac3dd14b033d84dfe29941e3dca2820",
+		"packages/host-runtime/src/executors/codex-adapter.ts": "22652bc74900a67e0a17ec248f6ae925bafd05b3f4f6649359925fa80543808d",
+		"packages/host-runtime/src/executors/confinement.ts": "930ac68164401be80ad8acd8c06e50329b22f6155ac18a996f6e8e13643e99ef",
+		"packages/host-runtime/src/executors/environment.ts": "654050f8fcccbfa88cd003c78f24d8b4de2163b299bd32114c7c62c737bbac2a",
+		"packages/host-runtime/src/executors/pi-acp-worker.ts": "b9b55cbc80a31380b3a7f395e51390d8e85a04bd7d32af308bbdc853b424e9ff",
+		"packages/host-runtime/src/executors/pi-adapter.ts": "b1afdb7e91cb32646f03434fce5344e7977c062daf355b15e3a058b4a6dc310f",
+		"packages/host-runtime/src/executors/router.ts": "8ed6ad61eef175cabcf40741a95c80f808cabf30587980c235585d99dd00bc45",
+		"packages/host-runtime/src/external-agents/run-service.ts": "9cdc2df4e65c4232363c5c8c5072538af64b3e7d69d7e340e24c8c0ae50f5a91",
+		"packages/host-runtime/src/host-event-loop.ts": "5e4ee4af449eda3e9690e63ea65b6909b5d8785453349fb6f5340fe173a028f6",
+		"packages/host-runtime/src/runtime.ts": "c94ae7e8847dc859d86f5540b735d1c2a51bcf3b664273e8f417c91f91a215a7",
+		"packages/host-runtime/src/security/audit-store.ts": "314e9d29b560407fbebf0ed441ccf574aef12d1b98ffe0b735a50ebf216f5d29",
+		"packages/host-runtime/src/security/fs-audit.ts": "1fb491fd6bc3c2eb6ab0cf5bea6eb50d4fd947ef068f17cb61590dc67fb36015",
+		"packages/host-runtime/src/storage/app-settings-store.ts": "77336a4cb4d427dfa0846054ba49f2f88c3adff7cdd115499d16dfee04124ef6",
+		"packages/host-runtime/src/storage/bootstrap-recovery.ts": "006f71412dabab6a2ec3056dfa5f678fce5723e897f1ba2d3e5015d968ff6bee",
+		"packages/host-runtime/src/storage/companion-storage.ts": "7f29338ff26de7adb84feff535e55ecf7fd5179e5d67bd6d7a679858bbd50da4",
+		"packages/host-runtime/src/storage/database.ts": "ab975d01a990d843bc60e22a36a449b8681d617e5b5ad6eb642bf9b9da9c4217",
+		"packages/host-runtime/src/storage/durable-file-sync.ts": "c40fe3266c31c7ad3e0e848075278e62a50a868c1c3ed25f1f73724194d94362",
+		"packages/host-runtime/src/storage/durable-file-transaction.ts": "55fb9bd8084c4777eb2bb9391b6ee7199f714cbba63012af73aa6c166c5ebe3d",
+		"packages/host-runtime/src/storage/invalidation-hub.ts": "03f0c64d244d77ee855787d2b44643f49f56e66aa9e1936b4c01a60575929360",
+		"packages/host-runtime/src/storage/layout.ts": "438d78b57875890ed84abc14f55892893104431f3c1b3de840e201c23e19be52",
+		"packages/host-runtime/src/storage/schema-sql.ts": "cfd388863f20438fb6ba543a5f2d9523e5074c42067c2a7a8db29c90a3802d77",
+		"packages/host-runtime/src/storage/schema.ts": "54fbb4c0b1dd4a351f091dec0818994639df13e743af757020bd410757a776a3",
+		"packages/protocol/src/index.ts": "167ae438818d354cc6dea78df7d8e4b54972b3aeeaa3dd9b98071688224f5563",
+		"packages/protocol/src/schema.ts": "f1a53bd0e346d9cfd275b9da2828458bcf036d8e1fa551ad2c96ef8cc7909f16"
+	},
+	"verification": {
+		"lint": "pass",
+		"typecheck": "pass",
+		"existing_unique_tests": {
+			"passed": 1136,
+			"skipped": 3,
+			"unresolved_failed": 0
+		},
+		"initial_host_environment_failures": 21,
+		"new_ui_probes": {
+			"passed": 0,
+			"failed_expected_due_to_product_defects": 2
+		},
+		"not_run": [
+			"coverage",
+			"Web browser E2E",
+			"Electron E2E",
+			"complete release recovery suite",
+			"application production build",
+			"dependency audit/signatures",
+			"live-model validation",
+			"platform packages",
+			"packaged smoke"
+		],
+		"note": "Initial full unit invocation stopped at sandbox-restricted Host cases. Affected files were rerun with execution permission; remaining workspaces ran separately. Repeated passing tests not counted twice."
+	},
+	"test_log_tails": {
+		"/tmp/bear-audit-lint.log": "\n> bear-harness@1.0.2 lint\n> biome ci --diagnostic-level=error && node scripts/check-obsolete-brand.mjs && node scripts/check-release-baseline.mjs && node scripts/check-persistent-format-v1.mjs && node scripts/check-release-version.mjs && node scripts/check-release-workflow.mjs && npm run lint:knip && node scripts/check-tailwind-atomic-styles.mjs && node scripts/check-ui-design-language.mjs && node scripts/check-ui-copy-ownership.mjs && node scripts/check-ui-controls.mjs && node scripts/check-renderer-push.mjs && node scripts/check-renderer-effects.mjs && node scripts/check-test-quality.mjs && node scripts/check-rpc-contracts.mjs && node scripts/check-data-boundaries.mjs && node scripts/check-web-dev-test-leaks.mjs && node scripts/check-role-tool-surface.mjs && node scripts/check-character-media.mjs && node scripts/check-canon-packages.mjs && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop\n\n\u001b[0m\u001b[34mChecked 524 files in 452\u001b[0m\u001b[0m\u001b[2m\u001b[34mms\u001b[0m\u001b[0m\u001b[34m.\u001b[0m\u001b[0m\u001b[34m No fixes applied.\u001b[0m\nObsolete product-name gate passed.\nRelease baseline gate passed: one system schema (12 tables) and one companion schema (17 tables); no migration ladder\nPersistent format v1 gate passed: 19 contracts, no pre-release migration ladder\nRelease version contract passed: 1.0.2 across 12 manifests, lockfile, Electron packaging, artifact verification and runtime identity\nRelease workflow contract passed: required jobs, commands, dependencies, targets and version gates present\nPublish workflow contract passed: green-run artifact reuse and stable/RC publication present\n\n> bear-harness@1.0.2 lint:knip\n> knip\n\nConfiguration hints (4)\nsrc/main.tsx    apps/promo  knip.json  Remove redundant entry pattern                               \nvite.config.ts  apps/promo  knip.json  Remove redundant entry pattern                               \nvite.config.ts  apps/promo  knip.json  Remove redundant project pattern                             \n.css            apps/promo  knip.json  Compiled extension excluded by project (imports not followed)\nUI design language valid: 10 registered stylesheets, 651 class uses checked\nRenderer push-only state check passed\nRenderer effect boundary check passed\nTest quality valid: 160 files checked\nRPC contract gate: ok\nRole tool surface valid: role_skill plus 10 conditional Host domain tools\nCharacter media package gate passed.\nCanon package gate passed.\nWorkflow valid: /Users/bytedance/Documents/MRepo/bear-harness/.github/workflows/ci.yml\n\n> @bear-harness/desktop@1.0.2 lint\n> node scripts/validate-product-config.mjs && node scripts/check-diagnostics-contracts.mjs\n\nValid product config: /Users/bytedance/Documents/MRepo/bear-harness/packages/product-config/src/index.ts\nDiagnostics contracts: ok\n",
+		"/tmp/bear-audit-typecheck.log": "\n> bear-harness@1.0.2 pretypecheck\n> npm run build:packages\n\n\n> bear-harness@1.0.2 build:packages\n> npm run build --workspace @bear-harness/product-config && npm run build --workspace @bear-harness/i18n && npm run build --workspace @bear-harness/schema && npm run build --workspace @bear-harness/protocol && npm run build --workspace @bear-harness/companion-client && npm run build --workspace @bear-harness/tdai-core && npm run build --workspace @bear-harness/host-runtime\n\n\n> @bear-harness/product-config@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/i18n@1.0.2 build\n> node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json\n\n\n> @bear-harness/schema@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/protocol@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/companion-client@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/tdai-core@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/host-runtime@1.0.2 prebuild\n> npm --prefix ../tdai-core run build && npm --prefix ../protocol run build\n\n\n> @bear-harness/tdai-core@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/protocol@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/host-runtime@1.0.2 build\n> tsc -p tsconfig.json && node scripts/check-esm-runtime.mjs\n\n\n> bear-harness@1.0.2 typecheck\n> npm run typecheck --workspace @bear-harness/product-config && npm run typecheck --workspace @bear-harness/i18n && npm run typecheck --workspace @bear-harness/schema && npm run typecheck --workspace @bear-harness/protocol && npm run typecheck --workspace @bear-harness/companion-client && npm run typecheck --workspace @bear-harness/host-runtime && npm run typecheck --workspace @bear-harness/companion-ui && npm run typecheck --workspace @bear-harness/desktop && npm run typecheck --workspace @bear-harness/web-dev\n\n\n> @bear-harness/product-config@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/i18n@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/schema@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/protocol@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/companion-client@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/host-runtime@1.0.2 pretypecheck\n> npm --prefix ../tdai-core run build && npm --prefix ../protocol run build\n\n\n> @bear-harness/tdai-core@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/protocol@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/host-runtime@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/companion-ui@1.0.2 pretypecheck\n> npm --prefix ../i18n run build\n\n\n> @bear-harness/i18n@1.0.2 build\n> node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json\n\n\n> @bear-harness/companion-ui@1.0.2 typecheck\n> tsc -p tsconfig.json --noEmit\n\n\n> @bear-harness/desktop@1.0.2 typecheck\n> tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit\n\n\n> @bear-harness/web-dev@1.0.2 typecheck\n> tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit\n\n",
+		"/tmp/bear-audit-unit.log": "ernal-agent transport > drains worker stderr without exposing credentials in exit results or failure events\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯\n\n FAIL  tests/acp-executor.spec.ts > ACP external-agent transport > reports only a real live handle as attached and fails closed after restart\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯\n\n FAIL  tests/acp-executor.spec.ts > ACP external-agent transport > waits for native pause confirmation, resumes the same session, and releases on cancel\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯\n\n FAIL  tests/acp-executor.spec.ts > ACP external-agent transport > does not turn a naturally completed turn into an acknowledged pause\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯\n\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > completes a native retry and write with read-only native-test settings\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > completes a native retry and write with read-only openai settings\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > fails a genuinely unsuccessful final native response\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > acknowledges Host cancellation only after native bash descendants stop writing\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > drains detached native bash descendants on direct worker shutdown without namespace teardown\n FAIL  tests/acp-executor.spec.ts > native Pi ACP worker > drains detached native bash descendants on direct worker SIGTERM without namespace teardown\n FAIL  tests/memory-remote-errors.spec.ts > memory retrieval distinguishes a valid remote zero-hit result from transport rejection\n FAIL  tests/memory-remote-errors.spec.ts > conversation retrieval distinguishes a valid remote zero-hit result from transport rejection\n FAIL  tests/memory-remote-errors.spec.ts > remote enumeration and readiness failures > does not turn failed counts or record enumeration into empty collections\n FAIL  tests/memory-remote-errors.spec.ts > remote enumeration and readiness failures > rejects incomplete pagination rather than reporting an empty or partial inventory\n FAIL  tests/memory-remote-errors.spec.ts > remote enumeration and readiness failures > rejects uninitialized and failed configured reads while retaining the initialization cause\n FAIL  tests/memory-remote-errors.spec.ts > remote enumeration and readiness failures > preserves the original network error after transport retries are exhausted\nError: listen EPERM: operation not permitted 127.0.0.1\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯\n\n FAIL  tests/executor-adapters.spec.ts > ACP executor adapters > launches confined Pi ACP with declared snapshots and records no secret manifest data\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯\n\n FAIL  tests/executor-adapters.spec.ts > ACP executor adapters > keeps the consented Codex ACP adapter functional under confinement\n{ kind: 'unavailable', reason: 'acp_start_failed', stacks: [] }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/21]⎯\n\n FAIL  tests/executor-confinement.spec.ts > ACP process confinement > enforces the macOS data and executable boundaries in a real child\nAssertionError: sandbox-exec: sandbox_apply: Operation not permitted\n: expected 71 to be +0 // Object.is equality\n\n- Expected\n+ Received\n\n- 0\n+ 71\n\n ❯ tests/executor-confinement.spec.ts:381:41\n    379|    }\n    380|    expect(result.signal).toBeNull();\n    381|    expect(result.status, result.stderr).toBe(0);\n       |                                         ^\n    382|    expect(JSON.parse(result.stdout)).toEqual({\n    383|     workspaceRead: true,\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/21]⎯\n\n\n Test Files  4 failed | 66 passed (70)\n      Tests  21 failed | 579 passed | 2 skipped (602)\n   Start at  19:50:30\n   Duration  30.83s (transform 1.06s, setup 0ms, import 20.20s, tests 37.04s, environment 3ms)\n\nnpm error Lifecycle script `test:unit` failed with error:\nnpm error code 1\nnpm error path /Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime\nnpm error workspace @bear-harness/host-runtime@1.0.2\nnpm error location /Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime\nnpm error command failed\nnpm error command sh -c npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run\n",
+		"/tmp/bear-execution-audit-external-tests-escalated.log": "\n RUN  v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime\n\n\n Test Files  8 passed (8)\n      Tests  79 passed | 1 skipped (80)\n   Start at  19:50:46\n   Duration  12.39s (transform 232ms, setup 0ms, import 1.83s, tests 17.13s, environment 0ms)\n\n",
+		"/tmp/bear-audit-memory-retest.log": "\n> @bear-harness/host-runtime@1.0.2 test:unit\n> npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run tests/memory-remote-errors.spec.ts\n\n\n> @bear-harness/tdai-core@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/protocol@1.0.2 build\n> tsc -p tsconfig.json\n\n\n RUN  v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime\n\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  19:51:26\n   Duration  1.80s (transform 59ms, setup 0ms, import 148ms, tests 1.59s, environment 0ms)\n\n",
+		"/tmp/bear-audit-ui-unit.log": "\n> @bear-harness/companion-ui@1.0.2 test:unit\n> npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run\n\n\n> @bear-harness/product-config@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/i18n@1.0.2 build\n> node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json\n\n\n> @bear-harness/protocol@1.0.2 build\n> tsc -p tsconfig.json\n\n\n> @bear-harness/companion-client@1.0.2 build\n> tsc -p tsconfig.json\n\n\n RUN  v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui\n\n\n Test Files  36 passed (36)\n      Tests  256 passed | 1 skipped (257)\n   Start at  19:51:36\n   Duration  22.31s (transform 2.19s, setup 2.62s, import 7.80s, tests 18.22s, environment 12.97s)\n\n",
+		"/tmp/bear-audit-desktop-unit.log": "\n> @bear-harness/desktop@1.0.2 test:unit\n> node scripts/validate-product-config.mjs && vitest run\n\nValid product config: /Users/bytedance/Documents/MRepo/bear-harness/packages/product-config/src/index.ts\n\n RUN  v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/apps/desktop\n\n\n Test Files  23 passed (23)\n      Tests  207 passed (207)\n   Start at  19:51:34\n   Duration  2.85s (transform 3.12s, setup 0ms, import 9.00s, tests 1.32s, environment 1ms)\n\n",
+		"/tmp/bear-audit-web-unit.log": "\n> @bear-harness/web-dev@1.0.2 test:unit\n> node --test server/data-directory.spec.ts server/codex-session-credential.spec.ts server/soak-metrics.spec.ts e2e/bounded-trace.test.ts scripts/proxy-failure.test.mjs scripts/proxy-transport.test.mjs scripts/web-launch-mode.test.mjs\n\n✔ deterministic provider traces retain only the newest bounded observations (0.673084ms)\n✔ proxy failures expose only an allowlisted route category and bounded code (0.877666ms)\n✔ proxy failures distinguish an explicit client abort (0.093667ms)\n✔ the WebDev loopback pool reuses safe sockets and retires them before Host expiry (2111.178625ms)\n✔ soak acceptance serves the production build without opening a browser (0.540083ms)\n✔ production build uses Windows command shims and reports spawn failures (0.44825ms)\n✔ maps a current Codex session to a Pi openai-codex OAuth credential (1.740375ms)\n✔ rejects expired and account-mismatched Codex sessions (0.795959ms)\n✔ normal web development uses the same platform directory as Electron userData (0.357125ms)\n✔ an explicit E2E data directory remains isolated (0.077583ms)\n✔ an explicitly isolated web-dev directory is scoped to the launcher process (0.111875ms)\n✔ scoped data roots require an explicit safe launcher scope (0.047959ms)\n✔ soak process metrics expose bounded numeric process facts without content (0.699167ms)\nℹ tests 13\nℹ suites 0\nℹ pass 13\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2165.478791\n"
+	},
+	"reproductions": {
+		"host_lifecycle": [
+			{
+				"mode": "reactivation",
+				"oldRuntime": "jizhou:1",
+				"newRuntime": "jizhou:3",
+				"sharedDatabase": true,
+				"queryError": "database is not open"
+			},
+			{
+				"mode": "delete-retiring",
+				"pendingBefore": {
+					"characterId": "jizhou",
+					"generation": 1,
+					"phase": "retiring",
+					"pendingRequests": 1
+				},
+				"deletion": {
+					"ok": true,
+					"data": {
+						"characterId": "jizhou",
+						"target": "runtime",
+						"deleted": true
+					}
+				},
+				"oldStillRegistered": true,
+				"directoryExists": false
+			}
+		],
+		"native_pi_first_turn_close": [
+			{
+				"before": {
+					"isStreaming": true,
+					"transcriptExists": false
+				},
+				"after": {
+					"isStreaming": false,
+					"transcriptExists": true,
+					"catalogDiscardCallbackFired": true,
+					"messages": [
+						{
+							"role": "user"
+						},
+						{
+							"role": "assistant",
+							"stopReason": "aborted"
+						}
+					]
+				}
+			}
+		],
+		"pi_title_delete": [
+			{
+				"case": "close-after-first-prompt",
+				"absentBeforeClose": true,
+				"transcriptExistsAfterClose": true,
+				"catalogDiscardCallbackFired": true,
+				"nativeEntries": ["session_info", "user:", "assistant:aborted"]
+			},
+			{
+				"case": "late-auto-title-after-delete",
+				"absentAfterDelete": true,
+				"transcriptRecreated": true,
+				"recreatedContents": "{\"type\":\"session_info\",\"id\":\"fb402b7c\",\"parentId\":\"afa7b501\",\"timestamp\":\"2026-09-22T11:52:45.487Z\",\"name\":\"Late title\"}\n"
+			}
+		],
+		"ui_probe_output_excerpt": "Audit evidence: captured output from tool executions; this is not a test-runner report file.\n\nCommand (temporary reproduction, 2026-09-22 19:51:57 local):\nfnm exec --using=.nvmrc node packages/companion-ui/node_modules/vitest/vitest.mjs run --config /private/tmp/bear-projection-audit/vitest.config.ts\n\nRUN v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui\nprojection-audit.spec.ts (2 tests | 2 failed) 526ms\nFAIL settled background projection survives unrelated navigation\nAssertionError: expected true to be false\nLocation: projection-audit.spec.ts:164:80\n  expect(store.conversations.find(x => x.conversationId === \"b\")?.isStreaming).toBe(false);\nFAIL does not claim reconnected after the authoritative snapshot fails\nAssertionError: expected true to be false\nLocation: projection-audit.spec.ts:194:48\n  expect(store.activePiLiveState?.isStreaming).toBe(false);\nTest Files 1 failed (1)\nTests 2 failed (2)\nDuration 1.62s (transform 430ms, setup 189ms, import 425ms, tests 526ms, environment 375ms)\nExit code: 1 (expected: reproduction assertions demonstrate existing defects)\n\nCommand (existing baseline tests, 2026-09-22 19:52:12 local):\nfnm exec --using=.nvmrc node packages/companion-ui/node_modules/vitest/vitest.mjs run --root /Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui --config /Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/vitest.config.ts tests/conversation-local-active.spec.ts tests/pi-event-replay.spec.ts tests/generated-client-contract.spec.ts tests/ipc-validation.spec.ts tests/ipc-errors.spec.ts tests/composer.spec.tsx tests/tool-activity.spec.tsx\n\nRUN v4.1.11 /Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui\nTest Files 7 passed (7)\nTests 90 passed (90)\nDuration 6.76s (transform 1.33s, setup 456ms, import 2.03s, tests 7.16s, environment 1.94s)\nExit code: 0\n\nRepository tracked changes from this audit: none. Temporary tests and configuration are outside the repository.\n",
+		"rpc_registration_probe": {
+			"declared": 118,
+			"registered": 114,
+			"missing": [
+				"provider.loginSessions",
+				"externalAgent.discoverCodex",
+				"externalAgent.connectCodex",
+				"externalAgent.status"
+			]
+		}
+	},
+	"verdict": {
+		"minimal_core": false,
+		"release_approved": false
+	},
+	"reproduction_sources": {
+		"/tmp/bear-audit-lifecycle.mjs": {
+			"sha256": "98220a0d64a8c0420f9b8a7b35b99939fa58a320ab8fbc049cc0714c385e305b",
+			"source": "import { mkdtempSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs';\nimport { tmpdir } from 'node:os';\nimport { join, relative } from 'node:path';\nimport { createHostRuntime } from '/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/dist/index.js';\nimport { productConfig } from '/Users/bytedance/Documents/MRepo/bear-harness/packages/product-config/dist/index.js';\nconst fixture='/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/tests/fixtures/characters';\nconst vault={securityLevel:'session',isEncryptionAvailable:()=>false,encryptString:v=>Buffer.from(v),decryptString:v=>v.toString('utf8')};\nfunction files(root,dir=root) {return readdirSync(dir,{withFileTypes:true}).flatMap(e=>{const p=join(dir,e.name);if(e.isDirectory())return files(root,p);const b=e.name==='character.yaml'?Buffer.from(readFileSync(p,'utf8').replace('id: jizhou','id: audit-other')):readFileSync(p);return [{path:`package/${relative(root,p)}`,base64:b.toString('base64')}];});}\nasync function run(mode) {\n const dir=mkdtempSync(join(tmpdir(),'bear-audit-lifecycle-'));\n const host=createHostRuntime({dataDir:dir,characterSeedRoot:fixture,productConfig,credentialVault:vault});\n let pinned;\n const release=Promise.withResolvers();\n try {\n  const imported=await host.dispatch('character.import',{files:files(join(fixture,'jizhou'))});\n  if(!imported.ok)throw new Error(JSON.stringify(imported));\n  const started=Promise.withResolvers();\n  pinned=host.lifecycle.route(async r=>{started.resolve(r);await release.promise;});\n  const old=await started.promise;\n  const switched=await host.dispatch('character.activate',{characterId:'audit-other'});\n  if(!switched.ok)throw new Error(JSON.stringify(switched));\n  if(mode==='reactivation') {\n   const back=await host.dispatch('character.activate',{characterId:'jizhou'});\n   if(!back.ok)throw new Error(JSON.stringify(back));\n   const current=host.lifecycle.active();\n   const sharedDatabase=old.runtime.db===current.runtime.db;\n   release.resolve(); await pinned;\n   let queryError;\n   try {current.runtime.db.connection.prepare('SELECT 1').get();} catch(e){queryError=e.message;}\n   console.log(JSON.stringify({mode,oldRuntime:old.runtimeId,newRuntime:current.runtimeId,sharedDatabase,queryError}));\n  } else {\n   const before=host.lifecycle.snapshot();\n   const deletion=await host.dispatch('character.runtimeDelete',{characterId:'jizhou'});\n   console.log(JSON.stringify({mode,pendingBefore:before.runtimes[old.runtimeId],deletion,oldStillRegistered:!!host.lifecycle.snapshot().runtimes[old.runtimeId],directoryExists:existsSync(join(dir,'companions','jizhou'))}));\n   release.resolve();await pinned;\n  }\n } finally {release.resolve();await pinned?.catch(()=>{});await host.close().catch(()=>{});rmSync(dir,{recursive:true,force:true});}\n}\nawait run('reactivation');\nawait run('delete-retiring');\n"
+		},
+		"/private/tmp/bear-pi-native-close-repro.mjs": {
+			"sha256": "4bdcd0ca628c72c504cfadaec366cee2fa9101513699611eeb4db7f2ba27933b",
+			"source": "import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { tmpdir } from 'node:os';\nimport { PiRuntime } from '/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/dist/companion/pi-runtime.js';\nimport { ModelRuntime, SessionManager } from '/Users/bytedance/Documents/MRepo/bear-harness/node_modules/@earendil-works/pi-coding-agent/dist/index.js';\nimport { AssistantMessageEventStream } from '/Users/bytedance/Documents/MRepo/bear-harness/node_modules/@earendil-works/pi-ai/dist/index.js';\nconst base=mkdtempSync(join(tmpdir(),'bear-native-close-audit-')); mkdirSync(join(base,'runtime'));mkdirSync(join(base,'sessions'));\nconst models=await ModelRuntime.create({authPath:join(base,'auth.json'),modelsPath:null,refreshOnCreate:false});\nmodels.registerProvider('test',{baseUrl:'https://unused.invalid',api:'openai-completions',apiKey:'test-only',models:[{id:'test-model',name:'Test',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:1024}]});\nlet entered; const providerEntered=new Promise(resolve=>entered=resolve);\nmodels.streamSimple=(_model,_context,options)=>{const events=new AssistantMessageEventStream(); options.signal.addEventListener('abort',()=>events.push({type:'error',reason:'aborted',error:{role:'assistant',api:'openai-completions',provider:'test',model:'test-model',content:[{type:'text',text:'partial'}],stopReason:'aborted',errorMessage:'Request aborted',timestamp:Date.now(),usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}),{once:true}); entered(); return events;};\nconst discarded=[];\nconst runtime=new PiRuntime({paths:{runtime:join(base,'runtime'),sessions:join(base,'sessions')},models:{getModels:async()=>models},character:()=>({id:'test-character'}),defaultModel:()=>({providerId:'test',modelId:'test-model'}),multimodalFallback:()=>undefined,memory:{enabled:()=>false,explicit:{read:async()=>''},drain:async()=>{}},sessionDiscarded:id=>discarded.push(id)});\nconst session=await runtime.create('Native close test');const file=session.sessionManager.getSessionFile();\nawait runtime.send(session.sessionId,'hello');await providerEntered;\nconst before={isStreaming:session.isStreaming,transcriptExists:existsSync(file)};\nawait runtime.close(session.sessionId);\nconsole.log(JSON.stringify({before,after:{isStreaming:session.isStreaming,transcriptExists:existsSync(file),catalogDiscardCallbackFired:discarded.includes(session.sessionId),messages:SessionManager.open(file).getEntries().filter(e=>e.type==='message').map(e=>({role:e.message.role,stopReason:e.message.stopReason}))}}));\nrmSync(base,{recursive:true,force:true});\n"
+		},
+		"/private/tmp/bear-pi-audit-repro.mjs": {
+			"sha256": "09834a65cfc3051cbb660822aa81e5312edee31737718cbe02c222c015d1abe4",
+			"source": "import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync } from 'node:fs';\nimport { unlink } from 'node:fs/promises';\nimport { join } from 'node:path';\nimport { tmpdir } from 'node:os';\nimport { PiRuntime } from '/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/dist/companion/pi-runtime.js';\nimport { SessionManager } from '/Users/bytedance/Documents/MRepo/bear-harness/node_modules/@earendil-works/pi-coding-agent/dist/index.js';\nconst base = mkdtempSync(join(tmpdir(), 'bear-audit-'));\nmkdirSync(join(base, 'runtime')); mkdirSync(join(base, 'sessions'));\nconst assistant = { role:'assistant', api:'openai-completions', provider:'test', model:'test', content:[{type:'text',text:'partial'}], stopReason:'aborted', timestamp:1, usage:{ input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}} };\nconst discarded=[];\nconst runtime = new PiRuntime({paths:{runtime:join(base,'runtime'),sessions:join(base,'sessions')},memory:{drain:async()=>{}},sessionDiscarded:id=>discarded.push(id)});\nlet fake;\nruntime.buildSession = async manager => fake = {\n sessionManager:manager, sessionId:manager.getSessionId(), get sessionName(){return manager.getSessionName()},\n get messages(){return manager.buildSessionContext().messages}, model:{provider:'test',id:'test'},\n subscribe:()=>()=>{}, abortCompaction(){},abortBranchSummary(){},dispose(){},\n async abort(){ manager.appendMessage(assistant) }, setSessionName:name=>manager.appendSessionInfo(name)\n};\nconst first = await runtime.create('first');\nconst firstFile=first.sessionManager.getSessionFile();\nfirst.sessionManager.appendMessage({role:'user',content:'hello',timestamp:0});\nconst absentBeforeClose=!existsSync(firstFile);\nawait runtime.close(first.sessionId);\nconsole.log(JSON.stringify({case:'close-after-first-prompt', absentBeforeClose, transcriptExistsAfterClose:existsSync(firstFile), catalogDiscardCallbackFired:discarded.includes(first.sessionId), nativeEntries:SessionManager.open(firstFile).getEntries().map(e=>e.type==='message'?e.message.role+':'+(e.message.stopReason??''):e.type)}));\nlet resolveTitle; const titlePromise = new Promise(resolve=>resolveTitle=resolve);\nconst second = await runtime.create();\nsecond.abort=async()=>{};\nsecond.sessionManager.appendMessage({role:'user',content:'title input',timestamp:0});\nsecond.sessionManager.appendMessage({...assistant,stopReason:'stop'});\nsecond.modelRuntime={completeSimple:()=>titlePromise};\nconst secondFile=second.sessionManager.getSessionFile();\nconst naming=runtime.nameFirstTurn(second,'title input');\nawait runtime.delete(second.sessionId,()=>unlink(secondFile));\nconst absentAfterDelete=!existsSync(secondFile);\nresolveTitle({content:[{type:'text',text:'Late title'}]});\nawait naming;\nconsole.log(JSON.stringify({case:'late-auto-title-after-delete',absentAfterDelete, transcriptRecreated:existsSync(secondFile), recreatedContents:readFileSync(secondFile,'utf8')}));\nrmSync(base,{recursive:true,force:true});\n"
+		},
+		"/private/tmp/bear-projection-audit/projection-audit.spec.ts": {
+			"sha256": "def97a8e842af7f3152558c0bbef3ef6b70719800a7315ad4c7b71d77c3758d7",
+			"source": "import type { CompanionClient } from \"@bear-harness/companion-client\";\nimport type {\n\tConversationActiveResponse,\n\tConversationDetail,\n\tConversationSummary,\n\tLivePush,\n\tPiSessionEntry,\n\tRpcEnvelope,\n\tRunListResponse,\n\tSnapshotResponse,\n} from \"@bear-harness/protocol\";\nimport { LivePush as LivePushSchema } from \"@bear-harness/protocol/schema\";\nimport { isCancelledError, QueryClient, QueryClientProvider } from \"@tanstack/solid-query\";\nimport { waitFor } from \"@testing-library/dom\";\nimport { createComponent, createRoot } from \"solid-js\";\nimport { describe, expect, it, vi } from \"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/node_modules/vitest/dist/index.js\";\nimport { type CompanionStore, createCompanionStore } from \"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/src/stores/companion.tsx\";\nimport { createTestClient, pushPiEvent, THEMED_CHARACTER } from \"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/tests/fixtures.ts\";\n\nconst summary = (conversationId: string): ConversationSummary => ({\n\tconversationId,\n\tname: `Conversation ${conversationId}`,\n\tcreated: \"2026-01-01T00:00:00.000Z\",\n\tmodified: \"2026-01-01T00:00:00.000Z\",\n\tmessageCount: 0,\n\tfirstMessage: \"\",\n\tisStreaming: false,\n});\n\nconst detail = (conversationId: string, entries: PiSessionEntry[] = []): ConversationDetail => ({\n\tconversationId,\n\tname: `Conversation ${conversationId}`,\n\tbranch: {\n\t\tentries,\n\t\thasMoreBefore: false,\n\t\tactiveLeafId: entries.at(-1)?.id,\n\t\tlatestLeafIds: entries.length ? [entries[entries.length - 1]!.id] : [],\n\t},\n\tlive: {\n\t\tisStreaming: false,\n\t\tisRetrying: false,\n\t\tretryAttempt: 0,\n\t\tisCompacting: false,\n\t\tpendingToolCallIds: [],\n\t\tsteering: [],\n\t\tfollowUp: [],\n\t},\n});\n\nconst userEntry = (id: string, text: string) =>\n\t({\n\t\ttype: \"message\",\n\t\tid,\n\t\tparentId: null,\n\t\ttimestamp: \"2026-01-01T00:00:00.000Z\",\n\t\tmessage: { role: \"user\", content: text, timestamp: 1 },\n\t}) satisfies PiSessionEntry;\n\nconst assistantEntry = (id: string, text: string) =>\n\t({\n\t\ttype: \"message\",\n\t\tid,\n\t\tparentId: null,\n\t\ttimestamp: \"2026-01-01T00:00:00.000Z\",\n\t\tmessage: {\n\t\t\trole: \"assistant\",\n\t\t\tcontent: [{ type: \"text\", text }],\n\t\t\tapi: \"openai-responses\",\n\t\t\tprovider: \"relay\",\n\t\t\tmodel: \"model\",\n\t\t\tusage: {\n\t\t\t\tinput: 1,\n\t\t\t\toutput: 1,\n\t\t\t\tcacheRead: 0,\n\t\t\t\tcacheWrite: 0,\n\t\t\t\ttotalTokens: 2,\n\t\t\t\tcost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },\n\t\t\t},\n\t\t\tstopReason: \"stop\",\n\t\t\ttimestamp: 2,\n\t\t\tresponseId: \"response-1\",\n\t\t},\n\t}) satisfies PiSessionEntry;\n\nconst streamingAssistant = (text: string) => ({\n\trole: \"assistant\" as const,\n\tcontent: [{ type: \"text\" as const, text }],\n\tapi: \"openai-responses\" as const,\n\tprovider: \"relay\",\n\tmodel: \"model\",\n\tusage: {\n\t\tinput: 1,\n\t\toutput: 1,\n\t\tcacheRead: 0,\n\t\tcacheWrite: 0,\n\t\ttotalTokens: 2,\n\t\tcost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },\n\t},\n\tstopReason: \"stop\" as const,\n\ttimestamp: 2,\n\tresponseId: \"stream-response\",\n});\n\nfunction mockActiveConversation(\n\tclient: CompanionClient,\n\tinitial: ConversationDetail | null = detail(\"a\"),\n) {\n\tlet activeConversation = initial;\n\tconst select = (next: ConversationDetail | null) => {\n\t\tactiveConversation = next;\n\t\treturn { ok: true as const, data: { activeConversation } };\n\t};\n\tclient.conversation.activeGet = vi.fn(() => Promise.resolve(select(activeConversation)));\n\tclient.conversation.select = vi.fn(({ conversationId }) =>\n\t\tPromise.resolve(select(detail(conversationId))),\n\t);\n\tclient.conversation.open = vi.fn(({ conversationId }) =>\n\t\tPromise.resolve({ ok: true as const, data: detail(conversationId) }),\n\t);\n\treturn select;\n}\n\nfunction createStoreWithCleanup(client: CompanionClient) {\n\tlet dispose = () => undefined;\n\tlet store: CompanionStore | undefined;\n\tconst queryClient = new QueryClient({\n\t\tdefaultOptions: { queries: { retry: false, staleTime: 30_000 } },\n\t});\n\tcreateRoot((cleanup) => {\n\t\tdispose = cleanup;\n\t\tcreateComponent(QueryClientProvider, {\n\t\t\tclient: queryClient,\n\t\t\tget children() {\n\t\t\t\tstore = createCompanionStore(client);\n\t\t\t\treturn undefined;\n\t\t\t},\n\t\t});\n\t});\n\tif (!store) throw new Error(\"store was not created inside QueryClientProvider\");\n\treturn { store, queryClient, dispose };\n}\n\n\nit(\"settled background projection survives unrelated navigation\", async () => {\n const { client } = createTestClient();\n mockActiveConversation(client, detail(\"a\"));\n client.conversation.list = vi.fn(async () => ({ ok: true as const, data: { conversations: [summary(\"a\"), summary(\"b\"), summary(\"c\")] } }));\n const pending = Promise.withResolvers<RpcEnvelope<ConversationDetail>>();\n client.conversation.open = vi.fn(() => pending.promise);\n const { store, dispose } = createStoreWithCleanup(client);\n try {\n  await waitFor(() => expect(store.liveConnectionStatus).toBe(\"connected\"));\n  pushPiEvent(client, { type: \"pi\", conversationId: \"b\", version: { instanceId: \"native-b\", sequence: 1 }, event: { type: \"agent_start\" } });\n  await waitFor(() => expect(store.conversations.find(x => x.conversationId === \"b\")?.isStreaming).toBe(true));\n  pushPiEvent(client, { type: \"pi\", conversationId: \"b\", version: { instanceId: \"native-b\", sequence: 2 }, event: { type: \"agent_settled\" } });\n  await waitFor(() => expect(client.conversation.open).toHaveBeenCalledTimes(1));\n  await store.selectConversation(\"c\");\n  const settled = detail(\"b\");\n  settled.live.version = { instanceId: \"native-b\", sequence: 2 };\n  pending.resolve({ ok: true, data: settled });\n  await new Promise(resolve => setTimeout(resolve, 50));\n  expect(store.activeConversationId).toBe(\"c\");\n  expect(client.conversation.open).toHaveBeenCalledTimes(1);\n  expect(store.conversations.find(x => x.conversationId === \"b\")?.isStreaming).toBe(false);\n  expect(store.completedConversationIds.has(\"b\")).toBe(true);\n } finally { dispose(); }\n});\n\nit(\"does not claim reconnected after the authoritative snapshot fails\", async () => {\n const { client } = createTestClient();\n mockActiveConversation(client, detail(\"a\", [userEntry(\"stale\", \"before reconnect\")]));\n const disconnect = Promise.withResolvers<void>();\n const subscribe = client.live.subscribe;\n let subscriptions = 0;\n client.live.subscribe = vi.fn(async signal => ++subscriptions === 1 ? {\n  async *[Symbol.asyncIterator]() {\n   yield { type: \"pi\" as const, conversationId: \"a\", event: { type: \"agent_start\" as const } };\n   await disconnect.promise;\n   throw new Error(\"disconnect\");\n  }\n } : subscribe(signal));\n const { store, dispose } = createStoreWithCleanup(client);\n try {\n  await waitFor(() => expect(store.liveConnectionStatus).toBe(\"connected\"));\n  await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));\n  client.conversation.activeGet = vi.fn()\n   .mockRejectedValueOnce(new Error(\"temporary snapshot failure\"))\n   .mockResolvedValue({ ok: true, data: { activeConversation: detail(\"a\", [userEntry(\"fresh\", \"authoritative completion\")]) } });\n  disconnect.resolve();\n  await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledTimes(2));\n  await new Promise(resolve => setTimeout(resolve, 150));\n  expect(store.liveConnectionStatus).toBe(\"connected\");\n  expect(client.conversation.activeGet).toHaveBeenCalledTimes(1);\n  expect(store.activePiLiveState?.isStreaming).toBe(false);\n  expect(store.activePiEntries?.at(-1)?.id).toBe(\"fresh\");\n } finally { dispose(); }\n});\n"
+		},
+		"/private/tmp/bear-projection-audit/vitest.config.ts": {
+			"sha256": "2be794437be576d96abdcb0a313e5cac4687bd00ba465a6b07272ece95743105",
+			"source": "import config from \"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/vitest.config.ts\";\nexport default { ...config, root: \"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui\", test: { ...config.test, include: [\"/private/tmp/bear-projection-audit/projection-audit.spec.ts\"], setupFiles: [\"/Users/bytedance/Documents/MRepo/bear-harness/packages/companion-ui/tests/setup.ts\"] } };\n"
+		}
+	},
+	"supplementary_source_sha256": {
+		"packages/host-runtime/src/companion/first-meeting.ts": "e1847e036049a7c73b67eaa88ae9ad698d74a6aa6fbcc777b914f4a3d70d786d",
+		"packages/host-runtime/src/companion/onboarding-schema.ts": "8354bbb3182cfd7335d693454f96ca348b3d15a9bdc84563ce9213e3f63354ea",
+		"scripts/check-rpc-contracts.mjs": "4cf5fef11b9d664e9b897e1eacc17708f39eaebe68bdf67be40da4609513245d"
+	}
+}

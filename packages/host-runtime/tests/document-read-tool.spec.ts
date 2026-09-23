@@ -87,7 +87,7 @@ describe("document_read", () => {
 		});
 	});
 
-	it("rejects model-selected executors and model-supplied admission identities", async () => {
+	it("rejects undeclared executor aliases and model-supplied admission identities", async () => {
 		const delegate = vi.fn();
 		const tools = registerHostTools({ delegate } as never);
 		for (const extra of [
@@ -125,6 +125,47 @@ describe("document_read", () => {
 });
 
 describe("conversation-owned Run tools", () => {
+	it("lists runner guidance and forwards an explicit runner while retaining the invoking conversation", async () => {
+		const catalog = [
+			{
+				runnerId: "custom-research",
+				kind: "custom",
+				name: "Research",
+				description: "Research only",
+				useWhen: "Research questions",
+				limitations: "No writes",
+				enabled: true,
+				configured: true,
+			},
+		];
+		const delegate = vi.fn().mockResolvedValue({
+			accepted: true,
+			runId: "run-custom",
+			runnerId: "custom-research",
+			executor: "custom",
+		});
+		const tools = registerHostTools({
+			runners: () => catalog,
+			sessionId: () => "conversation-a",
+			entryId: () => "entry-a",
+			delegate,
+		} as never);
+		expect(await tools.host_runners?.execute("list", {})).toMatchObject({
+			details: { ok: true, data: { runners: catalog } },
+		});
+		await tools.host_delegate?.execute("call", {
+			instruction: "Research it",
+			runnerId: "custom-research",
+		});
+		expect(delegate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				conversationId: "conversation-a",
+				runnerId: "custom-research",
+				toolCallId: "call",
+			}),
+		);
+	});
+
 	it("requires exact control targets and excludes model permission approvals", async () => {
 		const runControl = vi.fn();
 		const tools = registerHostTools({ runControl } as never);

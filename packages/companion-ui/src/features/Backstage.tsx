@@ -1,5 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createSignal, For, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { Button, Dialog, FileField } from "../ui/primitives.js";
@@ -14,8 +14,8 @@ import { CharacterModelSettings } from "./SystemModelSettings.js";
  *
  * Kobalte 0.13 ships no `Sheet` primitive, so the drawer is built on the
  * `Dialog` family (focus trap, ESC-to-close, aria-modal, labelled title),
- * styled as a right-side panel. Role settings include a read-only view of
- * the selected character's relationship and explicit memory.
+ * styled as a right-side panel. Role settings include character memory consent
+ * and a read-only view of relationship and explicit memory.
  */
 export function Backstage(props: {
 	open: boolean;
@@ -88,34 +88,6 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
-	const [pendingSwitch, setPendingSwitch] = createSignal<CharacterSummary>();
-	let switchReturnFocus: HTMLElement | undefined;
-	const switchNeedsConfirmation = () => {
-		const live = companion.activePiLiveState;
-		return Boolean(
-			companion.activeSubmission ||
-				live?.isStreaming ||
-				live?.isRetrying ||
-				live?.isCompacting ||
-				live?.pendingToolCallIds.length ||
-				live?.steering.length ||
-				live?.followUp.length,
-		);
-	};
-	const requestSwitch = (character: CharacterSummary, opener: HTMLElement) => {
-		if (!switchNeedsConfirmation()) {
-			workflow.activateRole(character.id);
-			return;
-		}
-		switchReturnFocus = opener;
-		setPendingSwitch(character);
-	};
-	const confirmSwitch = () => {
-		const target = pendingSwitch();
-		if (!target) return;
-		workflow.activateRole(target.id);
-		setPendingSwitch(undefined);
-	};
 	const deletionQuery = companion.characters.observeDeletionStatus?.(
 		workflow.selectedPackageId,
 	) ?? {
@@ -154,7 +126,9 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 				</div>
 				<div class="role-library-list">
 					<For each={workflow.characters()}>
-						{(character) => <RoleRow character={character} onSwitch={requestSwitch} />}
+						{(character) => (
+							<RoleRow character={character} onSwitch={() => workflow.activateRole(character.id)} />
+						)}
 					</For>
 				</div>
 			</aside>
@@ -170,6 +144,11 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 								.find((character) => character.id === workflow.selectedPackageId())?.name ?? ""
 						}
 						load={(request) => companion.characters.inspectMemory(request)}
+						memoryGet={(id) => companion.characters.memoryGet(id)}
+						memorySet={(id, enabled) => companion.characters.memorySet(id, enabled)}
+						systemMemoryEnabled={() =>
+							companion.settings.data()?.memoryVectorService.enabled === true
+						}
 						onSystemSettings={props.onOpenMemorySettings}
 					/>
 				}
@@ -205,52 +184,11 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 					return result;
 				}}
 			/>
-			<Dialog
-				open={pendingSwitch() !== undefined}
-				onOpenChange={(open) => {
-					if (!open) setPendingSwitch(undefined);
-				}}
-			>
-				<Dialog.Portal>
-					<Dialog.Overlay class="confirmation-overlay" />
-					<Dialog.Content
-						class="confirmation-dialog"
-						onCloseAutoFocus={(event) => {
-							event.preventDefault();
-							const target = switchReturnFocus;
-							switchReturnFocus = undefined;
-							if (target?.isConnected) target.focus();
-						}}
-					>
-						<Dialog.Title>{t("backstage.roleSwitchBusyTitle")}</Dialog.Title>
-						<Dialog.Description>
-							{t("backstage.roleSwitchBusyDescription", {
-								name: pendingSwitch()?.name ?? "",
-							})}
-						</Dialog.Description>
-						<div class="confirmation-actions">
-							<Dialog.CloseButton
-								as={Button}
-								type="button"
-								aria-label={t("backstage.roleSwitchBusyCancel")}
-							>
-								{t("backstage.roleSwitchBusyCancel")}
-							</Dialog.CloseButton>
-							<Button class="danger-action" type="button" onClick={confirmSwitch}>
-								{t("backstage.roleSwitchBusyConfirm")}
-							</Button>
-						</div>
-					</Dialog.Content>
-				</Dialog.Portal>
-			</Dialog>
 		</div>
 	);
 }
 
-function RoleRow(props: {
-	character: CharacterSummary;
-	onSwitch: (character: CharacterSummary, opener: HTMLElement) => void;
-}) {
+function RoleRow(props: { character: CharacterSummary; onSwitch: () => void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
@@ -307,7 +245,7 @@ function RoleRow(props: {
 						data-control="command"
 						type="button"
 						disabled={disabled()}
-						onClick={(event) => props.onSwitch(props.character, event.currentTarget)}
+						onClick={() => props.onSwitch()}
 					>
 						{t("backstage.roleSwitch")}
 					</Button>

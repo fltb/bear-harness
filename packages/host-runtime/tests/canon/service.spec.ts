@@ -332,6 +332,7 @@ describe("CanonHubService user workflow", () => {
 		service.syncPackage("character-a", canon);
 		service.syncPackage("character-a", canon);
 		expect(notices).toContainEqual({
+			scope: "system",
 			keys: [
 				["canon", "sources", "character-a"],
 				["canon", "modules", "character-a"],

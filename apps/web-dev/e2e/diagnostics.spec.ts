@@ -3,6 +3,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import {
 	activeConversationId,
+	characterRequest,
 	ensureReadyForConversation,
 	getBootstrap,
 	sendMessage,
@@ -19,7 +20,7 @@ test("diagnostics settings persist and expose real Pi trace payloads without cre
 	const rpc = async (channel: string, data = {}) => {
 		const response = await page.request.post(`/rpc/${channel}`, {
 			headers: { "x-bear-web-dev-token": token },
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		expect(response.ok()).toBe(true);
 		const envelope = await response.json();

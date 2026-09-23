@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
+import { type SystemCompositionContext, wireSystemHandlers } from "../src/composition.js";
 import { Dispatcher } from "../src/dispatcher.js";
 import { type CredentialVault, createHostRuntime, type HostRuntime } from "../src/index.js";
 import {
@@ -45,7 +46,11 @@ function makeRuntime(): HostRuntime {
 }
 
 async function data(runtime: HostRuntime, channel: string, params: unknown): Promise<unknown> {
-	const response = await runtime.dispatch(channel, params);
+	const scoped =
+		CHANNEL_CONTRACTS[channel]?.scope === "character"
+			? { characterId: productConfig.defaultCharacterId, ...(params as object) }
+			: params;
+	const response = await runtime.dispatch(channel, scoped);
 	if (!response.ok) throw new Error(response.error.reason);
 	return response.data;
 }
@@ -301,13 +306,11 @@ describe("provider catalog model synchronization", () => {
 			}),
 		};
 		const characterLoader = {
-			getActiveCharacterId: () => "oauth-character",
 			load: () => ({ id: "oauth-character", canon: {}, state: {} }),
 			seed: vi.fn(),
-			activate: vi.fn(),
 		};
 		const dispatcher = new Dispatcher();
-		wireHostHandlers(dispatcher, {
+		wireSystemHandlers(dispatcher, {
 			orm,
 			invalidations: { invalidate: vi.fn() },
 			livePush: vi.fn(),
@@ -341,7 +344,7 @@ describe("provider catalog model synchronization", () => {
 				},
 				list: () => [...syncedModels],
 			},
-		} as unknown as HostCompositionContext);
+		} as unknown as SystemCompositionContext);
 		return { dispatcher, providers };
 	}
 

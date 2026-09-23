@@ -54,6 +54,45 @@ export type CompanionClient = ClientNode<typeof RPC> & {
 	};
 };
 
+type WithoutCharacter<T> = T extends unknown ? Omit<T, "characterId"> : never;
+type CharacterRequest<E extends AnyRpcEndpoint> = E["scope"] extends "character"
+	? WithoutCharacter<RequestOf<E>>
+	: RequestOf<E>;
+type CharacterNode<Node> = {
+	readonly [Key in keyof Node]: Node[Key] extends AnyRpcEndpoint
+		? Record<string, never> extends CharacterRequest<Node[Key]>
+			? (request?: CharacterRequest<Node[Key]>) => Promise<EnvelopeOf<Node[Key]>>
+			: (request: CharacterRequest<Node[Key]>) => Promise<EnvelopeOf<Node[Key]>>
+		: CharacterNode<Node[Key]>;
+};
+export type CharacterClient = CharacterNode<typeof RPC> &
+	Pick<CompanionClient, "live" | "invalidations">;
+
+/** Bind once: asynchronous operations retain their original character ownership. */
+export function bindCharacterClient(source: CompanionClient, characterId: string): CharacterClient {
+	const visit = (node: object, contracts: object): object =>
+		Object.fromEntries(
+			Object.entries(contracts).map(([key, contract]) => {
+				return [
+					key,
+					isEndpoint(contract)
+						? (request: unknown = {}) =>
+								(node as Record<string, (request: unknown) => unknown>)[key]!(
+									contract.scope === "character"
+										? { ...(request as object), characterId }
+										: request,
+								)
+						: visit((node as Record<string, object>)[key]!, contract as object),
+				];
+			}),
+		);
+	return Object.freeze({
+		...visit(source, RPC),
+		live: source.live,
+		invalidations: source.invalidations,
+	}) as CharacterClient;
+}
+
 async function subscribeLive(
 	transport: HostTransport,
 	signal: AbortSignal,

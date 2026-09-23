@@ -3,6 +3,7 @@ import { type ProductConfig, productConfig } from "@bear-harness/product-config"
 import type {
 	ConversationDetail,
 	ConversationSummary,
+	InvalidationNotice,
 	LivePush,
 	LocalEmbeddingAcquisitionState,
 	LocalEmbeddingInventoryResponse,
@@ -205,7 +206,7 @@ const DEFAULT_MODEL = {
  *
  * Most calls resolve a success envelope with empty domain data, so the store
  * boots into the same idle shell a missing bridge used to produce; conversation
- * creation and selection update the authoritative active conversation projection.
+ * creation updates the native conversation fixtures. Selection belongs to the window.
  * The invalidation stream parks on a promise that never settles — tests never
  * race polling timers and the loop dies with the
  * store's cleanup. `settings.set` mutates the backing settings so the
@@ -277,7 +278,6 @@ export function createTestClient() {
 	/** Pi sessions created by the fixture. */
 	const conversations: ConversationSummary[] = [];
 	const archivedConversations = new Set<string>();
-	let activeConversationId: string | null = null;
 	let nextConversationId = 1;
 	const conversationList = vi.fn(() =>
 		ok({
@@ -286,9 +286,8 @@ export function createTestClient() {
 			),
 		}),
 	);
+	conversationList.mockName("fixtureConversationList");
 	const conversationDetails = new Map<string, ConversationDetail>();
-	const activeConversation = () =>
-		activeConversationId === null ? null : (conversationDetails.get(activeConversationId) ?? null);
 	const conversationProjection = (id: string, title: string): ConversationDetail => ({
 		conversationId: id,
 		name: title,
@@ -304,27 +303,40 @@ export function createTestClient() {
 		},
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
-	const liveQueue: LivePush[] = [];
-	let receiveLive: ((event: LivePush) => void) | undefined;
-	const piStream = async function* (signal: AbortSignal) {
-		while (!signal.aborted) {
-			const event =
-				liveQueue.shift() ??
-				(await new Promise<LivePush | undefined>((resolve) => {
-					const abort = () => {
-						if (receiveLive === deliver) receiveLive = undefined;
-						resolve(undefined);
-					};
-					const deliver = (next: LivePush) => {
-						signal.removeEventListener("abort", abort);
-						resolve(next);
-					};
-					receiveLive = deliver;
-					signal.addEventListener("abort", abort, { once: true });
-				}));
-			if (!event || signal.aborted) return;
-			yield event;
-		}
+	const liveListeners = new Set<(event: LivePush) => void>();
+	const piStream = (signal: AbortSignal) => {
+		const queue: LivePush[] = [];
+		let wake: (() => void) | undefined;
+		const push = (event: LivePush) => {
+			queue.push(event);
+			wake?.();
+		};
+		liveListeners.add(push);
+		const abort = () => {
+			liveListeners.delete(push);
+			wake?.();
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		return (async function* () {
+			try {
+				while (!signal.aborted) {
+					if (!queue.length)
+						await new Promise<void>((resolve) => {
+							wake = resolve;
+						});
+					wake = undefined;
+					if (signal.aborted) return;
+					const event = queue.shift();
+					if (event) yield event;
+				}
+			} finally {
+				signal.removeEventListener("abort", abort);
+				liveListeners.delete(push);
+			}
+		})();
+	};
+	const publishLive = (event: LivePush) => {
+		for (const listener of liveListeners) listener(event);
 	};
 
 	const snapshotGet = vi.fn(() =>
@@ -337,6 +349,7 @@ export function createTestClient() {
 		}),
 	);
 	const client = {
+		bootstrap: { get: vi.fn(() => ok({ defaultCharacterId: THEMED_CHARACTER.id })) },
 		live: { subscribe: async (signal: AbortSignal) => piStream(signal) },
 		invalidations: { stream: async function* () {} },
 		snapshot: {
@@ -345,12 +358,12 @@ export function createTestClient() {
 		character: {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
-			activate: vi.fn(() => ok(null)),
+			memoryGet: vi.fn(() => ok({ enabled: false })),
+			memorySet: vi.fn(({ enabled }) => ok({ enabled })),
 			deletionStatusGet: vi.fn(({ characterId }: { characterId: string }) =>
 				ok({
 					status: {
 						characterId,
-						active: characterId === THEMED_CHARACTER.id,
 						default: false,
 						runtimePresent: true,
 						packagePresent: true,
@@ -408,14 +421,6 @@ export function createTestClient() {
 		},
 		conversation: {
 			list: conversationList,
-			activeGet: vi.fn(() => ok({ activeConversation: activeConversation() })),
-			select: vi.fn(({ conversationId }: { conversationId: string }) => {
-				if (!conversationDetails.has(conversationId)) {
-					throw new Error(`Unknown fixture conversation: ${conversationId}`);
-				}
-				activeConversationId = conversationId;
-				return ok({ activeConversation: activeConversation() });
-			}),
 			create: vi.fn(({ title }: { title?: string }) => {
 				const conversationId = `c${nextConversationId++}`;
 				const summary = {
@@ -430,7 +435,6 @@ export function createTestClient() {
 				conversations.push(summary);
 				const detail = conversationProjection(conversationId, summary.name);
 				conversationDetails.set(detail.conversationId, detail);
-				activeConversationId = detail.conversationId;
 				return ok(detail);
 			}),
 			open: vi.fn(({ conversationId }: { conversationId: string }) => {
@@ -471,11 +475,10 @@ export function createTestClient() {
 				({ conversationId, archived }: { conversationId: string; archived: boolean }) => {
 					if (archived) {
 						archivedConversations.add(conversationId);
-						if (activeConversationId === conversationId) activeConversationId = null;
 					} else {
 						archivedConversations.delete(conversationId);
 					}
-					return ok({ activeConversation: activeConversation() });
+					return ok({});
 				},
 			),
 			delete: vi.fn(({ conversationId }: { conversationId: string }) => {
@@ -485,8 +488,7 @@ export function createTestClient() {
 				if (index >= 0) conversations.splice(index, 1);
 				conversationDetails.delete(conversationId);
 				archivedConversations.delete(conversationId);
-				if (activeConversationId === conversationId) activeConversationId = null;
-				return ok({ activeConversation: activeConversation() });
+				return ok({});
 			}),
 		},
 		message: {
@@ -507,7 +509,6 @@ export function createTestClient() {
 					firstMessage: "",
 					isStreaming: false,
 				});
-				activeConversationId = detail.conversationId;
 				return ok(detail);
 			}),
 			abort: vi.fn(() => ok({})),
@@ -668,7 +669,9 @@ export function createTestClient() {
 						mime: "text/plain",
 						bytes: 0,
 						sha256: "0".repeat(64),
-						status: "verified" as const,
+						verification: "verified" as const,
+						saved: false,
+						adopted: false,
 						createdAt: "2026-08-31T00:00:00.000Z",
 					},
 					offset,
@@ -682,6 +685,9 @@ export function createTestClient() {
 			saveAs: vi.fn(() => ok({ outcome: "completed" as const })),
 		},
 		externalAgent: {
+			list: vi.fn(() => ok({ items: [] })),
+			save: vi.fn(),
+			test: vi.fn(),
 			discoverCodex: vi.fn(() => ok({ candidates: [] })),
 			connectCodex: vi.fn(() => ok({ profileId: "codex-1", version: "1.0.0", hash: "hash" })),
 			status: vi.fn(() =>
@@ -711,20 +717,42 @@ export function createTestClient() {
 		},
 	} as CompanionClient;
 
-	const queue: Array<{ keys: Array<["snapshot"]> }> = [];
-	let _receive: ((value: { keys: Array<["snapshot"]> } | undefined) => void) | undefined;
-	client.invalidations.stream = async function* (signal) {
-		while (!signal.aborted) {
-			const notice =
-				queue.shift() ??
-				(await new Promise<{ keys: Array<["snapshot"]> } | undefined>((resolve) => {
-					_receive = resolve;
-					signal.addEventListener("abort", () => resolve(undefined), { once: true });
-				}));
-			if (signal.aborted) return;
-			if (notice) yield notice;
-		}
+	const invalidationListeners = new Set<(notice: InvalidationNotice) => void>();
+	client.invalidations.stream = (signal) => {
+		const queue: InvalidationNotice[] = [];
+		let wake: (() => void) | undefined;
+		const push = (notice: InvalidationNotice) => {
+			queue.push(notice);
+			wake?.();
+		};
+		invalidationListeners.add(push);
+		const abort = () => {
+			invalidationListeners.delete(push);
+			wake?.();
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		return (async function* () {
+			try {
+				while (!signal.aborted) {
+					if (!queue.length)
+						await new Promise<void>((resolve) => {
+							wake = resolve;
+						});
+					wake = undefined;
+					if (signal.aborted) return;
+					const notice = queue.shift();
+					if (notice) yield notice;
+				}
+			} finally {
+				signal.removeEventListener("abort", abort);
+				invalidationListeners.delete(push);
+			}
+		})();
 	};
+	INVALIDATION_SENDERS.set(client, (notice) => {
+		for (const listener of invalidationListeners) listener(notice);
+	});
+
 	HOST_EVENT_SENDERS.set(client, (kind, payload) => {
 		const event: LivePush =
 			kind === "memory.embedding_acquisition_changed"
@@ -752,18 +780,15 @@ export function createTestClient() {
 				};
 			}
 		}
-		const deliver = receiveLive;
-		if (deliver) {
-			receiveLive = undefined;
-			deliver(event);
-		} else liveQueue.push(event);
+		publishLive(event);
 	});
-	PI_EVENT_SENDERS.set(client, (event) => {
-		if (receiveLive) {
-			const deliver = receiveLive;
-			receiveLive = undefined;
-			deliver(event);
-		} else liveQueue.push(event);
+	PI_EVENT_SENDERS.set(client, (input) => {
+		const event =
+			"characterId" in input ||
+			!["pi", "conversationActivity", "companionState", "run"].includes(input.type)
+				? input
+				: { ...input, characterId: THEMED_CHARACTER.id };
+		publishLive(event);
 		// Model Pi storage separately from its native notices: listeners see
 		// message_end, then SessionManager appends; no user entry_appended exists.
 		if (event.type === "conversationActivity") {
@@ -837,4 +862,11 @@ export function pushPiEvent(client: CompanionClient, event: LivePush): void {
 	const send = PI_EVENT_SENDERS.get(client);
 	if (!send) throw new Error("client does not expose the Pi event test channel");
 	send(event);
+}
+
+const INVALIDATION_SENDERS = new WeakMap<CompanionClient, (notice: InvalidationNotice) => void>();
+export function pushInvalidation(client: CompanionClient, notice: InvalidationNotice) {
+	const send = INVALIDATION_SENDERS.get(client);
+	if (!send) throw new Error("client does not expose invalidations");
+	send(notice);
 }

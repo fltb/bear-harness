@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "playwright/test";
-import { getBootstrap, projectPiEntries } from "./helpers";
+import { characterRequest, getBootstrap, projectPiEntries } from "./helpers";
 
 interface PiEntry {
 	id: string;
@@ -31,7 +31,7 @@ async function rpc<T>(page: Page, token: string, channel: string, data: unknown)
 			: data;
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 		headers: { "x-bear-web-dev-token": token },
-		data: requestData,
+		data: characterRequest(channel, requestData, "jizhou"),
 	});
 	const envelope = await response.json();
 	if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);

@@ -14,7 +14,10 @@ import { projectPiTransientEvent } from "./companion/pi-live-events.js";
 import { PiRuntime } from "./companion/pi-runtime.js";
 import { SessionCatalog } from "./companion/session-catalog.js";
 import { CharacterTrace } from "./diagnostics/character-trace.js";
+import { CodexAdapter } from "./executors/codex-adapter.js";
+import { CustomAcpAdapter } from "./executors/custom-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
+import { RunnerProfiles } from "./executors/profiles.js";
 import { ExecutorRouter } from "./executors/router.js";
 import {
 	ExternalAgentRunService,
@@ -33,7 +36,7 @@ import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import type { CompanionStorageHandle } from "./storage/companion-storage.js";
 import type { AppDatabase } from "./storage/database.js";
 import { InvalidationHub } from "./storage/invalidation-hub.js";
-import { conversations } from "./storage/schema.js";
+import { characterMemorySettings, conversations } from "./storage/schema.js";
 
 export interface CharacterRuntimeOptions {
 	systemLaunchId?: string;
@@ -41,6 +44,7 @@ export interface CharacterRuntimeOptions {
 	systemProviderDir: string;
 	storage: CompanionStorageHandle;
 	systemDb: AppDatabase;
+	systemInvalidations: InvalidationHub;
 	characterLoader: CharacterLoader;
 	providers: ProviderCatalog;
 	credentials: CredentialStore;
@@ -73,6 +77,12 @@ export class CharacterRuntime {
 	private readonly memoryCaptures = new Map<string, Set<Promise<void>>>();
 	private unsubscribeRunChanges?: () => void;
 	private closed = false;
+	private readonly lifetime = new AbortController();
+	private stopping?: Promise<void>;
+	private closing?: Promise<void>;
+	get signal(): AbortSignal {
+		return this.lifetime.signal;
+	}
 
 	constructor(private readonly options: CharacterRuntimeOptions) {
 		const { database, paths } = options.storage;
@@ -90,7 +100,7 @@ export class CharacterRuntime {
 			options.memoryScope.userId,
 			character.id,
 		);
-		this.invalidations = new InvalidationHub();
+		this.invalidations = new InvalidationHub({ scope: "character", characterId: character.id });
 		this.artifacts = new ArtifactStore(db, paths.artifacts);
 		this.models = new ModelRegistry(
 			options.systemDb,
@@ -98,8 +108,10 @@ export class CharacterRuntime {
 			this.invalidations,
 			options.appSettings,
 			options.forEachCompanionDatabase,
+			options.systemInvalidations,
 		);
 		this.companionStore = new CompanionStateStore(db);
+		this.companionStore.reconcileSchema(character.id, character.state);
 		this.onboarding = new FirstMeetingMachine(db, options.characterLoader);
 		this.canon = new CanonHubService(
 			db,
@@ -114,7 +126,9 @@ export class CharacterRuntime {
 			this.canon,
 			this.companionStore,
 		);
+		const runnerProfiles = new RunnerProfiles(options.systemDb, options.credentials);
 		this.pi = new PiRuntime({
+			runners: () => runnerProfiles.catalog(),
 			paths: { runtime: paths.root, sessions: paths.sessions },
 			models: options.providers,
 			character: () => this.character(),
@@ -168,6 +182,7 @@ export class CharacterRuntime {
 					);
 				},
 				capture: async (_companionId, sessionId, messages) => {
+					if (!this.memoryEnabled()) return;
 					const pending = this.memoryCaptures.get(sessionId) ?? new Set<Promise<void>>();
 					this.memoryCaptures.set(sessionId, pending);
 					const capture = this.diagnostics.operation(
@@ -237,7 +252,7 @@ export class CharacterRuntime {
 					contextPack.sessionContext(conversationId),
 				),
 			titleChanged: () => this.invalidations.invalidate(CacheKey.conversations()),
-			sessionActivity: (event) => options.onLivePush(event),
+			sessionActivity: (event) => options.onLivePush({ ...event, characterId: this.companionId }),
 			sessionEvent: (sessionId, nativeEvent, version) => {
 				this.diagnostics.native(sessionId, nativeEvent);
 				const event = projectPiTransientEvent(nativeEvent);
@@ -248,6 +263,7 @@ export class CharacterRuntime {
 					try {
 						options.onLivePush({
 							type: "pi",
+							characterId: this.companionId,
 							conversationId: sessionId,
 							event,
 							version,
@@ -270,13 +286,15 @@ export class CharacterRuntime {
 			"pi",
 			new PiAcpAdapter(db, options.systemProviderDir, options.piWorkerPath, options.bundledGit),
 		);
+		executorRouter.register("codex", new CodexAdapter(options.systemDb, db, this.invalidations));
+		executorRouter.register("custom", new CustomAcpAdapter(runnerProfiles, db));
 		this.externalAgentRuns = new ExternalAgentRunService(
 			db,
 			executorRouter,
 			this.artifacts,
 			paths.runs,
-			async (conversationId) => {
-				const route = await this.pi.modelFor(conversationId);
+			async (conversationId, pinned) => {
+				const route = pinned ?? (await this.pi.modelFor(conversationId));
 				if (!route) return undefined;
 				const stored = await options.credentials.get(route.providerId);
 				const credential =
@@ -284,7 +302,7 @@ export class CharacterRuntime {
 					(stored?.apiKey ? { type: "api_key" as const, key: stored.apiKey } : undefined);
 				return { ...route, ...(credential ? { credential } : {}) };
 			},
-			async ({ run, outputs, needsResultReport }: TerminalRunResult, signal) => {
+			async ({ run, needsResultReport }: TerminalRunResult, signal) => {
 				await this.diagnostics.operation(
 					"run.delivery",
 					{ runId: run.id, conversationId: run.conversationId },
@@ -294,7 +312,7 @@ export class CharacterRuntime {
 							this.pi.deliverExternalResult(
 								run.conversationId,
 								run.id,
-								externalAgentResultMessage({ run, outputs }),
+								externalAgentResultMessage({ run }),
 							),
 							signal,
 						),
@@ -325,7 +343,7 @@ export class CharacterRuntime {
 				run,
 				{ traceId: run.id.replaceAll("-", ""), spanId: run.id.replaceAll("-", "").slice(0, 16) },
 			);
-			options.onLivePush({ type: "run", companionId: this.companionId, run });
+			options.onLivePush({ type: "run", characterId: this.companionId, run });
 		});
 		this.sessions = new SessionCatalog(db, this.pi, this.companionStore, {
 			beforeDelete: (sessionId) => this.externalAgentRuns.prepareConversationDeletion(sessionId),
@@ -344,6 +362,8 @@ export class CharacterRuntime {
 	}
 
 	get memoryRuntime(): TencentDbRuntime {
+		if (this.lifetime.signal.aborted)
+			throw { kind: "unavailable", reason: "character_runtime_closing" };
 		if (!this.memory) {
 			this.memory = new TencentDbRuntime({
 				dataDir: this.options.storage.paths.tdaiMemory,
@@ -362,38 +382,55 @@ export class CharacterRuntime {
 
 	async resetMemory(): Promise<void> {
 		const current = this.memory;
-		this.memory = undefined;
 		await current?.close();
+		if (this.memory === current) this.memory = undefined;
 	}
 
 	async recoverExternalRuns(): Promise<number> {
 		return this.externalAgentRuns.recoverUnfinishedRuns();
 	}
 
-	async close(): Promise<void> {
-		if (this.closed) return;
-		this.closed = true;
-		this.unsubscribeRunChanges?.();
-		let failure: unknown;
-		try {
-			await this.externalAgentRuns.close();
-		} catch (error) {
-			failure = error;
-		}
-		for (const close of [() => this.pi.closeAll(), () => this.memory?.close()]) {
-			try {
-				await close();
-			} catch (error) {
-				failure ??= error;
-			}
-		}
-		try {
+	stop(): Promise<void> {
+		this.lifetime.abort();
+		if (this.stopping) return this.stopping;
+		this.stopping = (async () => {
+			const results = await Promise.allSettled([
+				this.externalAgentRuns.close(),
+				this.pi.shutdown(),
+				this.artifacts.close(),
+			]);
+			const errors = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+			if (errors.length) throw new AggregateError(errors, "character producers failed to stop");
+		})().catch((error) => {
+			this.stopping = undefined;
+			throw error;
+		});
+		return this.stopping;
+	}
+	close(): Promise<void> {
+		if (this.closed) return Promise.resolve();
+		if (this.closing) return this.closing;
+		this.closing = (async () => {
+			await this.stop();
+			await this.memory?.close();
 			await this.auditStore.flush();
-		} catch (error) {
-			failure ??= error;
-		}
-		await this.diagnostics.close();
-		if (failure) throw failure;
+			await this.diagnostics.close();
+			this.unsubscribeRunChanges?.();
+			this.closed = true;
+		})().finally(() => {
+			this.closing = undefined;
+		});
+		return this.closing;
+	}
+	get relationshipMemoryEnabled(): boolean {
+		return (
+			this.options.appSettings.load().memoryVectorService.enabled &&
+			this.db.orm
+				.select()
+				.from(characterMemorySettings)
+				.where(eq(characterMemorySettings.id, 1))
+				.get()?.enabled === true
+		);
 	}
 
 	private async startMemory(): Promise<TencentDbRuntime> {
@@ -410,7 +447,7 @@ export class CharacterRuntime {
 
 	private explicitMemory(companionId: string) {
 		if (companionId !== this.companionId)
-			throw { kind: "not_found", reason: "character_runtime_not_active" };
+			throw { kind: "not_found", reason: "character_runtime_mismatch" };
 		return this.explicitMemoryFile;
 	}
 
@@ -419,7 +456,7 @@ export class CharacterRuntime {
 	}
 
 	private memoryEnabled(): boolean {
-		return this.options.appSettings.load().memoryVectorService.enabled;
+		return !this.signal.aborted && this.relationshipMemoryEnabled;
 	}
 
 	private requireMemoryEnabled(): void {

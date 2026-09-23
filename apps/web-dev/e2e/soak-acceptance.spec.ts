@@ -7,6 +7,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Page, test } from "playwright/test";
 import {
 	activeConversationId,
+	characterRequest,
 	ensureReadyForConversation,
 	getBootstrap,
 	projectPiEntries,
@@ -118,7 +119,7 @@ function maximumSampleGap(samples: ResourceSample[]): number {
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
 	const response = await page.request.post(`/rpc/${channel}`, {
 		headers: { "x-bear-web-dev-token": token },
-		data,
+		data: characterRequest(channel, data, "jizhou"),
 	});
 	await expect(response).toBeOK();
 	const envelope = (await response.json()) as { ok: boolean; data?: T };

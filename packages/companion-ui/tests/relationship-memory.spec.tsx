@@ -23,9 +23,18 @@ function response(characterId: string, text: string): MemoryInspectResponse {
 	};
 }
 
-function mount(load: (request: MemoryInspectRequest) => Promise<MemoryInspectResponse>) {
+function mount(
+	load: (request: MemoryInspectRequest) => Promise<MemoryInspectResponse>,
+	options: {
+		systemEnabled?: boolean;
+		memoryGet?: (characterId: string) => Promise<{ enabled: boolean }>;
+		memorySet?: (characterId: string, enabled: boolean) => Promise<{ enabled: boolean }>;
+	} = {},
+) {
 	const [characterId, setCharacterId] = createSignal("first");
 	const onSystemSettings = vi.fn();
+	const memoryGet = vi.fn(options.memoryGet ?? (async () => ({ enabled: false })));
+	const memorySet = vi.fn(options.memorySet ?? (async (_id, enabled) => ({ enabled })));
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const view = render(() => (
 		<QueryClientProvider client={client}>
@@ -33,14 +42,78 @@ function mount(load: (request: MemoryInspectRequest) => Promise<MemoryInspectRes
 				characterId={characterId}
 				characterName={characterId}
 				load={load}
+				memoryGet={memoryGet}
+				memorySet={memorySet}
+				systemMemoryEnabled={() => options.systemEnabled ?? true}
 				onSystemSettings={onSystemSettings}
 			/>
 		</QueryClientProvider>
 	));
-	return { ...view, setCharacterId, onSystemSettings };
+	return { ...view, setCharacterId, onSystemSettings, memoryGet, memorySet };
 }
 
 describe("relationship memory viewer", () => {
+	it("starts with consent off and persists the user's choice only for the selected character", async () => {
+		const saved = new Map<string, boolean>();
+		const view = mount(async (request) => response(request.characterId, "stored"), {
+			memoryGet: async (id) => ({ enabled: saved.get(id) ?? false }),
+			memorySet: async (id, enabled) => {
+				saved.set(id, enabled);
+				return { enabled };
+			},
+		});
+		const checkbox = await screen.findByRole("checkbox");
+		await waitFor(() => expect(checkbox).toBeEnabled());
+		expect(checkbox).not.toBeChecked();
+		fireEvent.click(checkbox);
+		await waitFor(() => expect(checkbox).toBeChecked());
+		expect(view.memorySet).toHaveBeenCalledWith("first", true);
+		view.setCharacterId("second");
+		await waitFor(() => expect(view.memoryGet).toHaveBeenCalledWith("second"));
+		await waitFor(() => expect(screen.getByRole("checkbox")).toBeEnabled());
+		expect(screen.getByRole("checkbox")).not.toBeChecked();
+		view.setCharacterId("first");
+		await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
+		expect(view.memorySet).toHaveBeenCalledTimes(1);
+	});
+
+	it("links missing system prerequisites without repeating setup or granting consent", async () => {
+		const view = mount(async (request) => response(request.characterId, "stored"), {
+			systemEnabled: false,
+		});
+		await waitFor(() => expect(view.memoryGet).toHaveBeenCalledWith("first"));
+		expect(screen.getByRole("checkbox")).toBeDisabled();
+		expect(screen.getByText(zhCN.relationshipMemory.systemRequired)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: zhCN.relationshipMemory.systemSettings }));
+		expect(view.onSystemSettings).toHaveBeenCalledOnce();
+		expect(view.memorySet).not.toHaveBeenCalled();
+	});
+
+	it("allows revoking consent even when system memory is disabled and preserves readable memory", async () => {
+		const view = mount(async (request) => response(request.characterId, "已有的角色记忆"), {
+			systemEnabled: false,
+			memoryGet: async () => ({ enabled: true }),
+		});
+		await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
+		fireEvent.click(screen.getByRole("checkbox"));
+		await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeChecked());
+		expect(view.memorySet).toHaveBeenCalledWith("first", false);
+		fireEvent.click(screen.getByRole("button", { name: zhCN.relationshipMemory.title }));
+		await screen.findByText("已有的角色记忆");
+	});
+
+	it("does not display an unconfirmed consent change when saving fails", async () => {
+		mount(async (request) => response(request.characterId, "stored"), {
+			memorySet: async () => {
+				throw new Error("Storage unavailable");
+			},
+		});
+		await waitFor(() => expect(screen.getByRole("checkbox")).toBeEnabled());
+		fireEvent.click(screen.getByRole("checkbox"));
+		await screen.findByText(zhCN.relationshipMemory.consentError);
+		expect(screen.getByRole("checkbox")).not.toBeChecked();
+	});
+
 	it("discards a late response from the previous character", async () => {
 		const first = Promise.withResolvers<MemoryInspectResponse>();
 		const second = Promise.withResolvers<MemoryInspectResponse>();

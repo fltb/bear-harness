@@ -1,8 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createMemo, For, Show } from "solid-js";
+import { type Accessor, createMemo, For, Show } from "solid-js";
 import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
 import { ModelSelector, ThinkingSelector } from "./features/ModelSelector.js";
 import { ProviderSetup } from "./features/ProviderSetup.js";
+import { MemoryConsent } from "./features/RelationshipMemory.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
@@ -16,6 +17,19 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 	const shell = useShellWorkflowStore();
 	const workflow = createFirstMeetingWorkflow(store, props.platform);
 	const hasConfiguredModels = createMemo(() => workflow.configuredModels().length > 0);
+	const renderModelConfirmation = (consentPending: Accessor<boolean> = () => false) => (
+		<div class="intro-actions">
+			<Button
+				type="button"
+				class="primary"
+				data-variant="primary"
+				disabled={workflow.setupBusy() || consentPending() || !workflow.selectedReplyModel()}
+				onClick={workflow.completeModelSetup}
+			>
+				{workflow.roleModelRequired() ? t("modelSetup.confirmRole") : t("modelSetup.continue")}
+			</Button>
+		</div>
+	);
 	const renderControl = (step: CharacterOnboardingStep) => {
 		if (step.kind === "acknowledge")
 			return (
@@ -247,19 +261,26 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 								<Show when={workflow.selectedReplyModel()?.supportsImages === true}>
 									<p class="field-hint">{t("settings.visionModelNative")}</p>
 								</Show>
-								<div class="intro-actions">
-									<Button
-										type="button"
-										class="primary"
-										data-variant="primary"
-										disabled={workflow.setupBusy() || !workflow.selectedReplyModel()}
-										onClick={workflow.completeModelSetup}
-									>
-										{workflow.roleModelRequired()
-											? t("modelSetup.confirmRole")
-											: t("modelSetup.continue")}
-									</Button>
-								</div>
+								<Show
+									when={workflow.roleModelRequired() ? store.character?.id : undefined}
+									keyed
+									fallback={renderModelConfirmation()}
+								>
+									{(characterId) => (
+										<MemoryConsent
+											characterId={characterId}
+											characterName={store.character?.name ?? ""}
+											memoryGet={(id) => store.characters.memoryGet(id)}
+											memorySet={(id, enabled) => store.characters.memorySet(id, enabled)}
+											systemMemoryEnabled={() =>
+												store.settings.data()?.memoryVectorService.enabled === true
+											}
+											onSystemSettings={() => shell.openBackstage("settings", "memory")}
+										>
+											{renderModelConfirmation}
+										</MemoryConsent>
+									)}
+								</Show>
 							</Show>
 							<Show when={workflow.setupBusy()}>
 								<p class="memory-note">{t("modelSetup.connecting")}</p>

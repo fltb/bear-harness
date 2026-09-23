@@ -8,7 +8,7 @@
 
 ## UI 可以拥有的状态
 
-- 当前角色范围内的 task selection；active conversation id 则读取 Host authoritative Query，不是窗口本地业务状态；
+- 当前窗口的角色、active conversation id，以及角色范围内的 task selection；
 - 输入草稿、焦点、tab、search 文本；
 - 当前选择的 Run/Artifact 与结果 workspace 开关；
 - 短生命周期 preview Blob URL 和本地 loading/error presentation；
@@ -18,18 +18,19 @@ UI 不拥有 messages、streaming、queue、tool execution、Character、Display
 
 ## 启动与查询
 
-1. bootstrap 读取安装级信息和 system onboarding 状态；
-2. 读取当前角色及 character onboarding；
-3. 获取轻量 conversation list；
-4. 获取 Host authoritative active conversation detail；用户显式切换后采用 Host 返回的 active projection；
-5. 读取该 conversation 的 Character/Display detail；
-6. 订阅 process-local transient invalidation 与 Pi live stream；invalidation 只是 cache hint，没有持久化、cursor 或 replay 契约。
+1. `bootstrap.get` 读取安装默认角色 ID，system onboarding 状态从安装 Settings 读取；
+2. 窗口选定角色并建立绑定该 `characterId` 的客户端，读取角色及 character onboarding；
+3. 订阅 process-local transient invalidation 与 Pi live stream，再读取权威快照；
+4. 获取轻量 conversation list，由窗口选择会话；
+5. 按明确的 `characterId + conversationId` 获取 `conversation.open` 原生 detail 和 Character/Display detail。
+
+Host 不保存窗口选择，也没有 activeGet/select/character.activate RPC。角色级失效通知和 live events 携带 `characterId`，invalidation 只是 cache hint，没有持久化、cursor 或 replay 契约。
 
 客户端绝不在 bootstrap 中遍历每个会话。detail 按 active/需要展示的资源读取。连接状态区分 `connecting`、`connected`、`reconnecting`；订阅建立后读取 Host authoritative snapshot，完成替换才进入 `connected`。重连会清除旧 live/activity/tool projection，以新的 detail/snapshot 恢复，不让重连前晚到的请求或旧事件覆盖新投影。
 
 ## 多 Session 与流式显示
 
-每个 Pi event 带 session id。store 为相应 conversation 更新 token 文本、tool activity、queue、error 和 settled projection；窗口切到另一个 conversation 时，后台的原 Session 继续运行和接收事件。
+每个 Pi event 带 `characterId` 和 `conversationId`。store 为相应 conversation 更新 token 文本、tool activity、queue、error 和 settled projection；窗口切到另一个 conversation 时，后台的原 Session 继续运行和接收事件。
 
 发送、abort、edit、retry、navigate、continue 与模型选择都传明确 conversation id。UI 按 conversation 保留 send/edit/correct 的短生命周期 submission presentation：`submitting`、`accepted`、`failed`、`unknown`。`submitting` 期间禁用重复提交；RPC 成功就结束 submitting，`accepted` 不代表模型回复已完成。这不是 Host pending-turn 状态，也不伪造 Pi transcript。
 
@@ -51,7 +52,7 @@ Host 的真实 `conversationActivity` notices 单独展示 `memory_recall`、`co
 
 System Onboarding/Settings 负责 provider、credential、configured model pool、系统默认模型、网络、embedding 与本地模型下载。
 
-Character Onboarding 只展示角色第一次见面、关系选项、角色包首次选择，以及从系统模型池选择的角色默认 route。关系记忆由成功配置 embedding 启用，不另设角色级 consent 开关。缺少系统能力时，角色流程暂时打开 System Settings；完成后继续角色流程，已存在角色不会重做系统设置。
+Character Onboarding 展示角色第一次见面、关系选项、角色包首次选择、从系统模型池选择的角色默认 route，以及默认关闭的角色自动记忆 consent。角色模型确认与角色设置复用同一 consent 控件，通过 `character.memoryGet/memorySet` 读写该角色的偏好；确认步骤等待已发起的保存完成。自动记忆只有在系统 embedding 可用且该角色同意时生效。缺少系统能力时仅链接到 System Settings，已存在角色不会重做系统配置。撤回 consent 保留已有记忆，用户明确要求编辑的 Explicit Memory 仍是独立领域。
 
 ## Character / Display 投影
 
@@ -67,17 +68,17 @@ Current work 专指当前角色跨会话的 External Runs，与模型回复、�
 
 控制只按 Host 返回的 `actions` 提供：steer、interrupt、resume（可附继续指令）、cancel、permission response 与 retryDelivery。permission 展示原始 option name 和授权类型/范围；UI 保留各动作的 busy/error/draft，不自行判定控制器能力。steer 的 injected/startedNewTurn/sent 是真实接收方式，不等于任务完成。controller unknown 不冒充仍在线或自动重新执行。
 
-新委派只使用内置 Pi Worker，没有模型可选 agent、默认执行器设置或 Codex fallback。`host_delegate` 的 accepted receipt 包含 Run ID 与 executor `pi`；Host 用 conversationId + native toolCallId 幂等接纳，再启动其跟踪的执行资源。接纳不等于工作完成，后续启动失败仍归属该 Run。
+新委派默认使用内置 Pi Worker。系统设置的工作代理页支持配置 custom ACP、连接 Codex、编辑模型选择说明和测试连接。`host_delegate` 可用显式 runnerId 选择已配置 worker；未指定时固定 Pi，失败不回退其他后端。accepted receipt 包含 Run ID、runnerId 与 executor 类型，只确认准入。Host 以 conversationId + native toolCallId 幂等接纳，后续启动失败归属同一个 Run。
 
 Run 终态与结果回报是两件事：`resultReportedAt` 只在原会话持久化了匹配的 native custom-message entry 后成立，follow-up enqueue 不算已送达。retryDelivery 重试原 Run 的结果回报，不重新执行；“请求再次执行”是用户显式发送到原会话的普通消息，新执行仍须经过 Pi 委派。
 
-后台进展或完成不抢焦点、不切换会话、不自动打开任务详情或结果。查看另一会话的 Artifact 只在用户明确点击后先完成 Host 会话导航，再选择结果。
+后台进展或完成不抢焦点、不切换会话、不自动打开任务详情或结果。查看另一会话的 Artifact 只在用户明确点击后先在窗口中打开对应会话，再选择结果。
 
 ## 独立媒体与结果 workspace
 
 角色媒体在原生 `host_media` 结果位置显示缩略图/播放入口，点击打开独立媒体 viewer。CG 保留构图，支持展开与原始尺寸查看；媒体不是 Run evidence，也不按图片 MIME 混入 Artifact。打开或关闭媒体不关闭已有结果区，这些展示选择不写 Character/Display 或影响 Pi 执行。
 
-Run/Artifact 使用自己的成果按钮。用户选择后，UI 以 `{conversationId, runId, artifactId}` 打开 conversation-owned 结果 workspace：
+Run/Artifact 使用自己的成果按钮。用户选择后，UI 以 `{characterId, conversationId, runId, artifactId}` 打开 conversation-owned 结果 workspace：
 
 | 宽度 | 组件行为 |
 | --- | --- |
@@ -85,13 +86,15 @@ Run/Artifact 使用自己的成果按钮。用户选择后，UI 以 `{conversati
 | `768..1599px` | right-side overlay/drawer |
 | `<= 767px` | full-screen result view |
 
-切换 active conversation 清除旧 Artifact 选择；character-scoped task selection 与此独立。关闭 workspace 恢复普通会话布局。结果 workspace 不因继续聊天或点媒体入口的普通 outside interaction 自动关闭。
+切换角色、active conversation 或进入空会话均清除旧 Artifact 选择；character-scoped task selection 与此独立。关闭 workspace 恢复普通会话布局。结果 workspace 不因继续聊天或点媒体入口的普通 outside interaction 自动关闭。
 
 ## Artifact 预览与动作
 
+选择仅保存四个身份字段，不缓存另一份 Run 对象；详情通过现有 `run.observeDetail` 查询，历史 Run 不依赖近期列表。加载/失败不取消选择，旧结果消息与 delegate 卡片共用按 id 查询入口。保存通知使列表、历史和详情失效并重新查询；不乐观覆写 metadata。分块读取只比较不可变内容字段，saved/adopted 变化不视作内容损坏。
+
 metadata、provenance/evidence 和 corruption/unavailable error 都来自 Host。安全 text/image/PDF/audio/video 预览通过有界 chunk 组合 Blob URL；切换或关闭时立即 revoke。
 
-open、reveal、Save As 调用 ID-only RPC。Desktop 交给原生 presenter；WebDev 提供浏览器安全 preview/download，unsupported native 动作应明确呈现，而不能猜测 CAS URL。
+open、reveal、Save As 调用 ID-only RPC。Desktop 交给原生 presenter；WebDev 提供浏览器安全 preview/download，unsupported native 动作应明确呈现，而不能猜测 CAS URL。Web 下载显示“已开始下载”，不写入确认落盘的 saved 状态；桌面保存成功后由 Host 落库并通知所有窗口。
 
 ## 响应式与可访问性
 

@@ -50,8 +50,6 @@ type DemoConversation = {
 };
 
 export interface DemoInspect {
-	characterId: string;
-	activeConversationId: string | null;
 	conversationIds: Record<string, string[]>;
 	memorySaved: boolean;
 	runStatus: "idle" | "running" | "completed";
@@ -90,8 +88,7 @@ const textMessage = (role: "user" | "assistant", text: string, timestamp: number
 			};
 
 export class DemoTransport implements HostTransport {
-	private currentCharacterId = "jizhou";
-	private activeConversationId: string | null = "jizhou-night-reading";
+	private readonly memoryConsent = new Map<string, boolean>();
 	private memorySaved = false;
 	private runStatus: "idle" | "running" | "completed" = "idle";
 	private workConversationId: string | null = null;
@@ -131,15 +128,6 @@ export class DemoTransport implements HostTransport {
 		return value;
 	}
 
-	private currentConversation(): DemoConversation {
-		if (!this.activeConversationId)
-			throw new DemoTransportError("conversation.activeGet", "no active conversation");
-		const value = this.conversations.get(this.activeConversationId);
-		if (!value)
-			throw new DemoTransportError("conversation.activeGet", "active conversation missing");
-		return value;
-	}
-
 	private ok<T>(data: T) {
 		return { ok: true as const, data };
 	}
@@ -176,24 +164,26 @@ export class DemoTransport implements HostTransport {
 			stream.wake?.();
 		}
 	}
-	private invalidate(keys: unknown[]) {
-		const batch = InvalidationBatch.parse({ notices: [{ keys }] });
+	private invalidate(characterId: string, keys: unknown[]) {
+		const batch = InvalidationBatch.parse({ notices: [{ scope: "character", characterId, keys }] });
 		for (const receive of this.invalidations) receive(batch);
 	}
 	private pi(conversationId: string, event: unknown) {
+		const value = this.conversations.get(conversationId);
+		if (!value) this.fail("demo.event", "unknown conversation");
 		this.sequence += 1;
 		this.emit({
 			type: "pi",
+			characterId: value.characterId,
 			conversationId,
 			event: event as never,
 			version: { instanceId: "demo-instance", sequence: this.sequence },
 		});
-		const value = this.conversations.get(conversationId);
-		if (value) value.detail.live.version = { instanceId: "demo-instance", sequence: this.sequence };
+		value.detail.live.version = { instanceId: "demo-instance", sequence: this.sequence };
 	}
 	private runEvent() {
 		const run = this.runProjection();
-		this.emit({ type: "run", companionId: "jizhou", run });
+		this.emit({ type: "run", characterId: "jizhou", run });
 	}
 	private runProjection() {
 		return Run.parse({
@@ -212,7 +202,9 @@ export class DemoTransport implements HostTransport {
 								mime: "text/markdown",
 								bytes: new TextEncoder().encode(NIGHT_READING_MARKDOWN).byteLength,
 								sha256: ARTIFACT_SHA,
-								status: "verified",
+								verification: "verified",
+								saved: false,
+								adopted: false,
 								createdAt: NOW,
 							},
 						]
@@ -266,7 +258,10 @@ export class DemoTransport implements HostTransport {
 
 	async invoke<E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>): Promise<unknown> {
 		try {
-			const result = (await this.dispatch(endpoint, request)) as { ok: true; data: unknown };
+			const result = (await this.dispatch(
+				endpoint,
+				endpoint.request.parse(request) as RequestOf<E>,
+			)) as { ok: true; data: unknown };
 			return { ok: true, data: endpoint.response.parse(result.data) };
 		} catch (error) {
 			return this.fail(endpoint.channel, error instanceof Error ? error.message : String(error));
@@ -278,7 +273,21 @@ export class DemoTransport implements HostTransport {
 		request: RequestOf<E>,
 	): Promise<unknown> {
 		const channel = endpoint.channel;
+		const owner = request as { characterId: string; conversationId?: string; runId?: string };
 		try {
+			if (endpoint.scope === "character") {
+				if (!DEMO_CHARACTERS[owner.characterId]) return this.fail(channel, "unknown character");
+				if (
+					owner.conversationId &&
+					this.conversations.get(owner.conversationId)?.characterId !== owner.characterId
+				)
+					return this.fail(channel, "conversation ownership mismatch");
+				if (
+					owner.runId &&
+					(owner.characterId !== "jizhou" || owner.runId !== RUN_ID || this.runStatus === "idle")
+				)
+					return this.fail(channel, "run ownership mismatch");
+			}
 			switch (channel) {
 				case "diagnostics.renderer": {
 					const payload = request as { records: { event: string; error?: { message: string } }[] };
@@ -311,13 +320,22 @@ export class DemoTransport implements HostTransport {
 						vision: { mode: "auto" },
 						thinkingLevel: "low",
 					});
+				case "bootstrap.get":
+					return this.ok({ defaultCharacterId: "jizhou" });
+				case "character.memoryGet":
+					return this.ok({ enabled: this.memoryConsent.get(owner.characterId) ?? false });
+				case "character.memorySet": {
+					const enabled = (request as { enabled: boolean }).enabled;
+					this.memoryConsent.set(owner.characterId, enabled);
+					return this.ok({ enabled });
+				}
 				case "snapshot.get":
 					return this.ok({
 						onboarding: { status: "complete", stateData: { answers: {} } },
-						character: DEMO_CHARACTERS[this.currentCharacterId],
+						character: DEMO_CHARACTERS[owner.characterId],
 					});
 				case "character.get":
-					return this.ok({ character: DEMO_CHARACTERS[this.currentCharacterId] });
+					return this.ok({ character: DEMO_CHARACTERS[owner.characterId] });
 				case "character.list":
 					return this.ok({
 						characters: Object.values(DEMO_CHARACTERS).map((character) => ({
@@ -325,18 +343,8 @@ export class DemoTransport implements HostTransport {
 							name: character.name,
 							subtitle: character.character.subtitle,
 							avatarUrl: character.visual.avatarUrl,
-							active: character.id === this.currentCharacterId,
 						})),
 					});
-				case "character.activate": {
-					const id = (request as { characterId: string }).characterId;
-					if (!DEMO_CHARACTERS[id]) return this.fail(channel, `unknown character ${id}`);
-					this.currentCharacterId = id;
-					const first = [...this.conversations.values()].find((item) => item.characterId === id);
-					this.activeConversationId = first?.detail.conversationId ?? null;
-					this.invalidate([["snapshot"], ["conversations"], ["characters"]]);
-					return this.ok({ character: DEMO_CHARACTERS[id] });
-				}
 				case "character.packageGet": {
 					const id = (request as { characterId: string }).characterId;
 					const character = DEMO_CHARACTERS[id];
@@ -359,7 +367,6 @@ export class DemoTransport implements HostTransport {
 					return this.ok({
 						status: {
 							characterId: id,
-							active: id === this.currentCharacterId,
 							default: id === "jizhou",
 							runtimePresent: true,
 							packagePresent: true,
@@ -381,33 +388,17 @@ export class DemoTransport implements HostTransport {
 				case "onboarding.get":
 					return this.ok({ status: "complete", stateData: { answers: {} } });
 				case "conversation.list": {
-					const characterId = this.currentCharacterId;
+					const characterId = owner.characterId;
 					const conversations = [...this.conversations.values()]
 						.filter((item) => item.characterId === characterId)
 						.map((item) => this.summary(item));
 					return this.ok({ conversations });
 				}
-				case "conversation.activeGet":
-					return this.ok({
-						activeConversation: this.activeConversationId
-							? this.currentConversation().detail
-							: null,
-					});
 				case "conversation.open": {
 					const id = (request as { conversationId: string }).conversationId;
 					const value = this.conversations.get(id);
 					if (!value) return this.fail(channel, `unknown conversation ${id}`);
-					this.activeConversationId = id;
-					this.currentCharacterId = value.characterId;
 					return this.ok(value.detail);
-				}
-				case "conversation.select": {
-					const id = (request as { conversationId: string }).conversationId;
-					const value = this.conversations.get(id);
-					if (!value) return this.fail(channel, `unknown conversation ${id}`);
-					this.activeConversationId = id;
-					this.currentCharacterId = value.characterId;
-					return this.ok({ activeConversation: value.detail });
 				}
 				case "conversation.create": {
 					const title =
@@ -417,10 +408,9 @@ export class DemoTransport implements HostTransport {
 					const id =
 						this.preparedScene === 10
 							? "jizhou-night-reading-2"
-							: `${this.currentCharacterId}-conversation-${++this.conversationCounter}`;
-					const value = this.createConversation(id, this.currentCharacterId, title);
-					this.activeConversationId = id;
-					this.invalidate([["conversations"]]);
+							: `${owner.characterId}-conversation-${++this.conversationCounter}`;
+					const value = this.createConversation(id, owner.characterId, title);
+					this.invalidate(owner.characterId, [["conversations"]]);
 					return this.ok(value.detail);
 				}
 				case "conversation.history": {
@@ -433,7 +423,7 @@ export class DemoTransport implements HostTransport {
 					const payload = request as { conversationId: string; text: string };
 					const scene = this.sceneForText(payload.text);
 					const value = this.conversations.get(payload.conversationId);
-					if (!scene || !value || value.characterId !== this.currentCharacterId)
+					if (!scene || !value || value.characterId !== owner.characterId)
 						return this.fail(channel, "message is not in the approved scripted scenario");
 					if (this.pending || this.settled.has(scene.id))
 						return this.fail(channel, "duplicate or overlapping scripted send");
@@ -505,7 +495,7 @@ export class DemoTransport implements HostTransport {
 				case "run.list": {
 					const { conversationId, scope } = request as { conversationId?: string; scope?: string };
 					const visible =
-						this.currentCharacterId === "jizhou" &&
+						owner.characterId === "jizhou" &&
 						this.runStatus !== "idle" &&
 						(!conversationId || conversationId === this.workConversationId) &&
 						(scope !== "unfinished" || this.runStatus === "running");
@@ -726,16 +716,20 @@ export class DemoTransport implements HostTransport {
 				},
 			};
 			this.pi(current.conversationId, { type: "agent_settled", reason: "completed" });
-			this.invalidate([["conversation", current.conversationId], ["conversations"]]);
+			this.invalidate(value.characterId, [
+				["conversation", current.conversationId],
+				["conversations"],
+			]);
 			this.pending = null;
 			this.settled.add(sceneId);
-			if (sceneId === 2) this.invalidate([["companionState", current.conversationId]]);
+			if (sceneId === 2)
+				this.invalidate(value.characterId, [["companionState", current.conversationId]]);
 			return;
 		}
 		if (phase === "action" && sceneId === 12 && this.runStatus === "running") {
 			this.runStatus = "completed";
 			this.runEvent();
-			this.invalidate([["runs"]]);
+			this.invalidate("jizhou", [["runs"]]);
 		}
 	}
 
@@ -747,8 +741,6 @@ export class DemoTransport implements HostTransport {
 			conversationIds[value.characterId] = ids;
 		}
 		return {
-			characterId: this.currentCharacterId,
-			activeConversationId: this.activeConversationId,
 			conversationIds,
 			memorySaved: this.memorySaved,
 			runStatus: this.runStatus,

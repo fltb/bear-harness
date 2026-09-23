@@ -14,7 +14,7 @@ async function nativeSnapshot(page: Page, conversationId: string) {
 	const { token } = await getBootstrap(page);
 	const response = await page.request.post("/rpc/conversation.open", {
 		headers: { "x-bear-web-dev-token": token },
-		data: { conversationId },
+		data: { characterId: "jizhou", conversationId },
 	});
 	await expect(response).toBeOK();
 	const envelope = await response.json();
@@ -175,7 +175,7 @@ test("native history pagination restores earlier turns without moving the visibl
 	const { token } = await getBootstrap(page);
 	const historyResponse = await page.request.post("/rpc/conversation.history", {
 		headers: { "x-bear-web-dev-token": token },
-		data: { conversationId, limit: 100 },
+		data: { characterId: "jizhou", conversationId, limit: 100 },
 	});
 	await expect(historyResponse).toBeOK();
 	const history = await historyResponse.json();

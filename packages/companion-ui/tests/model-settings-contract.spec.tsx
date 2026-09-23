@@ -1,5 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../src/features/ModelSelector.js";
@@ -177,6 +178,9 @@ describe("breaking provider and model settings contract", () => {
 	it("keeps model defaults installation-wide and removes the per-conversation settings page", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage } = await openSettings();
 		expect(
 			within(backstage).queryByRole("button", {
@@ -193,6 +197,9 @@ describe("breaking provider and model settings contract", () => {
 	it("exposes candidate selection, added providers, imports, and the selected editor", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = await openAddProvider(user, backstage);
 		const candidateHeading = within(setup).getByRole("heading", {
@@ -220,6 +227,9 @@ describe("breaking provider and model settings contract", () => {
 	it("adds a builtin candidate with an API key and optional URL", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = await openAddProvider(user, backstage);
 		await selectKobalteOption(
@@ -256,6 +266,9 @@ describe("breaking provider and model settings contract", () => {
 	it("edits an added provider key and URL from its card", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(PROVIDER.name).closest("article")!;
@@ -323,6 +336,9 @@ describe("breaking provider and model settings contract", () => {
 		);
 		// Login responses and Host pushes own the visible session; no status polling is needed.
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -375,6 +391,9 @@ describe("breaking provider and model settings contract", () => {
 			.fn()
 			.mockImplementation(async () => ({ ok: true, data: state() }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -415,6 +434,9 @@ describe("breaking provider and model settings contract", () => {
 			};
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -433,6 +455,9 @@ describe("breaking provider and model settings contract", () => {
 		});
 		client.provider.loginStatus = vi.fn();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const oauthCard = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -481,6 +506,9 @@ describe("breaking provider and model settings contract", () => {
 		);
 		client.provider.loginStatus = vi.fn();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -571,6 +599,9 @@ describe("breaking provider and model settings contract", () => {
 		vi.mocked(client.provider.login).mockClear();
 		client.provider.loginCancel = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -623,6 +654,9 @@ describe("breaking provider and model settings contract", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
@@ -655,6 +689,9 @@ describe("breaking provider and model settings contract", () => {
 	it("removes an added provider and drops its card after the Host deletion", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(PROVIDER.name).closest("article")!;
@@ -678,6 +715,9 @@ describe("breaking provider and model settings contract", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { user, backstage } = await openSettings();
 		let setup = await openAddProvider(user, backstage);
 		await user.click(detailsSummary(setup, zhCN.settings.advancedToggle));

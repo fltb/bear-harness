@@ -12,26 +12,18 @@
  */
 
 import type {
-	ArtifactActionRequest,
 	LivePush,
 	MemoryInspectRequest,
 	MemoryInspectResponse,
 	ProviderLoginResponse,
 	ResponseOf,
 } from "@bear-harness/protocol";
-import {
-	ArtifactActionResponse,
-	CacheKey,
-	MAX_ARTIFACT_READ_BYTES,
-	RPC,
-} from "@bear-harness/protocol/schema";
+import { CacheKey, RPC } from "@bear-harness/protocol/schema";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import { and, eq } from "drizzle-orm";
-import type { ArtifactRecord, ArtifactStore } from "./artifacts/index.js";
-import {
-	type ArtifactPresenter,
-	createArtifactPresentationAccess,
-} from "./artifacts/presentation.js";
+import type { ArtifactStore } from "./artifacts/index.js";
+import type { ArtifactPresenter } from "./artifacts/presentation.js";
+import { registerArtifactHandlers } from "./artifacts/rpc.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CharacterDraftService } from "./companion/character-draft-service.js";
 import type {
@@ -49,6 +41,7 @@ import type { PiRuntime } from "./companion/pi-runtime.js";
 import type { SessionCatalog } from "./companion/session-catalog.js";
 import type { CharacterTrace } from "./diagnostics/character-trace.js";
 import type { Dispatcher } from "./dispatcher.js";
+import { registerRunnerHandlers } from "./executors/rpc.js";
 import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
 import type { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
 import type {
@@ -60,6 +53,7 @@ import type {
 	ModelRecord,
 	ModelRegistry,
 	SystemModelDefaults,
+	SystemModelRegistry,
 } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
 import {
@@ -71,7 +65,7 @@ import { HOST_SETTINGS_CAPABILITIES } from "./settings/capabilities.js";
 import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { InvalidationHub } from "./storage/invalidation-hub.js";
-import { artifacts, conversations, runs } from "./storage/schema.js";
+import { characterMemorySettings, conversations } from "./storage/schema.js";
 import { assertSystemOnboardingLicenses } from "./system-onboarding-license.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
@@ -83,9 +77,13 @@ export type HostUpdateService = {
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
 export interface HostCompositionContext {
+	readonly characterId: string;
 	/** Host lifetime; adapters must not publish after it ends. */
 	signal: AbortSignal;
 	systemOrm: AppDatabase;
+	runnerProbeRoot: string;
+	runnerProviderRoot: string;
+	piWorkerPath?: string;
 	orm: AppDatabase;
 	invalidations: InvalidationHub;
 	livePush(event: LivePush): void;
@@ -119,21 +117,38 @@ export interface HostCompositionContext {
 	drafts: CharacterDraftService;
 	companionStore: CompanionStateStore;
 	defaultCharacterId: string;
-	activateCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): Promise<void>;
+	reloadCharacter(characterId: string): Promise<void>;
 	seedCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): void;
 	characterDeletionStatus(characterId: string): {
 		characterId: string;
-		active: boolean;
 		default: boolean;
 		runtimePresent: boolean;
 		packagePresent: boolean;
 	};
-	deleteCharacterRuntime(characterId: string): { deleted: boolean };
+	deleteCharacterRuntime(characterId: string): Promise<{ deleted: boolean }>;
 	deleteCharacterPackage(characterId: string): { deleted: boolean };
 	/** Optional update lifecycle service (desktop only; undefined on web). */
 	updateService?: HostUpdateService;
 	auditStore: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
+
+export type SystemCompositionContext = Omit<
+	HostCompositionContext,
+	| "characterId"
+	| "orm"
+	| "onboarding"
+	| "pi"
+	| "sessions"
+	| "models"
+	| "diagnostics"
+	| "diagnosticDirectories"
+	| "inspectMemory"
+	| "externalAgentRuns"
+	| "artifacts"
+	| "canon"
+	| "companionStore"
+	| "auditStore"
+> & { models: SystemModelRegistry };
 
 function pageAfter<T>(
 	items: readonly T[],
@@ -174,7 +189,7 @@ function oauthWire(state: OAuthSessionState): ProviderLoginResponse {
 export async function syncProviderModels(
 	providerId: string,
 	providers: ProviderCatalog,
-	models: ModelRegistry,
+	models: SystemModelRegistry,
 ): Promise<ModelRecord[]> {
 	const provider = (await providers.listProviders()).find(
 		(candidate) => candidate.id === providerId,
@@ -196,7 +211,7 @@ export async function syncProviderModels(
 
 export async function syncAllProviderModels(
 	providers: ProviderCatalog,
-	models: ModelRegistry,
+	models: SystemModelRegistry,
 ): Promise<ModelRecord[]> {
 	const providerList = (await providers.listProviders()).filter((provider) => provider.added);
 	const facts = providers.modelProjectionFacts();
@@ -217,7 +232,7 @@ export async function syncAllProviderModels(
 
 export async function recoverProviderRemovals(
 	providers: ProviderCatalog,
-	models: ModelRegistry,
+	models: SystemModelRegistry,
 ): Promise<void> {
 	for (const providerId of models.listPendingProviderRemovalIds()) {
 		await providers.removeProvider(providerId);
@@ -225,8 +240,11 @@ export async function recoverProviderRemovals(
 	}
 }
 
-export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
-	const acceptedMessages = new Map<string, Promise<Awaited<ReturnType<typeof s.pi.send>>>>();
+export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionContext): void {
+	registerRunnerHandlers(dispatcher, s);
+	dispatcher.registerHandler(RPC.bootstrap.get, () => ({
+		defaultCharacterId: s.defaultCharacterId,
+	}));
 	const projectSettings = async (app = s.appSettings.load()) => {
 		const embeddingCredential = await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID);
 		return {
@@ -279,30 +297,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.invalidations.invalidate(CacheKey.settings());
 		return app;
 	};
-	// Load and seed the active character package from the character root once.
-	ensureCharacterSeeded(s);
-
-	// --- character package -----------------------------------------------------
-	dispatcher.registerHandler(RPC.character.get, async () => {
-		const companionId = getCompanionId(s);
-		const character = s.characterLoader.load(companionId);
-		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		return { character: s.characterLoader.display(character) };
-	});
 	dispatcher.registerHandler(RPC.character.list, async ({ cursor, limit }) => {
-		return s.characterLoader.list(s.systemOrm, s.defaultCharacterId, {
+		return s.characterLoader.list({
 			...(cursor ? { cursor } : {}),
 			limit,
 		});
-	});
-	dispatcher.registerHandler(RPC.character.activate, async ({ characterId }) => {
-		const character = s.characterLoader.load(characterId);
-		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		if (getCompanionId(s) === characterId) {
-			return { character: s.characterLoader.display(character) };
-		}
-		await s.activateCharacter(character);
-		return { character: s.characterLoader.display(character) };
 	});
 	dispatcher.registerHandler(RPC.character.packageGet, async ({ characterId }) => {
 		return { package: s.characterLoader.readPackageDocument(characterId) };
@@ -317,13 +316,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const character = updated.character;
 		s.seedCharacter(character, "local");
-		if (getCompanionId(s) === character.id) {
-			s.companionStore.reconcileSchema(character.id, character.state);
-			s.onboarding.initialize(character.id);
-			s.canon.syncPackage(character.id, character.canon);
-			await s.pi.closeAll();
-			configureCharacterRuntime(s, character);
-		}
+		await s.reloadCharacter(character.id);
 		return { package: s.characterLoader.readPackageDocument(character.id) };
 	});
 	dispatcher.registerHandler(RPC.character.packageReveal, async ({ characterId }) => {
@@ -339,7 +332,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {
 			characterId,
 			target: "runtime" as const,
-			...s.deleteCharacterRuntime(characterId),
+			...(await s.deleteCharacterRuntime(characterId)),
 		};
 	});
 	dispatcher.registerHandler(RPC.character.packageDelete, async ({ characterId }) => {
@@ -379,9 +372,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.invalidations.invalidate(CacheKey.characters());
 		return { character: s.characterLoader.display(character) };
 	});
-
-	dispatcher.registerHandler(RPC.character.pluginTrustGet, async ({ characterId: requestedId }) => {
-		const characterId = requestedId ?? getCompanionId(s);
+	dispatcher.registerHandler(RPC.character.pluginTrustGet, async ({ characterId }) => {
 		const character = s.characterLoader.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		return { trust: s.characterLoader.pluginTrust(s.systemOrm, character) };
@@ -391,10 +382,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		s.seedCharacter(character);
 		const trust = s.characterLoader.confirmPluginTrust(s.systemOrm, character);
-		s.invalidations.invalidate(CacheKey.characterPackage(getCompanionId(s)));
-		if (getCompanionId(s) === characterId) {
-			configureCharacterRuntime(s, character);
-		}
+		s.invalidations.invalidate(CacheKey.characterPackage(characterId));
+		await s.reloadCharacter(characterId);
 		return { trust };
 	});
 	dispatcher.registerHandler(RPC.character.draftCreate, async ({ basePackageId, locale }) => {
@@ -428,176 +417,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.character.draftPublish, async ({ id, expectedRevision }) => {
 		const result = s.drafts.publish(id, expectedRevision);
-		await s.activateCharacter(result.character, "local");
+		s.seedCharacter(result.character, "local");
 		return {
 			draft: result.draft,
 			character: s.characterLoader.display(result.character),
 		};
-	});
-	dispatcher.registerHandler(RPC.companionState.update, async ({ conversationId, changes }) => {
-		await requireOwnedConversation(s, conversationId);
-		const character = s.characterLoader.load(getCompanionId(s));
-		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		s.companionStore.writeCompanion({
-			companionId: character.id,
-			conversationId,
-			definition: character.state,
-			changes,
-			character,
-		});
-		const projection = s.companionStore.project(character.id, conversationId, character.state);
-		s.livePush({
-			type: "companionState",
-			conversationId,
-			state: {
-				schema: JSON.parse(JSON.stringify(character.state)),
-				state: {
-					character: {
-						document: projection.document,
-						revisions: projection.revisions,
-					},
-					...s.companionStore.snapshot(character, conversationId),
-				},
-			},
-		});
-		return {};
-	});
-	dispatcher.registerHandler(RPC.companionState.get, async ({ conversationId }) => {
-		await requireOwnedConversation(s, conversationId);
-		const character = s.characterLoader.load(getCompanionId(s));
-		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		const projection = s.companionStore.project(character.id, conversationId, character.state);
-		return {
-			schema: JSON.parse(JSON.stringify(character.state)),
-			state: {
-				character: {
-					document: projection.document,
-					revisions: projection.revisions,
-				},
-				...s.companionStore.snapshot(character, conversationId),
-			},
-		};
-	});
-
-	// --- role-defined onboarding -----------------------------------------------
-	dispatcher.registerHandler(RPC.onboarding.get, async () => {
-		const companionId = getCompanionId(s);
-		return s.onboarding.getState(companionId);
-	});
-	dispatcher.registerHandler(RPC.onboarding.submit, async ({ stepId, answer }) => {
-		const companionId = getCompanionId(s);
-		return s.onboarding.submit(companionId, stepId, answer);
-	});
-
-	// --- conversation ---------------------------------------------------------
-	dispatcher.registerHandler(RPC.conversation.list, async ({ archived, title, cursor, limit }) => {
-		const sessions = await s.sessions.list(getCompanionId(s), { archived, title });
-		const cursorIndex = cursor ? sessions.findIndex((session) => session.id === cursor) : -1;
-		if (cursor && cursorIndex < 0)
-			throw { kind: "not_found", reason: "conversation_cursor_not_found" };
-		const page = sessions.slice(cursorIndex + 1, cursorIndex + 1 + limit);
-		const hasMore = cursorIndex + 1 + page.length < sessions.length;
-		return {
-			conversations: page.map((session) =>
-				sessionWire(session, s.pi.snapshot(session.id)?.isStreaming ?? false),
-			),
-			...(hasMore && page.at(-1) ? { nextCursor: page.at(-1)?.id } : {}),
-		};
-	});
-	const activeConversation = async () => {
-		const session = await s.sessions.activeGet(getCompanionId(s));
-		return {
-			activeConversation: session ? projectPiConversationDetail(session) : null,
-		};
-	};
-	dispatcher.registerHandler(RPC.conversation.activeGet, activeConversation);
-	dispatcher.registerHandler(RPC.conversation.select, async ({ conversationId }) => ({
-		activeConversation: projectPiConversationDetail(
-			await s.sessions.select(getCompanionId(s), conversationId),
-		),
-	}));
-	dispatcher.registerHandler(RPC.conversation.create, async ({ title }) => {
-		const session = await s.sessions.createAndSelect(getCompanionId(s), title);
-		s.invalidations.invalidate(CacheKey.conversations());
-		return projectPiConversationDetail(session);
-	});
-	dispatcher.registerHandler(RPC.conversation.open, async ({ conversationId }) => {
-		const session = await s.sessions.open(getCompanionId(s), conversationId);
-		return projectPiConversationDetail(session);
-	});
-	dispatcher.registerHandler(
-		RPC.conversation.history,
-		async ({ conversationId, beforeEntryId, limit }) => {
-			const session = await s.sessions.open(getCompanionId(s), conversationId);
-			return projectPiConversationHistory(session, beforeEntryId, limit);
-		},
-	);
-	dispatcher.registerHandler(RPC.conversation.rename, async ({ conversationId, title }) => {
-		await s.sessions.rename(getCompanionId(s), conversationId, title.trim());
-		s.invalidations.invalidate(CacheKey.conversations());
-		return {};
-	});
-	dispatcher.registerHandler(RPC.conversation.archive, async ({ conversationId, archived }) => {
-		await s.sessions.archive(getCompanionId(s), conversationId, archived);
-		s.invalidations.invalidate(CacheKey.conversations());
-		return activeConversation();
-	});
-	dispatcher.registerHandler(RPC.conversation.delete, async ({ conversationId }) => {
-		await s.sessions.delete(getCompanionId(s), conversationId);
-		s.invalidations.invalidate(CacheKey.conversations());
-		return activeConversation();
-	});
-
-	// --- message ----------------------------------------------------------------
-	dispatcher.registerHandler(
-		RPC.message.send,
-		async ({ conversationId, text, clientMessageId }) => {
-			await requireOwnedConversation(s, conversationId);
-			const key = `${conversationId}:${clientMessageId}`;
-			let accepted = acceptedMessages.get(key);
-			if (!accepted) {
-				accepted = s.pi.send(conversationId, text);
-				acceptedMessages.set(key, accepted);
-				void accepted.catch(() => acceptedMessages.delete(key));
-				if (acceptedMessages.size > 1_000) {
-					const oldest = acceptedMessages.keys().next().value;
-					if (oldest) acceptedMessages.delete(oldest);
-				}
-			}
-			await accepted;
-			return {};
-		},
-	);
-	dispatcher.registerHandler(RPC.message.abort, async ({ conversationId }) => {
-		await requireOwnedConversation(s, conversationId);
-		await s.pi.abort(conversationId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.message.correct, async ({ conversationId, entryId, feedback }) => {
-		await requireOwnedConversation(s, conversationId);
-		await s.pi.correct(conversationId, entryId, feedback);
-		return projectPiConversationDetail(await s.sessions.open(getCompanionId(s), conversationId));
-	});
-	dispatcher.registerHandler(RPC.message.switchVersion, async ({ conversationId, leafId }) => {
-		await requireOwnedConversation(s, conversationId);
-		await s.pi.navigate(conversationId, leafId);
-		return projectPiConversationDetail(await s.sessions.open(getCompanionId(s), conversationId));
-	});
-	dispatcher.registerHandler(RPC.message.edit, async ({ conversationId, entryId, text }) => {
-		await requireOwnedConversation(s, conversationId);
-		await s.pi.edit(conversationId, entryId, text);
-		return projectPiConversationDetail(await s.sessions.open(getCompanionId(s), conversationId));
-	});
-	dispatcher.registerHandler(RPC.message.continue, async ({ conversationId }) => {
-		await requireOwnedConversation(s, conversationId);
-		await s.pi.continue(conversationId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.message.branch, async ({ conversationId, entryId }) => {
-		await requireOwnedConversation(s, conversationId);
-		const session = await s.sessions.fork(getCompanionId(s), conversationId, entryId);
-		s.invalidations.invalidate(CacheKey.conversations());
-		return projectPiConversationDetail(session);
 	});
 	const configuredLocalTarget = () => {
 		const memory = s.appSettings.load().memoryVectorService;
@@ -614,7 +438,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		return undefined;
 	};
-	dispatcher.registerHandler(RPC.memory.inspect, (request) => s.inspectMemory(request));
 	dispatcher.registerHandler(RPC.memory.localEmbeddingInventory, async () =>
 		s.localEmbeddingAcquisition.inventory(configuredLocalTarget()),
 	);
@@ -648,57 +471,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		);
 		return { settings: await projectSettings(app) };
 	});
-	// --- canon hub (advanced authoring) ---------------------------------------------
-	dispatcher.registerHandler(RPC.canon.listSources, async ({ cursor, limit }) => {
-		const result = pageAfter(
-			s.canon.listSources(getCompanionId(s)),
-			cursor,
-			limit,
-			(source) => source.id,
-			"canon_source_cursor_not_found",
-		);
-		return {
-			sources: result.items,
-			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
-		};
-	});
-	dispatcher.registerHandler(RPC.canon.addSource, async ({ logicalName, content }) => {
-		return {
-			source: s.canon.addSource(getCompanionId(s), logicalName, content),
-		};
-	});
-	dispatcher.registerHandler(RPC.canon.search, async ({ query }) => ({
-		chunks: await s.canon.searchHybrid(getCompanionId(s), query),
-	}));
-	dispatcher.registerHandler(RPC.canon.removeSource, async ({ sourceId }) => {
-		s.canon.removeSource(getCompanionId(s), sourceId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.canon.listModules, async ({ cursor, limit }) => {
-		const result = pageAfter(
-			s.canon.listModules(getCompanionId(s)),
-			cursor,
-			limit,
-			(module) => module.id,
-			"canon_module_cursor_not_found",
-		);
-		return {
-			modules: result.items,
-			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
-		};
-	});
-	dispatcher.registerHandler(RPC.canon.upsertModule, async (_p) => ({
-		module: s.canon.upsertModule({
-			..._p,
-			companionId: getCompanionId(s),
-		}),
-	}));
-	dispatcher.registerHandler(RPC.canon.deleteModule, async ({ id }) => {
-		s.canon.deleteModule(getCompanionId(s), id);
-		return {};
-	});
-
-	// --- provider ------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.provider.list, async ({ cursor, limit }) => {
 		const result = pageAfter(
 			(await s.providers.listProviders()).sort((left, right) => left.id.localeCompare(right.id)),
@@ -769,8 +541,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.providers.logout(providerId);
 		return {};
 	});
-
-	// --- configured models ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.model.poolGet, async ({ cursor, limit }) => {
 		await s.providers.listProviders();
 		const result = pageAfter(
@@ -809,12 +579,396 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.models.disable(providerId, modelId);
 		return {};
 	});
+	dispatcher.registerHandler(RPC.model.systemDefaultsGet, async () =>
+		systemModelDefaultsWire(s.models.systemDefaults(s.providers.modelProjectionFacts())),
+	);
+	dispatcher.registerHandler(RPC.model.systemDefaultsSet, async (defaults) =>
+		systemModelDefaultsWire(
+			s.models.setSystemDefaults(defaults, s.providers.modelProjectionFacts()),
+		),
+	);
+	dispatcher.registerHandler(RPC.systemOnboarding.completeModel, async (request) => {
+		const { licensesAcknowledged, ...defaults } = request;
+		assertSystemOnboardingLicenses(process.platform, licensesAcknowledged);
+		const completed = s.models.completeSystemModelOnboarding(
+			defaults,
+			s.providers.modelProjectionFacts(),
+		);
+		return {
+			settings: await projectSettings(),
+			defaults: systemModelDefaultsWire(completed),
+		};
+	});
+	dispatcher.registerHandler(RPC.settings.capabilitiesGet, async () => ({
+		networkProxyModes: HOST_SETTINGS_CAPABILITIES.networkProxyModes.map(({ id }) => ({ id })),
+		memoryVectorProviders: HOST_SETTINGS_CAPABILITIES.memoryVectorProviders.map(
+			({ id, onboarding }) => ({
+				id,
+				onboarding,
+			}),
+		),
+		memoryVectorPresets: HOST_SETTINGS_CAPABILITIES.memoryVectorPresets.map(
+			({ id, model, dimensions }) => ({
+				id,
+				model,
+				dimensions,
+			}),
+		),
+		localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
+			({ id, name, dimensions, isDefault }) => ({
+				id,
+				name,
+				dimensions,
+				isDefault,
+			}),
+		),
+	}));
+	dispatcher.registerHandler(RPC.settings.get, async () => ({
+		settings: await projectSettings(),
+	}));
+	dispatcher.registerHandler(RPC.settings.set, async ({ settings }) => {
+		let app = s.appSettings.load();
+		if (settings.networkProxy) {
+			app = s.appSettings.save({ networkProxy: settings.networkProxy });
+		} else if (settings.memoryVectorService) {
+			const memoryVectorService = settings.memoryVectorService;
+			if (memoryVectorService.provider === "local") {
+				throw {
+					kind: "conflict",
+					reason: "local_embedding_requires_activation",
+				};
+			}
+			if (memoryVectorService.provider === "remote") {
+				const replacementApiKey = memoryVectorService.apiKey?.trim();
+				const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
+				const apiKey = replacementApiKey || storedApiKey;
+				if (
+					!memoryVectorService.baseUrl ||
+					!apiKey ||
+					!memoryVectorService.model ||
+					!memoryVectorService.dimensions
+				) {
+					throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
+				}
+				await s.memoryEmbedding.validateRemote({
+					baseUrl: memoryVectorService.baseUrl,
+					apiKey,
+					model: memoryVectorService.model,
+					dimensions: memoryVectorService.dimensions,
+				});
+				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
+				app = await persistMemoryVectorService(persisted, {
+					completeOnboarding: false,
+					...(replacementApiKey ? { replacementApiKey } : {}),
+				});
+			} else {
+				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
+				app = await persistMemoryVectorService(persisted, {
+					completeOnboarding: false,
+				});
+			}
+		} else if (settings.modelDownloadSource) {
+			app = s.appSettings.save({
+				modelDownloadSource: settings.modelDownloadSource,
+			});
+		}
+		s.invalidations.invalidate(CacheKey.settings());
+		return { settings: await projectSettings(app) };
+	});
+	dispatcher.registerHandler(RPC.systemOnboarding.completeEmbedding, async (request) => {
+		let app: AppSettingsRecord;
+		if (request.choice === "none") {
+			app = await persistMemoryVectorService(
+				{ enabled: false, provider: "none" },
+				{ completeOnboarding: true },
+			);
+		} else if (request.choice === "local") {
+			const resolved = await s.localEmbeddingAcquisition.resolveInstalledTarget(request.target);
+			await s.memoryEmbedding.validateLocal({
+				modelPath: resolved.modelPath,
+				dimensions: resolved.dimensions,
+				download: false,
+				signal: s.signal,
+			});
+			app = await persistMemoryVectorService(
+				{
+					enabled: true,
+					provider: "local",
+					dimensions: resolved.dimensions,
+					...(request.target.kind === "candidate"
+						? { localModel: request.target.candidateId }
+						: { customPath: resolved.modelPath }),
+				},
+				{ completeOnboarding: true },
+			);
+		} else {
+			const replacementApiKey = request.configuration.apiKey?.trim();
+			const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
+			const apiKey = replacementApiKey || storedApiKey;
+			if (!apiKey) {
+				throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
+			}
+			await s.memoryEmbedding.validateRemote({
+				baseUrl: request.configuration.baseUrl,
+				apiKey,
+				model: request.configuration.model,
+				dimensions: request.configuration.dimensions,
+			});
+			app = await persistMemoryVectorService(
+				{
+					enabled: true,
+					provider: "remote",
+					baseUrl: request.configuration.baseUrl,
+					model: request.configuration.model,
+					dimensions: request.configuration.dimensions,
+				},
+				{
+					completeOnboarding: true,
+					...(replacementApiKey ? { replacementApiKey } : {}),
+				},
+			);
+		}
+		return { settings: await projectSettings(app) };
+	});
+	dispatcher.registerHandler(RPC.update.check, async () => {
+		if (!s.updateService) {
+			return {
+				state: "disabled" as const,
+				currentVersion: undefined,
+				latestVersion: undefined,
+				feedUrl: undefined,
+				error: undefined,
+			};
+		}
+		return s.updateService.check();
+	});
+	dispatcher.registerHandler(RPC.update.discard, async () => {
+		if (!s.updateService) {
+			return { state: "disabled" as const, discarded: false };
+		}
+		return s.updateService.discard();
+	});
+	dispatcher.registerHandler(RPC.update.apply, async () => {
+		if (!s.updateService) {
+			return {
+				state: "disabled" as const,
+				applyUnsupported: true as const,
+				error: "Update installation is not supported by this host",
+			};
+		}
+		return s.updateService.apply();
+	});
+}
+
+export function wireCharacterHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
+	dispatcher.registerHandler(RPC.character.memoryGet, () => ({
+		enabled:
+			s.orm.select().from(characterMemorySettings).where(eq(characterMemorySettings.id, 1)).get()
+				?.enabled === true,
+	}));
+	dispatcher.registerHandler(RPC.character.memorySet, async ({ enabled }) => {
+		s.orm
+			.insert(characterMemorySettings)
+			.values({ id: 1, enabled })
+			.onConflictDoUpdate({ target: characterMemorySettings.id, set: { enabled } })
+			.run();
+		await s.memoryEmbedding.releaseRuntime(s.characterId);
+		s.invalidations.invalidate(CacheKey.characterPackage(s.characterId));
+		return { enabled };
+	});
+	dispatcher.registerHandler(RPC.character.get, async () => {
+		const companionId = s.characterId;
+		const character = s.characterLoader.load(companionId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		return { character: s.characterLoader.display(character) };
+	});
+	dispatcher.registerHandler(RPC.companionState.update, async ({ conversationId, changes }) => {
+		await requireOwnedConversation(s, conversationId);
+		const character = s.characterLoader.load(s.characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		s.companionStore.writeCompanion({
+			companionId: character.id,
+			conversationId,
+			definition: character.state,
+			changes,
+			character,
+		});
+		const projection = s.companionStore.project(character.id, conversationId, character.state);
+		s.livePush({
+			type: "companionState",
+			characterId: s.characterId,
+			conversationId,
+			state: {
+				schema: JSON.parse(JSON.stringify(character.state)),
+				state: {
+					character: {
+						document: projection.document,
+						revisions: projection.revisions,
+					},
+					...s.companionStore.snapshot(character, conversationId),
+				},
+			},
+		});
+		return {};
+	});
+	dispatcher.registerHandler(RPC.companionState.get, async ({ conversationId }) => {
+		await requireOwnedConversation(s, conversationId);
+		const character = s.characterLoader.load(s.characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		const projection = s.companionStore.project(character.id, conversationId, character.state);
+		return {
+			schema: JSON.parse(JSON.stringify(character.state)),
+			state: {
+				character: {
+					document: projection.document,
+					revisions: projection.revisions,
+				},
+				...s.companionStore.snapshot(character, conversationId),
+			},
+		};
+	});
+	dispatcher.registerHandler(RPC.onboarding.get, async () => {
+		const companionId = s.characterId;
+		return s.onboarding.getState(companionId);
+	});
+	dispatcher.registerHandler(RPC.onboarding.submit, async ({ stepId, answer }) => {
+		const companionId = s.characterId;
+		return s.onboarding.submit(companionId, stepId, answer);
+	});
+	dispatcher.registerHandler(RPC.conversation.list, async ({ archived, title, cursor, limit }) => {
+		const page = await s.sessions.listPage(s.characterId, { archived, title, cursor, limit });
+		return {
+			conversations: page.sessions.map((session) =>
+				sessionWire(session, s.pi.snapshot(session.id)?.isStreaming ?? false),
+			),
+			...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+		};
+	});
+	dispatcher.registerHandler(RPC.conversation.create, async ({ title }) => {
+		const session = await s.sessions.create(s.characterId, title);
+		s.invalidations.invalidate(CacheKey.conversations());
+		return projectPiConversationDetail(session);
+	});
+	dispatcher.registerHandler(RPC.conversation.open, async ({ conversationId }) => {
+		const session = await s.sessions.open(s.characterId, conversationId);
+		return projectPiConversationDetail(session);
+	});
+	dispatcher.registerHandler(
+		RPC.conversation.history,
+		async ({ conversationId, beforeEntryId, limit }) => {
+			const session = await s.sessions.open(s.characterId, conversationId);
+			return projectPiConversationHistory(session, beforeEntryId, limit);
+		},
+	);
+	dispatcher.registerHandler(RPC.conversation.rename, async ({ conversationId, title }) => {
+		await s.sessions.rename(s.characterId, conversationId, title.trim());
+		s.invalidations.invalidate(CacheKey.conversations());
+		return {};
+	});
+	dispatcher.registerHandler(RPC.conversation.archive, async ({ conversationId, archived }) => {
+		await s.sessions.archive(s.characterId, conversationId, archived);
+		s.invalidations.invalidate(CacheKey.conversations());
+		return {};
+	});
+	dispatcher.registerHandler(RPC.conversation.delete, async ({ conversationId }) => {
+		await s.sessions.delete(s.characterId, conversationId);
+		s.invalidations.invalidate(CacheKey.conversations(), CacheKey.conversation(conversationId));
+		return {};
+	});
+	dispatcher.registerHandler(
+		RPC.message.send,
+		async ({ conversationId, text, clientMessageId }) => {
+			await requireOwnedConversation(s, conversationId);
+			await s.pi.send(conversationId, text, undefined, clientMessageId);
+			return {};
+		},
+	);
+	dispatcher.registerHandler(RPC.message.abort, async ({ conversationId }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.abort(conversationId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.message.correct, async ({ conversationId, entryId, feedback }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.correct(conversationId, entryId, feedback);
+		return projectPiConversationDetail(await s.sessions.open(s.characterId, conversationId));
+	});
+	dispatcher.registerHandler(RPC.message.switchVersion, async ({ conversationId, leafId }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.navigate(conversationId, leafId);
+		return projectPiConversationDetail(await s.sessions.open(s.characterId, conversationId));
+	});
+	dispatcher.registerHandler(RPC.message.edit, async ({ conversationId, entryId, text }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.edit(conversationId, entryId, text);
+		return projectPiConversationDetail(await s.sessions.open(s.characterId, conversationId));
+	});
+	dispatcher.registerHandler(RPC.message.continue, async ({ conversationId }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.continue(conversationId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.message.branch, async ({ conversationId, entryId }) => {
+		await requireOwnedConversation(s, conversationId);
+		const session = await s.sessions.fork(s.characterId, conversationId, entryId);
+		s.invalidations.invalidate(CacheKey.conversations());
+		return projectPiConversationDetail(session);
+	});
+	dispatcher.registerHandler(RPC.memory.inspect, (request) => s.inspectMemory(request));
+	dispatcher.registerHandler(RPC.canon.listSources, async ({ cursor, limit }) => {
+		const result = pageAfter(
+			s.canon.listSources(s.characterId),
+			cursor,
+			limit,
+			(source) => source.id,
+			"canon_source_cursor_not_found",
+		);
+		return {
+			sources: result.items,
+			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+		};
+	});
+	dispatcher.registerHandler(RPC.canon.addSource, async ({ logicalName, content }) => {
+		return {
+			source: s.canon.addSource(s.characterId, logicalName, content),
+		};
+	});
+	dispatcher.registerHandler(RPC.canon.search, async ({ query }) => ({
+		chunks: await s.canon.searchHybrid(s.characterId, query),
+	}));
+	dispatcher.registerHandler(RPC.canon.removeSource, async ({ sourceId }) => {
+		s.canon.removeSource(s.characterId, sourceId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.canon.listModules, async ({ cursor, limit }) => {
+		const result = pageAfter(
+			s.canon.listModules(s.characterId),
+			cursor,
+			limit,
+			(module) => module.id,
+			"canon_module_cursor_not_found",
+		);
+		return {
+			modules: result.items,
+			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+		};
+	});
+	dispatcher.registerHandler(RPC.canon.upsertModule, async (_p) => ({
+		module: s.canon.upsertModule({
+			..._p,
+			companionId: s.characterId,
+		}),
+	}));
+	dispatcher.registerHandler(RPC.canon.deleteModule, async ({ id }) => {
+		s.canon.deleteModule(s.characterId, id);
+		return {};
+	});
 	dispatcher.registerHandler(RPC.model.defaultsGet, async () => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		return modelDefaultsWire(s.models.defaults(companionId, s.providers.modelProjectionFacts()));
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetReply, async ({ reply, thinkingLevel }) => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		return modelDefaultsWire(
 			s.models.setDefaultReply(
 				companionId,
@@ -825,21 +979,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		);
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetVision, async (vision) => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		return modelDefaultsWire(
 			s.models.setVisionDefault(companionId, vision, s.providers.modelProjectionFacts()),
 		);
 	});
-	dispatcher.registerHandler(RPC.model.systemDefaultsGet, async () =>
-		systemModelDefaultsWire(s.models.systemDefaults(s.providers.modelProjectionFacts())),
-	);
-	dispatcher.registerHandler(RPC.model.systemDefaultsSet, async (defaults) =>
-		systemModelDefaultsWire(
-			s.models.setSystemDefaults(defaults, s.providers.modelProjectionFacts()),
-		),
-	);
 	dispatcher.registerHandler(RPC.model.defaultsInitialize, async () => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		const facts = s.providers.modelProjectionFacts();
 		if (s.models.seedFromSystemDefaults(companionId, facts) === "missing_system_default") {
 			throw { kind: "unavailable", reason: "system_default_model_required" };
@@ -847,29 +993,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return modelDefaultsWire(s.models.defaults(companionId, facts));
 	});
 	dispatcher.registerHandler(RPC.model.defaultsCompleteOnboarding, async () => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		return modelDefaultsWire(
 			s.models.completeOnboarding(companionId, s.providers.modelProjectionFacts()),
 		);
-	});
-	dispatcher.registerHandler(RPC.systemOnboarding.completeModel, async (request) => {
-		const { licensesAcknowledged, ...defaults } = request;
-		assertSystemOnboardingLicenses(process.platform, licensesAcknowledged);
-		const completed = s.models.completeSystemModelOnboarding(
-			defaults,
-			s.providers.modelProjectionFacts(),
-		);
-		const companionId = getCompanionId(s);
-		if (
-			s.models.seedFromSystemDefaults(companionId, s.providers.modelProjectionFacts()) ===
-			"missing_system_default"
-		) {
-			throw { kind: "unavailable", reason: "system_default_model_required" };
-		}
-		return {
-			settings: await projectSettings(),
-			defaults: systemModelDefaultsWire(completed),
-		};
 	});
 	dispatcher.registerHandler(RPC.model.routeGet, async ({ conversationId }) => {
 		await requireOwnedConversation(s, conversationId);
@@ -884,11 +1011,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			return { conversationId, ...(await s.pi.modelSettingsFor(conversationId)) };
 		},
 	);
-
-	// --- direct Pi runs ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.run.list, async (request) => {
 		if (request.conversationId) await requireOwnedConversation(s, request.conversationId);
-		return s.externalAgentRuns.listPage(getCompanionId(s), request);
+		return s.externalAgentRuns.listPage(s.characterId, request);
 	});
 	dispatcher.registerHandler(RPC.run.get, async (request) => {
 		await requireOwnedRun(s, request.runId);
@@ -921,53 +1046,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			await s.externalAgentRuns.respondToExecutorPermission(runId, requestId, optionId),
 		);
 	});
-
-	// --- run-owned artifacts -------------------------------------------------------
-	dispatcher.registerHandler(RPC.artifact.read, async (_p) => {
-		const { offset = 0, length = MAX_ARTIFACT_READ_BYTES } = _p;
-		const artifact = requireOwnedArtifact(s, _p);
-		const range = s.artifacts.readBlobRange(artifact.id, offset, length);
-		if (!range) throw { kind: "not_found", reason: "artifact_not_found" };
-		return {
-			artifact: artifactWire(artifact),
-			offset,
-			nextOffset: range.nextOffset,
-			eof: range.eof,
-			base64: range.buffer.toString("base64"),
-		};
-	});
-	dispatcher.registerHandler(RPC.artifact.open, async (_p) => presentArtifact(s, "open", _p));
-	dispatcher.registerHandler(RPC.artifact.reveal, async (_p) => presentArtifact(s, "reveal", _p));
-	dispatcher.registerHandler(RPC.artifact.saveAs, async (_p) => presentArtifact(s, "saveAs", _p));
-
-	// --- settings ----------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.settings.capabilitiesGet, async () => ({
-		networkProxyModes: HOST_SETTINGS_CAPABILITIES.networkProxyModes.map(({ id }) => ({ id })),
-		memoryVectorProviders: HOST_SETTINGS_CAPABILITIES.memoryVectorProviders.map(
-			({ id, onboarding }) => ({
-				id,
-				onboarding,
-			}),
-		),
-		memoryVectorPresets: HOST_SETTINGS_CAPABILITIES.memoryVectorPresets.map(
-			({ id, model, dimensions }) => ({
-				id,
-				model,
-				dimensions,
-			}),
-		),
-		localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
-			({ id, name, dimensions, isDefault }) => ({
-				id,
-				name,
-				dimensions,
-				isDefault,
-			}),
-		),
-	}));
-	dispatcher.registerHandler(RPC.settings.get, async () => ({
-		settings: await projectSettings(),
-	}));
+	registerArtifactHandlers(dispatcher, s);
 	const diagnosticSettings = () => ({
 		policy: s.appSettings.loadDiagnostics(),
 		health: s.diagnostics.health(),
@@ -1043,152 +1122,14 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		);
 		return {};
 	});
-	dispatcher.registerHandler(RPC.settings.set, async ({ settings }) => {
-		let app = s.appSettings.load();
-		if (settings.networkProxy) {
-			app = s.appSettings.save({ networkProxy: settings.networkProxy });
-		} else if (settings.memoryVectorService) {
-			const memoryVectorService = settings.memoryVectorService;
-			if (memoryVectorService.provider === "local") {
-				throw {
-					kind: "conflict",
-					reason: "local_embedding_requires_activation",
-				};
-			}
-			if (memoryVectorService.provider === "remote") {
-				const replacementApiKey = memoryVectorService.apiKey?.trim();
-				const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
-				const apiKey = replacementApiKey || storedApiKey;
-				if (
-					!memoryVectorService.baseUrl ||
-					!apiKey ||
-					!memoryVectorService.model ||
-					!memoryVectorService.dimensions
-				) {
-					throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
-				}
-				await s.memoryEmbedding.validateRemote({
-					baseUrl: memoryVectorService.baseUrl,
-					apiKey,
-					model: memoryVectorService.model,
-					dimensions: memoryVectorService.dimensions,
-				});
-				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
-				app = await persistMemoryVectorService(persisted, {
-					completeOnboarding: false,
-					...(replacementApiKey ? { replacementApiKey } : {}),
-				});
-			} else {
-				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
-				app = await persistMemoryVectorService(persisted, {
-					completeOnboarding: false,
-				});
-			}
-		} else if (settings.modelDownloadSource) {
-			app = s.appSettings.save({
-				modelDownloadSource: settings.modelDownloadSource,
-			});
-		}
-		s.invalidations.invalidate(CacheKey.settings());
-		return { settings: await projectSettings(app) };
-	});
-
-	dispatcher.registerHandler(RPC.systemOnboarding.completeEmbedding, async (request) => {
-		let app: AppSettingsRecord;
-		if (request.choice === "none") {
-			app = await persistMemoryVectorService(
-				{ enabled: false, provider: "none" },
-				{ completeOnboarding: true },
-			);
-		} else if (request.choice === "local") {
-			const resolved = await s.localEmbeddingAcquisition.resolveInstalledTarget(request.target);
-			await s.memoryEmbedding.validateLocal({
-				modelPath: resolved.modelPath,
-				dimensions: resolved.dimensions,
-				download: false,
-				signal: s.signal,
-			});
-			app = await persistMemoryVectorService(
-				{
-					enabled: true,
-					provider: "local",
-					dimensions: resolved.dimensions,
-					...(request.target.kind === "candidate"
-						? { localModel: request.target.candidateId }
-						: { customPath: resolved.modelPath }),
-				},
-				{ completeOnboarding: true },
-			);
-		} else {
-			const replacementApiKey = request.configuration.apiKey?.trim();
-			const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
-			const apiKey = replacementApiKey || storedApiKey;
-			if (!apiKey) {
-				throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
-			}
-			await s.memoryEmbedding.validateRemote({
-				baseUrl: request.configuration.baseUrl,
-				apiKey,
-				model: request.configuration.model,
-				dimensions: request.configuration.dimensions,
-			});
-			app = await persistMemoryVectorService(
-				{
-					enabled: true,
-					provider: "remote",
-					baseUrl: request.configuration.baseUrl,
-					model: request.configuration.model,
-					dimensions: request.configuration.dimensions,
-				},
-				{
-					completeOnboarding: true,
-					...(replacementApiKey ? { replacementApiKey } : {}),
-				},
-			);
-		}
-		return { settings: await projectSettings(app) };
-	});
-
-	// --- update --------------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.update.check, async () => {
-		if (!s.updateService) {
-			return {
-				state: "disabled" as const,
-				currentVersion: undefined,
-				latestVersion: undefined,
-				feedUrl: undefined,
-				error: undefined,
-			};
-		}
-		return s.updateService.check();
-	});
-	dispatcher.registerHandler(RPC.update.discard, async () => {
-		if (!s.updateService) {
-			return { state: "disabled" as const, discarded: false };
-		}
-		return s.updateService.discard();
-	});
-	dispatcher.registerHandler(RPC.update.apply, async () => {
-		if (!s.updateService) {
-			return {
-				state: "disabled" as const,
-				applyUnsupported: true as const,
-				error: "Update installation is not supported by this host",
-			};
-		}
-		return s.updateService.apply();
-	});
-
-	// --- audit ---------------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.audit.list, async ({ limit, afterSeq }) => {
 		return s.auditStore.list({ limit: limit ?? 100, afterSeq });
 	});
 	dispatcher.registerHandler(RPC.audit.export, async () => {
 		return s.auditStore.exportLines();
 	});
-
 	dispatcher.registerHandler(RPC.snapshot.get, () => {
-		const companionId = getCompanionId(s);
+		const companionId = s.characterId;
 		const onboarding = s.onboarding.getState(companionId);
 		const character = s.characterLoader.load(companionId);
 		if (!character) {
@@ -1248,7 +1189,7 @@ async function requireOwnedConversation(
 	s: HostCompositionContext,
 	conversationId: string,
 ): Promise<void> {
-	const companionId = getCompanionId(s);
+	const companionId = s.characterId;
 	const row = s.orm
 		.select({ id: conversations.id })
 		.from(conversations)
@@ -1258,107 +1199,9 @@ async function requireOwnedConversation(
 }
 
 async function requireOwnedRun(s: HostCompositionContext, runId: string): Promise<void> {
-	s.externalAgentRuns.assertCharacterRun(getCompanionId(s), runId);
-}
-
-function requireOwnedArtifact(
-	s: HostCompositionContext,
-	identity: ArtifactActionRequest,
-): ArtifactRecord {
-	const conversation = s.orm
-		.select({ id: conversations.id })
-		.from(conversations)
-		.where(eq(conversations.id, identity.conversationId))
-		.get();
-	if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
-
-	const run = s.orm
-		.select({ id: runs.id, conversationId: runs.conversationId })
-		.from(runs)
-		.where(eq(runs.id, identity.runId))
-		.get();
-	if (!run || run.conversationId !== identity.conversationId)
-		throw { kind: "not_found", reason: "run_not_found" };
-
-	const binding = s.orm
-		.select({ id: artifacts.id, producerRunId: artifacts.producerRunId })
-		.from(artifacts)
-		.where(eq(artifacts.id, identity.artifactId))
-		.get();
-	if (!binding || binding.producerRunId !== identity.runId)
-		throw { kind: "not_found", reason: "artifact_not_found" };
-
-	const record = s.artifacts.get(identity.artifactId);
-	if (!record || record.producerRunId !== identity.runId)
-		throw { kind: "not_found", reason: "artifact_not_found" };
-	return record;
-}
-
-async function presentArtifact(
-	s: HostCompositionContext,
-	action: "open" | "reveal" | "saveAs",
-	identity: ArtifactActionRequest,
-): Promise<{ outcome: "completed" | "cancelled" | "unsupported" }> {
-	const artifact = requireOwnedArtifact(s, identity);
-	if (!s.artifacts.readBlobRange(artifact.id, 0, 1))
-		throw { kind: "not_found", reason: "artifact_not_found" };
-	const presenter = s.artifactPresenter;
-	const present = presenter?.[action];
-	if (!presenter || !present) return { outcome: "unsupported" };
-
-	const scoped = createArtifactPresentationAccess(s.artifacts, artifact);
-	let result: Awaited<ReturnType<NonNullable<typeof present>>>;
-	try {
-		result = await present.call(presenter, {
-			artifact: Object.freeze({ ...artifact }),
-			access: scoped.access,
-		});
-	} finally {
-		await scoped.close();
-	}
-	const response = ArtifactActionResponse.parse(result);
-	if (action === "saveAs" && response.outcome === "completed") {
-		s.artifacts.markSaved(artifact.id);
-	}
-	return response;
-}
-
-function artifactWire(artifact: ArtifactRecord) {
-	return {
-		id: artifact.id,
-		name: artifact.logicalName,
-		mime: artifact.mime,
-		bytes: artifact.bytes,
-		sha256: artifact.sha256,
-		status: artifact.status,
-		createdAt: artifact.createdAt,
-	};
+	s.externalAgentRuns.assertCharacterRun(s.characterId, runId);
 }
 
 function runWire(s: HostCompositionContext, run: RunSummary) {
 	return s.externalAgentRuns.project(run);
-}
-
-function getCompanionId(s: HostCompositionContext): string {
-	const packageId = s.characterLoader.getActiveCharacterId(s.systemOrm, s.defaultCharacterId);
-	if (!s.characterLoader.load(packageId))
-		throw { kind: "unavailable", reason: "character_package_missing" };
-	return packageId;
-}
-
-/** Seed the active character package if it has not been seeded yet. */
-function ensureCharacterSeeded(s: HostCompositionContext): void {
-	const activeId = s.characterLoader.getActiveCharacterId(s.systemOrm, s.defaultCharacterId);
-	const character = s.characterLoader.load(activeId);
-	if (!character) throw new Error(`character package missing: ${activeId}`);
-	s.companionStore.reconcileSchema(character.id, character.state);
-}
-
-/** Skills are always declarative context; executable plugins require current package trust. */
-function configureCharacterRuntime(
-	s: HostCompositionContext,
-	character: Parameters<CharacterLoader["piResources"]>[0],
-): void {
-	const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
-	s.pi.configure(s.characterLoader.piResources(character, trust.trusted));
 }

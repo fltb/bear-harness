@@ -61,7 +61,7 @@ const IPC_ERROR_KINDS: readonly RpcErrorKind[] = [
 ];
 const MAX_ERROR_REASON_LENGTH = 4096;
 
-function normalizeHandlerError(error: unknown): RpcError {
+export function normalizeHandlerError(error: unknown): RpcError {
 	const thrown =
 		typeof error === "object" && error !== null
 			? (error as { kind?: unknown; reason?: unknown; message?: unknown })
@@ -77,6 +77,10 @@ function normalizeHandlerError(error: unknown): RpcError {
 
 export class Dispatcher {
 	private readonly handlers = new Map<string, RpcHandler>();
+	private sealed = false;
+	seal(): void {
+		this.sealed = true;
+	}
 	private readonly onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
 	private readonly onDispatchResult?: DispatcherOptions["onDispatchResult"];
 
@@ -90,6 +94,7 @@ export class Dispatcher {
 		endpoint: E,
 		handler: (params: RequestOf<E>) => ResponseOf<E> | Promise<ResponseOf<E>>,
 	): void {
+		if (this.sealed) throw new Error("dispatcher registration is sealed");
 		if (
 			!endpoint ||
 			typeof endpoint !== "object" ||

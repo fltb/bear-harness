@@ -26,7 +26,7 @@ media: []
 };
 
 function renderManager(
-	initialStatus: CharacterDeletionStatus,
+	initialStatus: CharacterDeletionStatus & { displayed?: boolean },
 	operations: {
 		savePackage?: (yaml: string, sha256: string) => Promise<typeof document>;
 		deleteRuntime?: (id: string) => Promise<{ deleted: boolean }>;
@@ -51,7 +51,11 @@ function renderManager(
 	render(() => (
 		<CurrentRolePackageManager
 			characters={() => [
-				{ id: document.characterId, name: document.character.name, active: initialStatus.active },
+				{
+					id: document.characterId,
+					name: document.character.name,
+					active: initialStatus.displayed ?? false,
+				},
 			]}
 			selectedId={() => document.characterId}
 			document={() => document}
@@ -86,7 +90,7 @@ describe("character physical deletion UI", () => {
 		renderManager(
 			{
 				characterId: document.characterId,
-				active: false,
+				displayed: false,
 				default: false,
 				runtimePresent: true,
 				packagePresent: true,
@@ -127,7 +131,7 @@ describe("character physical deletion UI", () => {
 	it("shows the package identity separately from supplemental prompt text", () => {
 		renderManager({
 			characterId: document.characterId,
-			active: false,
+			displayed: false,
 			default: false,
 			runtimePresent: true,
 			packagePresent: true,
@@ -156,7 +160,7 @@ describe("character physical deletion UI", () => {
 	it("keeps default-package protection separate from runtime deletion", () => {
 		renderManager({
 			characterId: document.characterId,
-			active: false,
+			displayed: false,
 			default: true,
 			runtimePresent: true,
 			packagePresent: true,
@@ -175,7 +179,7 @@ describe("character physical deletion UI", () => {
 		const user = userEvent.setup();
 		const { deletePackage, deleteRuntime } = renderManager({
 			characterId: document.characterId,
-			active: false,
+			displayed: false,
 			default: false,
 			runtimePresent: true,
 			packagePresent: true,
@@ -216,21 +220,37 @@ describe("character physical deletion UI", () => {
 		expect(deletePackage).toHaveBeenCalledWith(document.characterId);
 	});
 
-	it("disables both destructive actions for the active character", () => {
-		renderManager({
+	it("allows deleting the displayed character's runtime before its package", async () => {
+		const user = userEvent.setup();
+		const { deletePackage, deleteRuntime } = renderManager({
 			characterId: document.characterId,
-			active: true,
+			displayed: true,
 			default: false,
 			runtimePresent: true,
 			packagePresent: true,
 		});
-
-		expect(
-			screen.getByRole("button", { name: zhCN.currentRolePackage.deleteRuntime }),
-		).toBeDisabled();
-		expect(
-			screen.getByRole("button", { name: zhCN.currentRolePackage.deletePackage }),
-		).toBeDisabled();
-		expect(screen.getAllByText(zhCN.currentRolePackage.deleteBlockedActive)).toHaveLength(2);
+		const runtimeButton = screen.getByRole("button", {
+			name: zhCN.currentRolePackage.deleteRuntime,
+		});
+		const packageButton = screen.getByRole("button", {
+			name: zhCN.currentRolePackage.deletePackage,
+		});
+		expect(runtimeButton).toBeEnabled();
+		expect(packageButton).toBeDisabled();
+		await user.click(runtimeButton);
+		await user.click(
+			within(
+				screen.getByRole("dialog", { name: zhCN.currentRolePackage.deleteRuntimeConfirmTitle }),
+			).getByRole("button", { name: zhCN.currentRolePackage.deleteConfirmAction }),
+		);
+		expect(deleteRuntime).toHaveBeenCalledWith(document.characterId);
+		await waitFor(() => expect(packageButton).toBeEnabled());
+		await user.click(packageButton);
+		await user.click(
+			within(
+				screen.getByRole("dialog", { name: zhCN.currentRolePackage.deletePackageConfirmTitle }),
+			).getByRole("button", { name: zhCN.currentRolePackage.deleteConfirmAction }),
+		);
+		expect(deletePackage).toHaveBeenCalledWith(document.characterId);
 	});
 });

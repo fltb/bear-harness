@@ -86,15 +86,15 @@ export const conversations = sqliteTable(
 		index("idx_conversations_active").on(table.companionId, table.archivedAt, table.updatedAt),
 	],
 );
-export const activeConversations = sqliteTable("active_conversations", {
-	companionId: text("companion_id")
-		.primaryKey()
-		.references(() => companionRuntimeIdentity.companionId, { onDelete: "cascade" }),
-	conversationId: text("conversation_id")
-		.notNull()
-		.references(() => conversations.id, { onDelete: "cascade" }),
-	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-});
+
+export const characterMemorySettings = sqliteTable(
+	"character_memory_settings",
+	{
+		id: integer().primaryKey().default(1),
+		enabled: integer({ mode: "boolean" }).notNull().default(false),
+	},
+	(table) => [check("character_memory_settings_singleton", sql`${table.id} = 1`)],
+);
 
 export const appSettings = sqliteTable(
 	"app_settings",
@@ -207,16 +207,17 @@ export const artifacts = sqliteTable(
 		mime: text().notNull(),
 		bytes: integer().default(0).notNull(),
 		sha256: text().notNull(),
-		status: text().default("created").notNull(),
+		verification: text({ enum: ["pending", "verified", "failed"] })
+			.default("pending")
+			.notNull(),
+		saved: integer({ mode: "boolean" }).default(false).notNull(),
 		producerRunId: text("producer_run_id").references(() => runs.id),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
 		index("idx_artifacts_run").on(table.producerRunId),
-		check(
-			"artifacts_status",
-			sql`status IN ('created','verified','verification_failed','adopted','saved')`,
-		),
+		check("artifacts_verification", sql`verification IN ('pending','verified','failed')`),
+		check("artifacts_saved", sql`saved IN (0,1)`),
 	],
 );
 
@@ -291,15 +292,15 @@ export const executorProfiles = sqliteTable(
 	{
 		id: text().primaryKey(),
 		profileType: text("profile_type", {
-			enum: ["pi", "codex"],
+			enum: ["pi", "codex", "custom"],
 		}).notNull(),
-		capabilityJson: text("capability_json", { mode: "json" })
+		configJson: text("config_json", { mode: "json" })
 			.$type<Record<string, unknown>>()
 			.default({})
 			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
-	() => [check("executor_profiles_type", sql`profile_type IN ('pi','codex')`)],
+	() => [check("executor_profiles_type", sql`profile_type IN ('pi','codex','custom')`)],
 );
 
 export const onboardingState = sqliteTable("onboarding_state", {
@@ -412,18 +413,6 @@ export const storyModules = sqliteTable(
 			sql`kind IN ('root','arc','event','entity','relationship','location','object','behavior')`,
 		),
 	],
-);
-
-export const activeCharacter = sqliteTable(
-	"active_character",
-	{
-		singleton: integer().primaryKey(),
-		characterId: text("character_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-	},
-	() => [check("active_character_singleton", sql`singleton = 1`)],
 );
 
 export const characterDrafts = sqliteTable("character_drafts", {

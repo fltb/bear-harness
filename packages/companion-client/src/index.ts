@@ -31,6 +31,8 @@ export type {
 	RpcError,
 } from "@bear-harness/protocol";
 export {
+	bindCharacterClient,
+	type CharacterClient,
 	type CompanionClient,
 	createCompanionClient,
 	type HostTransport,

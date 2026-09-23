@@ -68,7 +68,6 @@ const forbidden = entries.filter((entry) => {
 	if (hasPathSegment(entry, "tesseract.js") || hasPathSegment(entry, "tesseract.js-core")) {
 		return true;
 	}
-	if (entry.startsWith("/node_modules/@agentclientprotocol/codex-acp/")) return true;
 	return entry.startsWith("/node_modules/@openai/codex");
 });
 
@@ -77,6 +76,7 @@ if (forbidden.length > 0) {
 }
 
 for (const required of [
+	"/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
 	"/dist/main/index.js",
 	"/node_modules/node-llama-cpp/package.json",
 	"/node_modules/@node-llama-cpp",
@@ -87,5 +87,16 @@ for (const required of [
 		throw new Error(`Required production path is missing: ${required}`);
 	}
 }
+
+const acpEntry = join(
+	resourcesRoot(),
+	"app.asar.unpacked",
+	"node_modules",
+	"@agentclientprotocol",
+	"codex-acp",
+	"dist",
+	"index.js",
+);
+if (!existsSync(acpEntry)) throw new Error("Codex ACP process entry must be unpacked");
 
 process.stdout.write(`package boundary verified: ${target}/${arch} (${entries.length} entries)\n`);

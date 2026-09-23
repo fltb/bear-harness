@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 
@@ -26,7 +27,11 @@ async function data(
 	channel: string,
 	params: unknown,
 ) {
-	const response = await runtime.dispatch(channel, params);
+	const scoped =
+		CHANNEL_CONTRACTS[channel]?.scope === "character"
+			? { characterId: productConfig.defaultCharacterId, ...(params as object) }
+			: params;
+	const response = await runtime.dispatch(channel, scoped);
 	if (!response.ok) throw new Error(`${response.error.kind}: ${response.error.reason}`);
 	return response.data;
 }
@@ -90,6 +95,7 @@ describe("character state RPC projection", () => {
 			expect(response).toEqual({});
 			expect(receive).toHaveBeenCalledWith({
 				type: "companionState",
+				characterId: productConfig.defaultCharacterId,
 				conversationId: conversation.conversationId,
 				state: expect.objectContaining({
 					state: expect.objectContaining({

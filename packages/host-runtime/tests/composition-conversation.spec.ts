@@ -1,16 +1,16 @@
 // @vitest-environment node
 
-import { RPC } from "@bear-harness/protocol/schema";
+import { CacheKey, RPC } from "@bear-harness/protocol/schema";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
-import { Dispatcher, type RpcHandler } from "../src/dispatcher.js";
 import {
-	activeCharacter,
-	companionIdentity,
-	conversations,
-	events,
-} from "../src/storage/schema.js";
+	type HostCompositionContext,
+	type SystemCompositionContext,
+	wireCharacterHandlers,
+	wireSystemHandlers,
+} from "../src/composition.js";
+import { Dispatcher, type RpcHandler } from "../src/dispatcher.js";
+import { conversations } from "../src/storage/schema.js";
 
 const timestamp = "2026-08-31T00:00:00.000Z";
 
@@ -49,16 +49,7 @@ function piSnapshot(sessionId: string, name = sessionId) {
 }
 
 function queryResult(table: unknown) {
-	const row =
-		table === events
-			? undefined
-			: table === companionIdentity
-				? { id: "bear" }
-				: table === activeCharacter
-					? { characterId: "bear" }
-					: table === conversations
-						? { id: "owned" }
-						: undefined;
+	const row = table === conversations ? { id: "owned" } : undefined;
 	const chain = {
 		where: () => chain,
 		orderBy: () => chain,
@@ -78,7 +69,6 @@ function context() {
 		list: vi.fn(async () => []),
 		create: vi.fn(async () => snapshots.alpha),
 		open: vi.fn(async (_companionId: string, id: "alpha" | "beta") => snapshots[id]),
-		activeGet: vi.fn(async () => undefined),
 		rename: vi.fn(async () => undefined),
 		archive: vi.fn(async () => undefined),
 		delete: vi.fn(async () => undefined),
@@ -111,6 +101,7 @@ function context() {
 	const livePush = vi.fn();
 	const characterPackagePresenter = { reveal: vi.fn(async () => undefined) };
 	const value = {
+		characterId: "bear",
 		signal: new AbortController().signal,
 		orm: { select: () => ({ from: (table: unknown) => queryResult(table) }) },
 		invalidations,
@@ -122,11 +113,9 @@ function context() {
 		pi,
 		sessions,
 		characterLoader: {
-			getActiveCharacterId: vi.fn(() => "bear"),
 			load: vi.fn(() => character),
 			display: vi.fn(() => ({ id: "bear" })),
 			seed: vi.fn(),
-			activate: vi.fn(),
 			pluginTrust: vi.fn(() => ({ trusted: true })),
 			piResources: vi.fn(() => ({ appendSystemPrompt: "prompt", pluginPaths: [] })),
 			packageLocation: vi.fn((characterId: string) => `/safe/characters/${characterId}`),
@@ -169,7 +158,8 @@ describe("Host conversation projection and routing", () => {
 	beforeEach(() => {
 		dispatcher = new Dispatcher();
 		fixture = context();
-		wireHostHandlers(dispatcher, fixture.value);
+		wireCharacterHandlers(dispatcher, fixture.value);
+		wireSystemHandlers(dispatcher, fixture.value as unknown as SystemCompositionContext);
 	});
 
 	it("opens and branches into security-safe ConversationDetail values", async () => {
@@ -177,6 +167,7 @@ describe("Host conversation projection and routing", () => {
 			dispatcher,
 			RPC.conversation.open.channel,
 		)({
+			characterId: "bear",
 			conversationId: "alpha",
 		});
 		expect(opened).toMatchObject({
@@ -192,6 +183,7 @@ describe("Host conversation projection and routing", () => {
 			dispatcher,
 			RPC.message.branch.channel,
 		)({
+			characterId: "bear",
 			conversationId: "alpha",
 			entryId: "alpha-user",
 		});
@@ -212,6 +204,7 @@ describe("Host conversation projection and routing", () => {
 		fixture.snapshots.alpha.sessionManager = manager;
 
 		const opened = await dispatcher.dispatch(RPC.conversation.open.channel, {
+			characterId: "bear",
 			conversationId: "alpha",
 		});
 		expect(opened.ok).toBe(true);
@@ -231,8 +224,9 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.characterPackagePresenter.reveal).toHaveBeenCalledWith("/safe/characters/bear");
 	});
 
-	it("deduplicates repeated client message ids before calling Pi", async () => {
+	it("forwards request ids to the scoped Pi admission boundary without caching in handlers", async () => {
 		const request = {
+			characterId: "bear",
 			conversationId: "alpha",
 			text: "only once",
 			clientMessageId: "00000000-0000-4000-8000-000000000099",
@@ -241,8 +235,13 @@ describe("Host conversation projection and routing", () => {
 			handler(dispatcher, RPC.message.send.channel)(request),
 			handler(dispatcher, RPC.message.send.channel)(request),
 		]);
-		expect(fixture.pi.send).toHaveBeenCalledTimes(1);
-		expect(fixture.pi.send).toHaveBeenCalledWith("alpha", "only once");
+		expect(fixture.pi.send).toHaveBeenCalledTimes(2);
+		expect(fixture.pi.send).toHaveBeenCalledWith(
+			"alpha",
+			"only once",
+			undefined,
+			request.clientMessageId,
+		);
 	});
 
 	it("moves companion state to its targeted read and keeps boot snapshot O(1)", async () => {
@@ -275,21 +274,26 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.companionSnapshot).not.toHaveBeenCalled();
 	});
 
-	it("returns the authoritative active projection after archive and delete", async () => {
+	it("returns operation receipts without selecting a conversation after archive and delete", async () => {
 		expect(
 			await handler(
 				dispatcher,
 				RPC.conversation.archive.channel,
 			)({
+				characterId: "bear",
 				conversationId: "alpha",
 				archived: true,
 			}),
-		).toEqual({ activeConversation: null });
+		).toEqual({});
 		expect(
 			await handler(dispatcher, RPC.conversation.delete.channel)({ conversationId: "beta" }),
-		).toEqual({ activeConversation: null });
+		).toEqual({});
 		expect(fixture.sessions.archive).toHaveBeenCalledWith("bear", "alpha", true);
 		expect(fixture.sessions.delete).toHaveBeenCalledWith("bear", "beta");
+		expect(fixture.invalidations.invalidate).toHaveBeenLastCalledWith(
+			CacheKey.conversations(),
+			CacheKey.conversation("beta"),
+		);
 		expect(fixture.pi.close).not.toHaveBeenCalled();
 	});
 });

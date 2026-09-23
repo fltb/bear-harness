@@ -6,11 +6,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
 import { CompanionStateStore } from "../src/companion/companion-store.js";
-import type { PiRuntime } from "../src/companion/pi-runtime.js";
+import type { PiRuntime, PiSessionListQuery } from "../src/companion/pi-runtime.js";
 import { SessionCatalog } from "../src/companion/session-catalog.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import {
-	activeConversations,
 	artifactAdoptions,
 	artifacts,
 	canonSources,
@@ -56,13 +55,25 @@ function setup() {
 	];
 	const pi = {
 		list: vi.fn(async () => sessions),
+		listPage: vi.fn(async (query: PiSessionListQuery = {}) => ({
+			sessions: sessions
+				.filter((item) => !query.allowedIds || query.allowedIds.has(item.id))
+				.filter((item) =>
+					(query.title?.trim().toLowerCase().split(/\s+/) ?? []).every((word) =>
+						item.name.toLowerCase().includes(word),
+					),
+				)
+				.sort((left, right) => +right.modified - +left.modified),
+		})),
 		create: vi.fn(),
 		open: vi.fn(async (id: string) => ({ sessionId: id })),
 		rename: vi.fn(),
 		fork: vi.fn(),
 		snapshot: vi.fn(() => undefined),
 		close: vi.fn(async () => undefined),
-		delete: vi.fn(async (_id: string, remove: () => void | Promise<void>) => remove()),
+		delete: vi.fn(async (id: string, remove: (path?: string) => void | Promise<void>) =>
+			remove(sessions.find((session) => session.id === id)?.path),
+		),
 	} as unknown as PiRuntime;
 	const artifactStore = new ArtifactStore(database.orm, join(directory, "artifacts"));
 	const beforeDelete = vi.fn(async () => undefined);
@@ -77,10 +88,6 @@ function setup() {
 			{ id: "beta", companionId: "bear" },
 		])
 		.run();
-	database.orm
-		.insert(activeConversations)
-		.values({ companionId: "bear", conversationId: "alpha" })
-		.run();
 	return { artifactStore, beforeDelete, catalog, database, pi, sessions };
 }
 
@@ -89,7 +96,7 @@ afterEach(() => {
 });
 
 describe("SessionCatalog", () => {
-	it("adds ownership and selects the conversation before Pi opens a new session", async () => {
+	it("registers membership before Pi opens a new session without persisting window selection", async () => {
 		const { catalog, database, pi } = setup();
 		try {
 			vi.mocked(pi.create).mockImplementation(async (_title, beforeOpen) => {
@@ -101,41 +108,43 @@ describe("SessionCatalog", () => {
 				).toEqual({ companion_id: "bear" });
 				expect(
 					database.connection
-						.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
+						.prepare("SELECT name FROM sqlite_master WHERE name = 'active_conversations'")
 						.get(),
-				).toEqual({ conversation_id: "new-session" });
+				).toBeUndefined();
 				return { sessionId: "new-session" } as never;
 			});
-			await catalog.createAndSelect("bear");
+			await catalog.create("bear");
 		} finally {
 			database.close();
 		}
 	});
 
-	it("restores the prior selection when Pi cannot open the new session", async () => {
+	it("rolls back new membership when Pi cannot open the new session", async () => {
 		const { catalog, database, pi } = setup();
 		try {
 			vi.mocked(pi.create).mockImplementation(async (_title, beforeOpen) => {
 				beforeOpen?.("failed-session");
 				throw new Error("model unavailable");
 			});
-			await expect(catalog.createAndSelect("bear")).rejects.toThrow("model unavailable");
+			await expect(catalog.create("bear")).rejects.toThrow("model unavailable");
 			expect(
 				database.connection
 					.prepare("SELECT id FROM conversations WHERE id = 'failed-session'")
 					.get(),
 			).toBeUndefined();
 			expect(
-				database.connection
-					.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
-					.get(),
-			).toEqual({ conversation_id: "alpha" });
+				database.orm
+					.select()
+					.from(conversations)
+					.all()
+					.map(({ id }) => id),
+			).toEqual(["alpha", "beta"]);
 		} finally {
 			database.close();
 		}
 	});
 
-	it("rolls back fork ownership and restores the prior selection when Pi cannot open it", async () => {
+	it("rolls back fork membership when Pi cannot open it", async () => {
 		const { catalog, database, pi } = setup();
 		try {
 			vi.mocked(pi.fork).mockImplementation(async (_sourceId, _entryId, _title, beforeOpen) => {
@@ -148,10 +157,12 @@ describe("SessionCatalog", () => {
 				database.connection.prepare("SELECT id FROM conversations WHERE id = 'failed-fork'").get(),
 			).toBeUndefined();
 			expect(
-				database.connection
-					.prepare("SELECT conversation_id FROM active_conversations WHERE companion_id = 'bear'")
-					.get(),
-			).toEqual({ conversation_id: "alpha" });
+				database.orm
+					.select()
+					.from(conversations)
+					.all()
+					.map(({ id }) => id),
+			).toEqual(["alpha", "beta"]);
 		} finally {
 			database.close();
 		}
@@ -200,8 +211,30 @@ describe("SessionCatalog", () => {
 			expect(pi.delete).not.toHaveBeenCalled();
 			expect(pi.create).not.toHaveBeenCalled();
 			expect(pi.open).not.toHaveBeenCalled();
-			expect(database.orm.select().from(activeConversations).all()).toEqual([]);
 		} finally {
+			database.close();
+		}
+	});
+
+	it("orders archive mutations per session while unrelated sessions remain concurrent", async () => {
+		const { catalog, database, pi } = setup();
+		const gate = Promise.withResolvers<void>();
+		vi.mocked(pi.close).mockImplementation((id) =>
+			id === "alpha" ? gate.promise : Promise.resolve(),
+		);
+		try {
+			const archive = catalog.archive("bear", "alpha", true);
+			await vi.waitFor(() => expect(pi.close).toHaveBeenCalledWith("alpha", "preserve"));
+			const unarchive = catalog.archive("bear", "alpha", false);
+			await catalog.archive("bear", "beta", true);
+			expect((await catalog.list("bear", { archived: true })).map(({ id }) => id)).toEqual([
+				"beta",
+			]);
+			gate.resolve();
+			await Promise.all([archive, unarchive]);
+			expect((await catalog.list("bear")).map(({ id }) => id)).toEqual(["alpha"]);
+		} finally {
+			gate.resolve();
 			database.close();
 		}
 	});
@@ -215,9 +248,7 @@ describe("SessionCatalog", () => {
 			expect(await catalog.delete("bear", "alpha")).toBeUndefined();
 			expect(pi.delete).toHaveBeenCalledOnce();
 			expect(pi.delete).toHaveBeenCalledWith("alpha", expect.any(Function));
-			expect(vi.mocked(pi.delete).mock.invocationCallOrder[0]).toBeLessThan(
-				vi.mocked(pi.list).mock.invocationCallOrder[0] ?? 0,
-			);
+			expect(pi.list).not.toHaveBeenCalled();
 			expect(beforeDelete).toHaveBeenCalledWith("alpha");
 			expect(pi.create).not.toHaveBeenCalled();
 			expect(pi.open).not.toHaveBeenCalled();
@@ -273,6 +304,59 @@ describe("SessionCatalog", () => {
 			await catalog.delete("bear", "beta");
 			expect(existsSync(casPath)).toBe(false);
 		} finally {
+			database.close();
+		}
+	});
+
+	it("waits for target Artifact access before removing its transcript and leaves other Sessions usable", async () => {
+		const { artifactStore, catalog, database, sessions } = setup();
+		const release = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		let access: Promise<void> | undefined;
+		let deletion: Promise<void> | undefined;
+		try {
+			for (const id of ["alpha", "beta"])
+				database.orm
+					.insert(runs)
+					.values({
+						id: `run-${id}`,
+						conversationId: id,
+						triggerEntryId: `entry-${id}`,
+						executorProfile: "pi-default",
+						title: id,
+						instruction: "Work",
+					})
+					.run();
+			const artifact = artifactStore.create({
+				logicalName: "result.txt",
+				mime: "text/plain",
+				buffer: Buffer.from("result"),
+				producerRunId: "run-alpha",
+			});
+			access = artifactStore.withRunAccess("run-alpha", async () => {
+				entered.resolve();
+				await release.promise;
+				expect(artifactStore.get(artifact.id)).not.toBeNull();
+			});
+			await entered.promise;
+			deletion = catalog.delete("bear", "alpha");
+			await artifactStore.withRunAccess("run-beta", async () =>
+				expect(existsSync(sessions[1]!.path)).toBe(true),
+			);
+			expect(existsSync(sessions[0]!.path)).toBe(true);
+			expect(artifactStore.get(artifact.id)).not.toBeNull();
+			release.resolve();
+			await access;
+			await deletion;
+			expect(existsSync(sessions[0]!.path)).toBe(false);
+			expect(existsSync(join(artifactStore.directory, artifact.sha256))).toBe(false);
+			expect(artifactStore.get(artifact.id)).toBeNull();
+			expect(existsSync(sessions[1]!.path)).toBe(true);
+		} finally {
+			release.resolve();
+			await access;
+			await deletion;
+			await artifactStore.close();
 			database.close();
 		}
 	});

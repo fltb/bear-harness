@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "playwright/test";
 import { parse } from "yaml";
-import { projectPiEntries } from "./helpers";
+import { characterRequest, projectPiEntries } from "./helpers";
 
 const enabled = process.env.BEAR_E2E_CHARACTER_QUALITY === "1";
 const modelId = process.env.BEAR_E2E_MODEL_ID ?? "";
@@ -112,7 +112,7 @@ test("configured live model answers the Jizhou adversarial character-quality cor
 	const rpc: LiveRpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);

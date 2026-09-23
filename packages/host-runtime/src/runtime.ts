@@ -1,12 +1,18 @@
 import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type { LivePush, MemoryInspectRequest, MemoryInspectResponse } from "@bear-harness/protocol";
-import { CacheKey, ProviderLoginResponse } from "@bear-harness/protocol/schema";
+import {
+	CacheKey,
+	CHANNEL_CONTRACTS,
+	type Channel,
+	ProviderLoginResponse,
+} from "@bear-harness/protocol/schema";
 import { inspectLocalMemory, type MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import type { Credential as PiCredential, Provider } from "@earendil-works/pi-ai";
-import { eq } from "drizzle-orm";
-import type { ArtifactStore } from "./artifacts/index.js";
+import { isNull, or } from "drizzle-orm";
 import type { ArtifactPresenter } from "./artifacts/presentation.js";
 import { CharacterRuntime } from "./character-runtime.js";
+import { type CharacterResource, CharacterRuntimeRegistry } from "./character-runtime-registry.js";
 import { CharacterDraftService } from "./companion/character-draft-service.js";
 import {
 	CharacterLoader,
@@ -17,20 +23,22 @@ import {
 	type HostCompositionContext,
 	type HostUpdateService,
 	recoverProviderRemovals,
+	type SystemCompositionContext,
 	syncAllProviderModels,
 	syncProviderModels,
-	wireHostHandlers,
+	wireCharacterHandlers,
+	wireSystemHandlers,
 } from "./composition.js";
-import { Dispatcher, type RpcResponse } from "./dispatcher.js";
-import { HostEventLoop, type RuntimeResource } from "./host-event-loop.js";
+import { Dispatcher, normalizeHandlerError, type RpcResponse } from "./dispatcher.js";
+import { assertRuntimeDeletable } from "./external-agents/run-service.js";
 import { ExplicitMemoryFile } from "./memory/explicit-memory.js";
 import { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
 import {
 	type DeepPartial,
-	type TencentDbRuntime,
 	validateLocalEmbedding,
 	validateRemoteEmbedding,
 } from "./memory/tencentdb-runtime.js";
+import { SystemModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import {
@@ -38,18 +46,14 @@ import {
 	type CredentialVault,
 	REMOTE_EMBEDDING_CREDENTIAL_ID,
 } from "./providers/credential-store.js";
-import {
-	type AuditStore,
-	auditKindForRpcMutation,
-	auditReasonCode,
-} from "./security/audit-store.js";
+import { auditKindForRpcMutation, auditReasonCode } from "./security/audit-store.js";
 import { type FsAuditHandle, installFsAudit } from "./security/fs-audit.js";
 import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { CompanionStorageRegistry } from "./storage/companion-storage.js";
 import { loadInstallationId } from "./storage/database.js";
-import type { InvalidationListener } from "./storage/invalidation-hub.js";
-import { activeCharacter } from "./storage/schema.js";
+import { InvalidationHub, type InvalidationListener } from "./storage/invalidation-hub.js";
+import { runs } from "./storage/schema.js";
 
 export interface RuntimeProductConfig {
 	readonly defaultCharacterId: string;
@@ -86,44 +90,45 @@ export interface HostRuntimeOptions {
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
 
-interface InvalidationSubscription {
-	listener: InvalidationListener;
-	stop?: () => void;
-}
-
-interface RoleResource extends RuntimeResource {
+interface RoleResource extends CharacterResource {
 	readonly runtime: CharacterRuntime;
 	readonly dispatcher: Dispatcher;
-	readonly memoryEmbedding: HostCompositionContext["memoryEmbedding"];
 }
 
-/** Installation services plus one physically isolated, replaceable character runtime. */
+/** Installation services and an explicit registry of independently retained characters. */
 export class HostRuntime {
 	readonly dispatcher: Pick<Dispatcher, "dispatch">;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
-	private readonly options: HostRuntimeOptions;
+	readonly memoryEmbedding: HostCompositionContext["memoryEmbedding"];
 	private readonly storage: CompanionStorageRegistry;
 	private readonly providers: ProviderCatalog;
 	private readonly credentials: CredentialStore;
 	private readonly characterLoader: CharacterLoader;
 	private readonly appSettings: AppSettingsStore;
 	private readonly drafts: CharacterDraftService;
+	private readonly models: SystemModelRegistry;
+	private readonly systemInvalidations = new InvalidationHub();
 	private readonly localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
 	private readonly lifetime = new AbortController();
 	private readonly backgroundAttempts = new Set<Promise<void>>();
-	private readonly invalidationSubscriptions = new Set<InvalidationSubscription>();
+	private readonly systemRequests = new Set<Promise<RpcResponse>>();
+	private readonly invalidationListeners = new Set<InvalidationListener>();
 	private readonly livePushListeners = new Set<(event: LivePush) => void>();
-	private readonly lifecycle: HostEventLoop<RoleResource>;
+	private readonly registry: CharacterRuntimeRegistry<RoleResource>;
+	private readonly systemDispatcher: Dispatcher;
+	private readonly systemContext: SystemCompositionContext;
 	private uninstallFsAudit?: FsAuditHandle;
-	private unsubscribeProxyHotReload?: () => void;
 	private started = false;
+	private startPromise?: Promise<void>;
 	private closed = false;
+	private closePromise?: Promise<void>;
+	private shutdownComplete = false;
+
 	get diagnosticsPolicy() {
 		return this.appSettings.loadDiagnostics();
 	}
 
-	constructor(options: HostRuntimeOptions) {
-		this.options = options;
+	constructor(private readonly options: HostRuntimeOptions) {
 		this.storage = new CompanionStorageRegistry(options.dataDir);
 		const systemDb = this.storage.system.orm;
 		this.characterLoader = new CharacterLoader(
@@ -136,302 +141,341 @@ export class HostRuntime {
 		this.localEmbeddingAcquisition = new LocalEmbeddingAcquisitionService({
 			diagnostic: options.systemDiagnostic,
 			layout: this.storage.layout,
-			onStateChange: (state) => {
-				for (const listener of this.livePushListeners)
-					listener({ type: "embeddingAcquisition", state });
-			},
+			onStateChange: (state) => this.publish({ type: "embeddingAcquisition", state }),
 		});
 		this.memoryScope = options.memoryScope ?? {
 			installationId: loadInstallationId(systemDb),
 			userId: "default-user",
 		};
+		this.models = new SystemModelRegistry(
+			systemDb,
+			this.systemInvalidations,
+			this.appSettings,
+			(visit) => this.storage.forEachCompanionDatabase(visit),
+		);
 		this.providers = new ProviderCatalog(
 			this.credentials,
 			this.storage.layout.systemProviders,
 			(providerId) => {
 				this.scheduleBackground("OAuth model reconciliation", async () => {
 					const state = await this.providers.getOAuthSession(providerId);
-					for (const listener of this.livePushListeners)
-						listener({
-							type: "providerLogin",
-							providerId,
-							state: ProviderLoginResponse.parse(state),
-						});
+					this.publish({
+						type: "providerLogin",
+						providerId,
+						state: ProviderLoginResponse.parse(state),
+					});
 					if (state.status === "completed")
-						await syncProviderModels(
-							providerId,
-							this.providers,
-							this.lifecycle.active().runtime.models,
-						);
+						await syncProviderModels(providerId, this.providers, this.models);
 				});
 			},
 			options.nativeProviders,
 		);
 		this.drafts = new CharacterDraftService(systemDb, this.characterLoader);
-
-		const activeId = this.characterLoader.getActiveCharacterId(
-			systemDb,
-			options.productConfig.defaultCharacterId,
+		const defaultCharacter = this.characterLoader.load(options.productConfig.defaultCharacterId);
+		if (!defaultCharacter) throw new Error("default character package missing");
+		this.characterLoader.seed(systemDb, defaultCharacter);
+		this.registry = new CharacterRuntimeRegistry((id, retain) =>
+			this.createRoleResource(id, retain),
 		);
-		const character = this.characterLoader.load(activeId);
-		if (!character) throw new Error(`character package missing: ${activeId}`);
-		const hasPersistedActive = systemDb
-			.select({ id: activeCharacter.characterId })
-			.from(activeCharacter)
-			.where(eq(activeCharacter.singleton, 1))
-			.get();
-		if (hasPersistedActive) this.characterLoader.seed(systemDb, character);
-		else this.characterLoader.activate(systemDb, character);
-		const initialRuntime = this.createCharacterRuntime(character.id);
-		const initial = this.createRoleResource(`${character.id}:1`, initialRuntime);
-		this.lifecycle = new HostEventLoop(initial);
+		this.memoryEmbedding = {
+			validateLocal: (input) => validateLocalEmbedding({ ...input, logger: this.memoryLogger }),
+			validateRemote: (input) => validateRemoteEmbedding({ ...input, logger: this.memoryLogger }),
+			resetRuntimes: () => this.registry.visitOpen((resource) => resource.runtime.resetMemory()),
+			releaseRuntime: (id) =>
+				this.registry.visitOpen((resource) =>
+					resource.characterId === id ? resource.runtime.resetMemory() : undefined,
+				),
+		};
+		this.systemContext = Object.freeze({
+			signal: this.lifetime.signal,
+			systemOrm: systemDb,
+			runnerProbeRoot: join(this.storage.layout.systemProviders, "runner-probes"),
+			runnerProviderRoot: this.storage.layout.systemProviders,
+			piWorkerPath: options.piWorkerPath,
+			invalidations: this.systemInvalidations,
+			livePush: (event: LivePush) => this.publish(event),
+			models: this.models,
+			memoryEmbedding: this.memoryEmbedding,
+			localEmbeddingAcquisition: this.localEmbeddingAcquisition,
+			memoryScope: this.memoryScope,
+			appSettings: this.appSettings,
+			credentials: this.credentials,
+			providers: this.providers,
+			characterLoader: this.characterLoader,
+			drafts: this.drafts,
+			artifactPresenter: options.artifactPresenter,
+			characterPackagePresenter: options.characterPackagePresenter,
+			defaultCharacterId: options.productConfig.defaultCharacterId,
+			updateService: options.updateService,
+			reloadCharacter: (id: string) => this.registry.close(id),
+			seedCharacter: (character: CharacterPackage, origin?: CharacterPackageOrigin) => {
+				this.characterLoader.seed(systemDb, character, origin);
+				this.systemInvalidations.invalidate(CacheKey.characters());
+			},
+			characterDeletionStatus: (id: string) => this.characterDeletionStatus(id),
+			deleteCharacterRuntime: (id: string) => this.deleteCharacterRuntime(id),
+			deleteCharacterPackage: (id: string) => this.deleteCharacterPackage(id),
+		});
+		this.systemDispatcher = new Dispatcher();
+		wireSystemHandlers(this.systemDispatcher, this.systemContext);
+		this.systemDispatcher.seal();
+		this.systemInvalidations.subscribe((notice) => {
+			this.notifyInvalidation(notice);
+			if (this.started && notice.keys.some((key) => key[0] === "settings"))
+				this.reconcileProxy("network proxy hot reload");
+		});
 		this.dispatcher = Object.freeze({
 			dispatch: (channel: string, params: unknown) => this.dispatch(channel, params),
 		});
 	}
 
-	get artifacts(): ArtifactStore {
-		return this.lifecycle.active().runtime.artifacts;
-	}
-	get auditStore(): AuditStore {
-		return this.lifecycle.active().runtime.auditStore;
-	}
-	get memoryRuntime(): TencentDbRuntime {
-		return this.lifecycle.active().runtime.memoryRuntime;
-	}
-	get memoryEmbedding(): HostCompositionContext["memoryEmbedding"] {
-		return this.lifecycle.active().memoryEmbedding;
-	}
-
 	subscribeInvalidations(listener: InvalidationListener): () => void {
-		const subscription: InvalidationSubscription = { listener };
-		this.invalidationSubscriptions.add(subscription);
-		this.bindInvalidationSubscription(subscription);
+		this.invalidationListeners.add(listener);
 		return () => {
-			subscription.stop?.();
-			this.invalidationSubscriptions.delete(subscription);
+			this.invalidationListeners.delete(listener);
 		};
 	}
-
 	subscribeLivePush(listener: (event: LivePush) => void): () => void {
 		this.livePushListeners.add(listener);
-		return () => this.livePushListeners.delete(listener);
+		return () => {
+			this.livePushListeners.delete(listener);
+		};
+	}
+	private notifyInvalidation(notice: Parameters<InvalidationListener>[0]): void {
+		for (const listener of this.invalidationListeners) {
+			try {
+				listener(notice);
+			} catch {
+				/* transient subscriber */
+			}
+		}
+	}
+	private publish(event: LivePush): void {
+		if (this.closed) return;
+		for (const listener of this.livePushListeners) {
+			try {
+				listener(event);
+			} catch {
+				/* transient subscriber */
+			}
+		}
 	}
 
-	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
-		if (this.closed)
-			return Promise.resolve({ ok: false, error: { kind: "unavailable", reason: "host_closed" } });
-		return this.lifecycle.route((resource) => {
-			if (channel.startsWith("diagnostics.")) return resource.dispatcher.dispatch(channel, params);
-			const span = resource.runtime.diagnostics.span("rpc.request", {}, { channel }, true);
-			return span.run(async () => {
-				try {
-					const response = await resource.dispatcher.dispatch(channel, params);
-					span.end(response.ok ? "ok" : "error", response.ok ? undefined : response.error);
-					return response;
-				} catch (error) {
-					span.end("error", error);
-					throw error;
-				}
+	async dispatch(channel: string, params: unknown): Promise<RpcResponse> {
+		if (this.closed) return { ok: false, error: { kind: "unavailable", reason: "host_closed" } };
+		const contract = CHANNEL_CONTRACTS[channel as Channel];
+		if (!contract)
+			return { ok: false, error: { kind: "unavailable", reason: "handler_not_registered" } };
+		// Reject malformed routes before constructing any character resources.
+		const parsed = contract.request.safeParse(params);
+		if (!parsed.success)
+			return { ok: false, error: { kind: "invalid_request", reason: "request_validation_failed" } };
+		if (contract.scope === "system") {
+			const request = this.systemDispatcher.dispatch(channel, parsed.data);
+			this.systemRequests.add(request);
+			try {
+				return await request;
+			} finally {
+				this.systemRequests.delete(request);
+			}
+		}
+		const characterId = (parsed.data as { characterId: string }).characterId;
+		try {
+			return await this.registry.use(characterId, (resource) => {
+				if (channel.startsWith("diagnostics."))
+					return resource.dispatcher.dispatch(channel, parsed.data);
+				const span = resource.runtime.diagnostics.span("rpc.request", {}, { channel }, true);
+				return span.run(async () => {
+					try {
+						const response = await resource.dispatcher.dispatch(channel, parsed.data);
+						span.end(response.ok ? "ok" : "error", response.ok ? undefined : response.error);
+						return response;
+					} catch (error) {
+						span.end("error", error);
+						throw error;
+					}
+				});
 			});
-		});
+		} catch (error) {
+			if (error instanceof Error && error.name === "ProtocolResponseValidationError") throw error;
+			return { ok: false, error: normalizeHandlerError(error) };
+		}
 	}
 
-	characterDeletionStatus(characterId: string): {
-		characterId: string;
-		active: boolean;
-		default: boolean;
-		runtimePresent: boolean;
-		packagePresent: boolean;
-	} {
+	/** Trusted Host operations pin an explicitly identified resource until completion. */
+	useCharacter<T>(
+		characterId: string,
+		operation: (runtime: CharacterRuntime) => T | Promise<T>,
+	): Promise<T> {
+		return this.registry.use(characterId, (resource) => operation(resource.runtime));
+	}
+	characterDeletionStatus(characterId: string) {
 		if (this.closed) throw { kind: "unavailable", reason: "host_closed" };
-		const runtimePresent = this.storage.hasCompanionRuntime(characterId);
 		return {
 			characterId,
-			active: characterId === this.lifecycle.active().characterId,
 			default: characterId === this.options.productConfig.defaultCharacterId,
-			runtimePresent,
+			runtimePresent: this.storage.hasCompanionRuntime(characterId),
 			packagePresent: this.characterLoader.load(characterId) !== null,
 		};
 	}
-
-	deleteCharacterRuntime(characterId: string): { deleted: boolean } {
+	async deleteCharacterRuntime(characterId: string): Promise<{ deleted: boolean }> {
 		if (this.closed) throw { kind: "unavailable", reason: "host_closed" };
-		if (characterId === this.lifecycle.active().characterId) {
-			throw { kind: "conflict", reason: "character_runtime_active" };
-		}
-		return { deleted: this.storage.deleteCompanionRuntime(characterId) };
+		const deleted = await this.registry.deleteRuntime(characterId, () => {
+			// Recheck cold runtimes and deletion requests that arrived during an ordinary
+			// close. The registry still fences admissions while this temporary DB is open.
+			if (this.storage.hasCompanionRuntime(characterId)) {
+				const storage = this.storage.open(characterId);
+				try {
+					assertRuntimeDeletable(storage.database.orm);
+				} finally {
+					this.storage.release(storage);
+				}
+			}
+			return this.storage.deleteCompanionRuntime(characterId);
+		});
+		this.systemInvalidations.invalidate(
+			CacheKey.characterRuntime(characterId),
+			CacheKey.characters(),
+		);
+		return { deleted };
 	}
-
 	deleteCharacterPackage(characterId: string): { deleted: boolean } {
 		if (this.closed) throw { kind: "unavailable", reason: "host_closed" };
-		return {
-			deleted: this.characterLoader.deletePackage(this.storage.system.orm, characterId, {
-				defaultCharacterId: this.options.productConfig.defaultCharacterId,
-				runtimeExists: this.storage.hasCompanionRuntime(characterId),
-			}),
-		};
+		const deleted = this.characterLoader.deletePackage(this.storage.system.orm, characterId, {
+			defaultCharacterId: this.options.productConfig.defaultCharacterId,
+			runtimeExists: this.storage.hasCompanionRuntime(characterId),
+		});
+		this.systemInvalidations.invalidate(CacheKey.characters());
+		return { deleted };
 	}
 
-	async start(): Promise<void> {
-		if (this.started) return;
+	start(): Promise<void> {
+		if (this.closed) return Promise.reject(new Error("Host runtime is closed"));
+		if (this.started) return Promise.resolve();
+		if (this.startPromise) return this.startPromise;
+		this.startPromise = this.startResources().finally(() => {
+			this.startPromise = undefined;
+		});
+		return this.startPromise;
+	}
+
+	private async startResources(): Promise<void> {
+		for (const seed of this.options.sessionProviderCredentials ?? [])
+			await this.credentials.set(
+				seed.providerId,
+				{ piCredential: seed.credential },
+				{ sessionOnly: true },
+			);
 		if (this.closed) throw new Error("Host runtime is closed");
-		const role = this.lifecycle.active().runtime;
-		try {
-			for (const seed of this.options.sessionProviderCredentials ?? []) {
-				await this.credentials.set(
-					seed.providerId,
-					{ piCredential: seed.credential },
-					{ sessionOnly: true },
-				);
-			}
-			this.uninstallFsAudit = installFsAudit({
-				auditRoots: this.options.auditRoots ?? [this.options.dataDir],
-				logger: this.options.logger,
-				onHit: (hit) => {
-					try {
-						const auditStore = this.lifecycle.active().runtime.auditStore;
-						void auditStore
-							.append("fsop", "delete_attempt", JSON.stringify(hit))
-							.catch(() => undefined);
-					} catch {
-						// Role shutdown can race with a late filesystem callback.
-					}
-				},
-			});
-			await recoverProviderRemovals(this.providers, role.models);
-			await syncAllProviderModels(this.providers, role.models);
-			await role.recoverExternalRuns();
-			this.started = true;
-			this.bindRoleInternalSubscriptions();
-			void role.auditStore.prune().catch(() => undefined);
-			this.reconcileProxy("network proxy reconciliation");
-			this.scheduleRoleReconciliation();
-		} catch (error) {
-			this.started = false;
-			await role.pi.closeAll().catch(() => undefined);
-			this.uninstallFsAudit?.uninstall();
-			this.uninstallFsAudit = undefined;
-			throw error;
-		}
+		await recoverProviderRemovals(this.providers, this.models);
+		if (this.closed) throw new Error("Host runtime is closed");
+		await syncAllProviderModels(this.providers, this.models);
+		if (this.closed) throw new Error("Host runtime is closed");
+		this.uninstallFsAudit = installFsAudit({
+			auditRoots: this.options.auditRoots ?? [this.options.dataDir],
+			onHit: (hit) =>
+				this.options.systemDiagnostic?.({
+					stage: "fs.delete",
+					outcome: hit.operation,
+					durationMs: 0,
+					bytes: 0,
+				}),
+		});
+		this.started = true;
+		this.reconcileProxy("network proxy reconciliation");
+		// Recovery is independent of UI selection. Existing character runtimes remain isolated.
+		const recovering: string[] = [];
+		this.storage.forEachCompanionDatabase((database, characterId) => {
+			if (
+				database
+					.select({ id: runs.id })
+					.from(runs)
+					.where(or(isNull(runs.completedAt), isNull(runs.resultReportedAt)))
+					.limit(1)
+					.get()
+			)
+				recovering.push(characterId);
+		});
+		for (const id of recovering)
+			if (this.characterLoader.load(id))
+				await this.registry.use(id, (resource) => resource.runtime.recoverExternalRuns());
 	}
 
-	async close(): Promise<void> {
-		if (this.closed) return;
+	close(): Promise<void> {
+		if (this.shutdownComplete) return Promise.resolve();
+		if (this.closePromise) return this.closePromise;
 		this.closed = true;
-		this.lifetime.abort();
 		this.started = false;
-		let failure: unknown;
-		try {
-			await this.localEmbeddingAcquisition.close();
-		} catch (error) {
-			failure = error;
-		}
+		this.lifetime.abort();
+		this.closePromise = this.closeResources().finally(() => {
+			this.closePromise = undefined;
+		});
+		return this.closePromise;
+	}
+	private async closeResources(): Promise<void> {
+		// Stop producers immediately; admitted work may need this cancellation to finish.
+		const shutdown = this.registry.shutdown();
+		const acquisition = this.localEmbeddingAcquisition.close();
+		const stopping = Promise.allSettled([shutdown, acquisition]);
+		await Promise.allSettled([
+			this.startPromise,
+			...this.systemRequests,
+			...this.backgroundAttempts,
+		]);
+		const results = await stopping;
+		const errors = results.flatMap((result) =>
+			result.status === "rejected" ? [result.reason] : [],
+		);
+		if (errors.length) throw new AggregateError(errors, "Host resource shutdown failed");
 		this.providers.dispose();
-		this.unsubscribeProxyHotReload?.();
-		for (const subscription of this.invalidationSubscriptions) subscription.stop?.();
-		this.invalidationSubscriptions.clear();
-		this.livePushListeners.clear();
-		await Promise.allSettled(this.backgroundAttempts.values());
-		this.backgroundAttempts.clear();
-		try {
-			await this.lifecycle.close();
-		} catch (error) {
-			failure ??= error;
-		}
 		this.uninstallFsAudit?.uninstall();
 		await this.characterLoader.closeImports();
 		this.storage.close();
-		if (failure) throw failure;
+		this.invalidationListeners.clear();
+		this.livePushListeners.clear();
+		this.shutdownComplete = true;
 	}
 
-	private createRoleResource(runtimeId: string, runtime: CharacterRuntime): RoleResource {
-		const memoryEmbedding: HostCompositionContext["memoryEmbedding"] = {
-			validateLocal: (input) => validateLocalEmbedding({ ...input, logger: this.memoryLogger }),
-			validateRemote: (input) => validateRemoteEmbedding({ ...input, logger: this.memoryLogger }),
-			resetRuntimes: () => runtime.resetMemory(),
-			releaseRuntime: (companionId) =>
-				companionId === runtime.companionId ? runtime.resetMemory() : Promise.resolve(),
-		};
-		const inspectMemory = async (request: MemoryInspectRequest): Promise<MemoryInspectResponse> => {
-			const status = this.characterDeletionStatus(request.characterId);
-			if (!status.packagePresent) throw { kind: "not_found", reason: "character_package_missing" };
-			const base = {
-				characterId: request.characterId,
-				relationshipMemoryEnabled: this.appSettings.load().memoryVectorService.enabled,
-			};
-			if (!status.runtimePresent) return { ...base, explicit: "", items: [] };
-			const paths = this.storage.layout.companion(request.characterId);
-			for (const directory of request.kind === "explicit"
-				? [paths.memory]
-				: [paths.memory, paths.tdaiMemory]) {
-				try {
-					const stat = await lstat(directory);
-					if (!stat.isDirectory() || stat.isSymbolicLink()) {
-						throw { kind: "unavailable", reason: "character_memory_path_unsafe" };
-					}
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-				}
-			}
-			if (request.kind === "explicit") {
-				const explicit = await new ExplicitMemoryFile(
-					this.options.dataDir,
-					this.memoryScope.userId,
-					request.characterId,
-				).read();
-				return { ...base, explicit, items: [] };
-			}
-			const page = await inspectLocalMemory(paths.tdaiMemory, {
-				kind: request.kind,
-				offset: request.offset,
-				limit: request.limit,
-			});
-			return { ...base, ...page };
-		};
+	private async createRoleResource(
+		characterId: string,
+		retain: (resource: RoleResource) => void,
+	): Promise<RoleResource> {
+		const character = this.characterLoader.load(characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		this.characterLoader.seed(this.storage.system.orm, character);
+		const storage = this.storage.open(characterId);
+		let runtime: CharacterRuntime;
+		try {
+			runtime = this.createCharacterRuntime(storage);
+		} catch (error) {
+			this.storage.release(storage);
+			throw error;
+		}
+		const stopInvalidations = runtime.invalidations.subscribe((notice) =>
+			this.notifyInvalidation(notice),
+		);
 		const context: HostCompositionContext = Object.freeze({
-			signal: this.lifetime.signal,
-			systemOrm: this.storage.system.orm,
+			...this.systemContext,
+			characterId,
+			signal: runtime.signal,
 			orm: runtime.db.orm,
 			invalidations: runtime.invalidations,
-			livePush: (event: LivePush) => {
-				for (const listener of this.livePushListeners) listener(event);
-			},
 			onboarding: runtime.onboarding,
 			pi: runtime.pi,
 			sessions: runtime.sessions,
 			models: runtime.models,
-			memoryEmbedding,
-			inspectMemory,
-			localEmbeddingAcquisition: this.localEmbeddingAcquisition,
-			memoryScope: this.memoryScope,
-			appSettings: this.appSettings,
+			inspectMemory: (request: MemoryInspectRequest) => this.inspectMemory(runtime, request),
 			diagnostics: runtime.diagnostics,
 			diagnosticDirectories: {
 				system: this.options.systemDiagnosticsDirectory ?? this.storage.layout.systemDiagnostics,
 				character: runtime.diagnostics.root,
-				memory: this.storage.layout.companion(runtime.companionId).tdaiMemory,
+				memory: storage.paths.tdaiMemory,
 			},
-			credentials: this.credentials,
 			externalAgentRuns: runtime.externalAgentRuns,
 			artifacts: runtime.artifacts,
-			artifactPresenter: this.options.artifactPresenter,
-			characterPackagePresenter: this.options.characterPackagePresenter,
 			canon: runtime.canon,
-			providers: this.providers,
-			characterLoader: this.characterLoader,
-			drafts: this.drafts,
 			companionStore: runtime.companionStore,
-			defaultCharacterId: this.options.productConfig.defaultCharacterId,
-			updateService: this.options.updateService,
 			auditStore: runtime.auditStore,
-			activateCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
-				this.activateCharacter(next, origin),
-			seedCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
-				this.seedCharacter(next, origin),
-			characterDeletionStatus: (characterId: string) => this.characterDeletionStatus(characterId),
-			deleteCharacterRuntime: (characterId: string) => this.deleteCharacterRuntime(characterId),
-			deleteCharacterPackage: (characterId: string) => this.deleteCharacterPackage(characterId),
 		});
 		const dispatcher = new Dispatcher({
 			onDispatchResult: ({ channel, operation, outcome, error }) => {
@@ -466,37 +510,46 @@ export class HostRuntime {
 				runtime.invalidations.invalidate(CacheKey.audit());
 			},
 		});
-		wireHostHandlers(dispatcher, context);
-		return Object.freeze({
-			runtimeId,
-			characterId: runtime.companionId,
+		const resource = Object.freeze({
+			characterId,
 			runtime,
 			dispatcher,
-			memoryEmbedding,
+			stop: () => runtime.stop(),
+			verifyDelete: () => runtime.externalAgentRuns.assertRuntimeDeletable(),
 			close: async () => {
-				let failure: unknown;
-				try {
-					await runtime.close();
-				} catch (error) {
-					failure = error;
-				}
-				try {
-					this.storage.closeCompanion(runtime.companionId);
-				} catch (error) {
-					failure ??= error;
-				}
-				if (failure) throw failure;
+				await runtime.close();
+				stopInvalidations();
+				this.storage.release(storage);
 			},
 		});
+		retain(resource);
+		await runtime.artifacts.initMaintenance();
+		wireCharacterHandlers(dispatcher, context);
+		dispatcher.seal();
+		runtime.models.seedFromSystemDefaults(characterId, this.providers.modelProjectionFacts());
+		this.scheduleBackground("character reconciliation", () =>
+			this.registry.use(characterId, async (resource) => {
+				await resource.runtime.recoverExternalRuns();
+				if (resource.runtime.signal.aborted) return;
+				await resource.runtime.canon.indexPending(characterId);
+				await resource.runtime.externalAgentRuns.reconcilePending(undefined, {
+					signal: resource.runtime.signal,
+				});
+			}),
+		);
+		return resource;
 	}
 
-	private createCharacterRuntime(companionId: string): CharacterRuntime {
+	private createCharacterRuntime(
+		storage: import("./storage/companion-storage.js").CompanionStorageHandle,
+	): CharacterRuntime {
 		return new CharacterRuntime({
 			systemLaunchId: this.options.systemLaunchId,
 			dataRoot: this.options.dataDir,
 			systemProviderDir: this.storage.layout.systemProviders,
-			storage: this.storage.open(companionId),
+			storage,
 			systemDb: this.storage.system.orm,
+			systemInvalidations: this.systemInvalidations,
 			characterLoader: this.characterLoader,
 			providers: this.providers,
 			credentials: this.credentials,
@@ -523,69 +576,45 @@ export class HostRuntime {
 		});
 	}
 
-	private async activateCharacter(
-		character: CharacterPackage,
-		origin?: CharacterPackageOrigin,
-	): Promise<void> {
-		const previousRuntimeId = this.lifecycle.snapshot().activeRuntimeId;
-		await this.lifecycle.activate(
-			character.id,
-			async (runtimeId) => {
-				this.characterLoader.seed(this.storage.system.orm, character, origin);
-				let runtime: CharacterRuntime | undefined;
-				try {
-					runtime = this.createCharacterRuntime(character.id);
-					runtime.models.seedFromSystemDefaults(
-						character.id,
-						this.providers.modelProjectionFacts(),
-					);
-					await runtime.recoverExternalRuns();
-					this.characterLoader.activate(this.storage.system.orm, character, origin);
-					return this.createRoleResource(runtimeId, runtime);
-				} catch (error) {
-					await runtime?.close().catch(() => undefined);
-					this.storage.closeCompanion(character.id);
-					throw error;
+	private async inspectMemory(
+		runtime: CharacterRuntime,
+		request: MemoryInspectRequest,
+	): Promise<MemoryInspectResponse> {
+		const status = this.characterDeletionStatus(request.characterId);
+		if (!status.packagePresent) throw { kind: "not_found", reason: "character_package_missing" };
+		const base = {
+			characterId: request.characterId,
+			relationshipMemoryEnabled: runtime.relationshipMemoryEnabled,
+		};
+		if (!status.runtimePresent) return { ...base, explicit: "", items: [] };
+		const paths = this.storage.layout.companion(request.characterId);
+		for (const directory of request.kind === "explicit"
+			? [paths.memory]
+			: [paths.memory, paths.tdaiMemory]) {
+			try {
+				const stat = await lstat(directory);
+				if (!stat.isDirectory() || stat.isSymbolicLink()) {
+					throw { kind: "unavailable", reason: "character_memory_path_unsafe" };
 				}
-			},
-			(resource) => {
-				this.seedCharacter(character, origin);
-				resource.runtime.companionStore.reconcileSchema(character.id, character.state);
-				resource.runtime.canon.syncPackage(character.id, character.canon);
-				const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
-				resource.runtime.pi.configure(this.characterLoader.piResources(character, trust.trusted));
-			},
-		);
-		if (this.lifecycle.snapshot().activeRuntimeId === previousRuntimeId) return;
-		for (const subscription of this.invalidationSubscriptions) {
-			subscription.stop?.();
-			this.bindInvalidationSubscription(subscription);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
 		}
-		this.bindRoleInternalSubscriptions();
-		if (this.started) this.scheduleRoleReconciliation();
+		if (request.kind === "explicit") {
+			const explicit = await new ExplicitMemoryFile(
+				this.options.dataDir,
+				this.memoryScope.userId,
+				request.characterId,
+			).read();
+			return { ...base, explicit, items: [] };
+		}
+		const page = await inspectLocalMemory(paths.tdaiMemory, {
+			kind: request.kind,
+			offset: request.offset,
+			limit: request.limit,
+		});
+		return { ...base, ...page };
 	}
-
-	private seedCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): void {
-		this.characterLoader.seed(this.storage.system.orm, character, origin);
-	}
-
-	private bindInvalidationSubscription(subscription: InvalidationSubscription): void {
-		subscription.stop = this.lifecycle
-			.active()
-			.runtime.invalidations.subscribe(subscription.listener);
-	}
-
-	private bindRoleInternalSubscriptions(): void {
-		this.unsubscribeProxyHotReload?.();
-		if (!this.started) return;
-		this.unsubscribeProxyHotReload = this.lifecycle
-			.active()
-			.runtime.invalidations.subscribe(({ keys }) => {
-				if (!keys.some((key) => key[0] === "settings")) return;
-				this.reconcileProxy("network proxy hot reload");
-			});
-	}
-
 	private reconcileProxy(label: string): void {
 		const proxy = this.appSettings.load().networkProxy;
 		this.scheduleBackground(label, () =>
@@ -593,19 +622,6 @@ export class HostRuntime {
 				resolve: this.options.systemProxyResolver,
 				logger: this.options.logger,
 			}),
-		);
-	}
-
-	private scheduleRoleReconciliation(): void {
-		const role = this.lifecycle.active().runtime;
-		this.scheduleBackground("provider model reconciliation", () =>
-			syncAllProviderModels(this.providers, role.models),
-		);
-		this.scheduleBackground("Canon embedding reconciliation", () =>
-			role.canon.indexPending(role.companionId),
-		);
-		this.scheduleBackground("external-agent result reconciliation", (signal) =>
-			role.externalAgentRuns.reconcilePending(undefined, { signal }),
 		);
 	}
 

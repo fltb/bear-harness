@@ -1,4 +1,7 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type {
+	CharacterClient as CompanionClient,
+	CompanionClient as HostClient,
+} from "@bear-harness/companion-client";
 import type { QueryClient } from "@tanstack/solid-query";
 import { type Accessor, createMemo } from "solid-js";
 import type {
@@ -16,6 +19,7 @@ import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 import type { CanonApi, CharacterApi } from "./supplementary-api.js";
 
 interface CharacterApiContext {
+	hostClient: HostClient;
 	client: CompanionClient;
 	queryClient: QueryClient;
 	cacheRevision(): number;
@@ -24,7 +28,7 @@ interface CharacterApiContext {
 	refreshCharacters(): Promise<unknown>;
 	refreshSnapshot(): Promise<unknown>;
 	resyncOnboarding(): Promise<unknown>;
-	switchCharacterConversations(): Promise<unknown>;
+	selectCharacter(id: string): Promise<void>;
 	invalidateConversations(): Promise<unknown> | void;
 	invalidateActiveConversation(): Promise<unknown> | void;
 }
@@ -32,7 +36,11 @@ interface CharacterApiContext {
 export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 	const { client, queryClient } = c;
 	const api: CharacterApi = {
-		inspectMemory: (request) => invoke(client, () => client.memory.inspect(request)),
+		inspectMemory: (request) => invoke(client, () => c.hostClient.memory.inspect(request)),
+		memoryGet: (characterId) =>
+			invoke(client, () => c.hostClient.character.memoryGet({ characterId })),
+		memorySet: (characterId, enabled) =>
+			invoke(client, () => c.hostClient.character.memorySet({ characterId, enabled })),
 		observeTrust: (characterId) => {
 			const query = createRpcQuery({
 				client: queryClient,
@@ -99,25 +107,7 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				key: queryKeys.characters,
 				request: () => listAllCharacters(client),
 			}),
-		activate: async (characterId) => {
-			await invoke(client, () => client.character.activate({ characterId }));
-			// These projections belong to the previous character. Unlike a routine
-			// same-character refetch, activation must make them unknown until the
-			// newly active character's authoritative responses arrive.
-			// Cancel retired task reads before these resets can start new-scope reads.
-			await Promise.all([
-				queryClient.cancelQueries({ queryKey: queryKeys.runs }),
-				...[
-					queryKeys.onboarding,
-					queryKeys.modelDefaults,
-					queryKeys.characters,
-					queryKeys.snapshot,
-				].map((queryKey) =>
-					queryClient.resetQueries({ queryKey, exact: true }, { throwOnError: true }),
-				),
-				c.switchCharacterConversations(),
-			]);
-		},
+		activate: c.selectCharacter,
 		import: async (file) => {
 			const { uploadId } = await invoke(client, () => client.character.archiveBegin({}));
 			try {

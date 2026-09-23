@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { activeConversationId, projectPiEntries } from "./helpers";
+import { activeConversationId, characterRequest, projectPiEntries } from "./helpers";
 
 const enabled = process.env.BEAR_E2E_LIVE_MODEL === "1";
 const providerId = process.env.BEAR_E2E_PROVIDER_ID ?? "";
@@ -110,7 +110,7 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -193,7 +193,7 @@ test("configured live model preserves authority through switch, refresh, and Sto
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -345,7 +345,7 @@ test("configured live model answers in character and obeys the explicit-memory b
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -397,7 +397,9 @@ test("configured live model answers in character and obeys the explicit-memory b
 
 	await send("我今天穿蓝色外套，只是随口说，不需要记住。请自然回应。 ");
 	await expect.poll(async () => (await assistants()).length, { timeout: liveReplyTimeout }).toBe(1);
-	await expect.poll(async () => (await open()).live.isStreaming).toBe(false);
+	await expect
+		.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
+		.toBe(false);
 	expect(JSON.stringify((await open()).branch.entries)).not.toContain(
 		'"toolName":"explicit_memory"',
 	);
@@ -414,7 +416,9 @@ test("configured live model answers in character and obeys the explicit-memory b
 	await expect
 		.poll(async () => (await assistants()).at(-1), { timeout: liveReplyTimeout })
 		.toContain("极昼");
-	await expect.poll(async () => (await open()).live.isStreaming).toBe(false);
+	await expect
+		.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
+		.toBe(false);
 });
 
 test("configured live model answers through the native conversation journey", async ({
@@ -449,7 +453,7 @@ test("configured live model answers through the native conversation journey", as
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -675,7 +679,7 @@ test("configured live model answers a natural story with scene expression media 
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -900,7 +904,7 @@ test("configured live model answers naturally with rendered structured content",
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -1035,7 +1039,7 @@ test("both configured release models survive ten natural mixed-content turns", a
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
 		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
-			data,
+			data: characterRequest(channel, data, "jizhou"),
 		});
 		const envelope = await response.json();
 		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);

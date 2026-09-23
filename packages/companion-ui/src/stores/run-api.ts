@@ -1,4 +1,4 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type { CharacterClient as CompanionClient } from "@bear-harness/companion-client";
 import { CancelledError, createQuery, type QueryClient } from "@tanstack/solid-query";
 import type { RunGetResponse, RunInfo, RunListData, RunListRequest } from "./ipc.js";
 import { invoke } from "./ipc.js";

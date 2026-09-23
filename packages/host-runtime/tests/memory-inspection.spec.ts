@@ -83,13 +83,13 @@ function seedRecords(directory: string, contents: string[]) {
 describe("character memory inspection", () => {
 	it("reads an inactive character's actual memories without selecting it or mixing same-id records", async () => {
 		const { runtime, root, layout } = setup();
-		const first = layout.companion("jizhou");
+		const first = layout.ensureCompanionDirectories("jizhou");
 		const second = layout.ensureCompanionDirectories("other");
 		seedRecords(first.tdaiMemory, ["第一位角色：喜欢热茶"]);
 		seedRecords(second.tdaiMemory, ["第二位角色：喜欢冷咖啡"]);
 		await new ExplicitMemoryFile(root, "user", "jizhou").edit(undefined, "第一位角色的明确约定");
 		await new ExplicitMemoryFile(root, "user", "other").edit(undefined, "第二位角色的明确约定");
-		const before = await runtime.dispatch("character.get", {});
+		const before = await runtime.dispatch("character.get", { characterId: "jizhou" });
 		const records = await runtime.dispatch("memory.inspect", { characterId: "other" });
 		expect(records).toMatchObject({
 			ok: true,
@@ -109,12 +109,12 @@ describe("character memory inspection", () => {
 			ok: true,
 			data: { characterId: "other", explicit: "第二位角色的明确约定\n" },
 		});
-		expect(await runtime.dispatch("character.get", {})).toEqual(before);
+		expect(await runtime.dispatch("character.get", { characterId: "jizhou" })).toEqual(before);
 	});
 
 	it("paginates tied record timestamps and scene profiles without dropping entries", async () => {
 		const { runtime, layout } = setup();
-		const paths = layout.companion("jizhou");
+		const paths = layout.ensureCompanionDirectories("jizhou");
 		seedRecords(paths.tdaiMemory, ["旧条目", "新条目"]);
 		expect(
 			await runtime.dispatch("memory.inspect", { characterId: "jizhou", limit: 1 }),
@@ -157,7 +157,7 @@ describe("character memory inspection", () => {
 
 	it("keeps explicit and automatic memory readable independently when the other domain is damaged", async () => {
 		const { runtime, layout, root } = setup();
-		const paths = layout.companion("jizhou");
+		const paths = layout.ensureCompanionDirectories("jizhou");
 		seedRecords(paths.tdaiMemory, ["完整的自动记忆"]);
 		writeFileSync(paths.explicitMemory, "x".repeat(4001));
 		expect(await runtime.dispatch("memory.inspect", { characterId: "jizhou" })).toMatchObject({
@@ -183,7 +183,7 @@ describe("character memory inspection", () => {
 
 	it("rejects cross-character symlinks and unknown ownership instead of returning foreign content", async () => {
 		const { runtime, layout, root } = setup();
-		const paths = layout.companion("jizhou");
+		const paths = layout.ensureCompanionDirectories("jizhou");
 		const other = layout.ensureCompanionDirectories("other");
 		seedRecords(other.tdaiMemory, ["另一位角色的秘密"]);
 		await new ExplicitMemoryFile(root, "user", "other").edit(undefined, "另一位角色的明确记忆");
@@ -205,17 +205,19 @@ describe("character memory inspection", () => {
 		expect(existsSync(join(root, "companions", "unknown-character"))).toBe(false);
 	});
 
-	it("does not initialize a store or runtime just to view empty memory", async () => {
+	it("does not start the automatic memory store when reading empty memory", async () => {
 		const { runtime, layout } = setup();
 		expect(await runtime.dispatch("memory.inspect", { characterId: "other" })).toMatchObject({
 			ok: true,
 			data: { characterId: "other", items: [] },
 		});
-		expect(existsSync(layout.companion("other").root)).toBe(false);
+		expect(existsSync(join(layout.companion("other").tdaiMemory, "vectors.db"))).toBe(false);
 		expect(await runtime.dispatch("memory.inspect", { characterId: "jizhou" })).toMatchObject({
 			ok: true,
 			data: { items: [] },
 		});
-		expect(existsSync(join(layout.companion("jizhou").tdaiMemory, "vectors.db"))).toBe(false);
+		expect(
+			existsSync(join(layout.ensureCompanionDirectories("jizhou").tdaiMemory, "vectors.db")),
+		).toBe(false);
 	});
 });

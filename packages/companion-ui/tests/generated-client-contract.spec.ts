@@ -1,4 +1,4 @@
-import { createCompanionClient } from "@bear-harness/companion-client";
+import { bindCharacterClient, createCompanionClient } from "@bear-harness/companion-client";
 import { QueryClient } from "@tanstack/solid-query";
 import { describe, expect, it, vi } from "vitest";
 import { withRpcMutations } from "../src/stores/mutation-client.js";
@@ -53,12 +53,12 @@ describe("schema-derived companion client", () => {
 		const stream = client.invalidations.stream(controller.signal)[Symbol.asyncIterator]();
 		const first = stream.next();
 		receive({
-			notices: [{ keys: [["providers"]] }],
+			notices: [{ scope: "system", keys: [["providers"]] }],
 		});
-		expect((await first).value).toEqual({ keys: [["providers"]] });
+		expect((await first).value).toEqual({ scope: "system", keys: [["providers"]] });
 		const next = stream.next();
 		receive({
-			notices: [{ keys: [["settings"]] }],
+			notices: [{ scope: "system", keys: [["settings"]] }],
 		});
 		expect((await next).value?.keys).toEqual([["settings"]]);
 		expect(listenInvalidations).toHaveBeenCalledTimes(1);
@@ -74,7 +74,7 @@ describe("schema-derived companion client", () => {
 		const client = createCompanionClient({
 			invoke: vi.fn(),
 			listenInvalidations: (receive) => {
-				receive({ notices: [{ keys: [] }] });
+				receive({ notices: [{ scope: "system", keys: [] }] });
 				return stop;
 			},
 		});
@@ -90,5 +90,37 @@ describe("schema-derived companion client", () => {
 				.next(),
 		).rejects.toThrow("does not support invalidation push");
 		expect(invoke).not.toHaveBeenCalled();
+	});
+	it("binds character requests to the captured identity while preserving system endpoint targets", async () => {
+		const invoke = vi.fn(async (endpoint) => ({
+			ok: true,
+			data:
+				endpoint.channel === "character.pluginTrustConfirm"
+					? {
+							trust: {
+								characterId: "target-package",
+								origin: "local",
+								pluginHash: "hash",
+								pluginsPresent: true,
+								trusted: true,
+							},
+						}
+					: {},
+		}));
+		const client = createCompanionClient({ invoke });
+		const first = bindCharacterClient(client, "first-character");
+		const second = bindCharacterClient(client, "second-character");
+		await first.message.abort({ conversationId: "same-session" });
+		await second.message.abort({ conversationId: "same-session" });
+		expect(invoke.mock.calls.map((call) => call[1])).toEqual([
+			{ characterId: "first-character", conversationId: "same-session" },
+			{ characterId: "second-character", conversationId: "same-session" },
+		]);
+		await first.character.pluginTrustConfirm({ characterId: "target-package" });
+		expect(invoke.mock.calls.at(-1)?.[1]).toEqual({ characterId: "target-package" });
+		await expect(
+			client.message.abort({ conversationId: "same-session" } as never),
+		).rejects.toThrow();
+		expect(invoke).toHaveBeenCalledTimes(3);
 	});
 });

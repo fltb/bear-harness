@@ -1,5 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/App.js";
@@ -103,10 +104,10 @@ describe("Pi message actions", () => {
 		client.conversation.open = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: session as never }),
 		);
-		client.conversation.activeGet = vi.fn(() =>
+		client.conversation.open = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: { activeConversation: session } as never,
+				data: session as never,
 			}),
 		);
 		const correctionRequest = Promise.withResolvers<{
@@ -136,6 +137,9 @@ describe("Pi message actions", () => {
 		);
 
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const firstUser = (await screen.findByText("First question")).closest("article") as HTMLElement;
 		const firstAssistant = screen.getByText("First reply").closest("article") as HTMLElement;
@@ -239,6 +243,7 @@ describe("Pi message actions", () => {
 		).toBeEnabled();
 		await user.click(within(correctedMessage).getByRole("button", { name: zhCN.messages.branch }));
 		expect(client.message.branch).toHaveBeenCalledWith({
+			characterId: "test-character",
 			conversationId: "conversation-1",
 			entryId: "assistant-corrected",
 		});
@@ -249,13 +254,16 @@ describe("Pi message actions", () => {
 		const { client: failingClient } = createTestClient();
 		failingClient.snapshot.get = client.snapshot.get;
 		failingClient.conversation.open = client.conversation.open;
-		failingClient.conversation.activeGet = client.conversation.activeGet;
+		failingClient.conversation.open = client.conversation.open;
 		failingClient.conversation.list = client.conversation.list;
 		failingClient.message.branch = vi.fn(() => Promise.reject(new Error("fork unavailable")));
 		failingClient.message.correct = vi.fn(() =>
 			Promise.reject(new Error("correction unavailable")),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={failingClient} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const sourceMessage = (await screen.findByText("Second reply")).closest(
 			"article",
 		) as HTMLElement;
@@ -332,14 +340,31 @@ describe("Pi message actions", () => {
 				},
 			}),
 		);
-		client.conversation.activeGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { activeConversation: session } }),
-		);
+		client.conversation.list = vi.fn(async () => ({
+			ok: true as const,
+			data: {
+				conversations: [
+					{
+						conversationId: "conversation-1",
+						name: "History",
+						created: "2026-01-01",
+						modified: "2026-01-01",
+						messageCount: 1,
+						firstMessage: "",
+						isStreaming: false,
+					},
+				],
+			},
+		}));
+		client.conversation.open = vi.fn(() => Promise.resolve({ ok: true as const, data: session }));
 		client.conversation.history = vi
 			.fn()
 			.mockRejectedValueOnce(new Error("History storage unavailable"))
 			.mockResolvedValueOnce({ ok: true, data: { entries: [older] } });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await screen.findByText("Current native question");
 		expect(screen.queryByText("Earlier native question")).toBeNull();
 		await user.click(screen.getByRole("button", { name: zhCN.messages.native.loadOlder }));

@@ -13,6 +13,7 @@ import type { Credential } from "@earendil-works/pi-ai";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
+import { piAcpDialect } from "./acp-dialect.js";
 import { AcpExecutorController } from "./acp-executor.js";
 import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
@@ -58,7 +59,7 @@ export function seedPiAcpProfile(db: AppDatabase): void {
 		.values({
 			id: PI_ACP_PROFILE_ID,
 			profileType: "pi",
-			capabilityJson: { transport: "acp", worker: "pi" },
+			configJson: { transport: "acp", worker: "pi" },
 		})
 		.onConflictDoNothing()
 		.run();
@@ -67,7 +68,7 @@ export function seedPiAcpProfile(db: AppDatabase): void {
 /** Packaged Pi external agent. */
 export class PiAcpAdapter extends AcpExecutorController {
 	constructor(
-		private readonly runDb: AppDatabase,
+		private readonly runDb: AppDatabase | undefined,
 		private readonly authDir: string,
 		private readonly workerPath = fileURLToPath(new URL("./pi-acp-worker.js", import.meta.url)),
 		private readonly bundledGit?: { shellPath: string; pathEntries: string[] },
@@ -86,7 +87,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 			launchedAt: new Date().toISOString(),
 		};
 		this.runDb
-			.insert(runManifests)
+			?.insert(runManifests)
 			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
 			.run();
 		await super.launch(request);
@@ -99,10 +100,14 @@ export class PiAcpAdapter extends AcpExecutorController {
 		const sessionDir = ensurePrivateDirectory(resolve(runRoot, "pi-session"));
 		const executablePath = piWorkerPath(this.bundledGit?.pathEntries);
 		return {
+			dialect: piAcpDialect,
 			command: realpathSync.native(process.execPath),
 			args: [realpathSync.native(this.workerPath)],
 			cwd,
+			writablePaths: [sessionDir],
+			executablePaths: this.bundledGit ? [this.bundledGit.shellPath] : [],
 			readOnlyPaths: [
+				authDir,
 				...piWorkerDependencyPaths(this.workerPath),
 				...(request.task.readOnlyPaths ?? []),
 			],

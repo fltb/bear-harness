@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import type { LivePush, ModelThinkingLevel, PiProjectionVersion } from "@bear-harness/protocol";
 import type { RecallResult } from "@bear-harness/tdai-core";
@@ -32,6 +32,15 @@ import { loadRolePluginTools } from "./role-resources.js";
 
 type Images = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
 type ModelRoute = { providerId: string; modelId: string };
+type SessionActivity = Omit<Extract<LivePush, { type: "conversationActivity" }>, "characterId">;
+
+export interface PiSessionListQuery {
+	allowedIds?: ReadonlySet<string>;
+	title?: string;
+	cursor?: string;
+	limit?: number;
+}
+type SessionResource = { id: string; path: string; modified: Date };
 
 export interface PiRoleResources {
 	appendSystemPrompt: string;
@@ -45,6 +54,7 @@ export interface PiRuntimeOptions {
 	models: { getModels(): Promise<ModelRuntime> };
 	character(): CharacterPackage;
 	store: CompanionStateStore;
+	runners?: HostToolInput["runners"];
 	delegate: HostToolInput["delegate"];
 	runRead: HostToolInput["runRead"];
 	runControl: HostToolInput["runControl"];
@@ -74,11 +84,11 @@ export interface PiRuntimeOptions {
 	titleChanged?(sessionId: string, title: string): void;
 	sessionDiscarded?(sessionId: string): void;
 	sessionEvent?(sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion): void;
-	sessionActivity?(event: Extract<LivePush, { type: "conversationActivity" }>): void;
+	sessionActivity?(event: SessionActivity): void;
 	systemPrompt?: string;
 }
 
-type OpenSession = { session: AgentSession; unsubscribe: () => void };
+type OpenSession = { session: AgentSession; unsubscribe: () => void; titleAbort?: AbortController };
 type PendingResponseGuidance = {
 	operation: symbol;
 	prompt: string;
@@ -89,12 +99,19 @@ type ExternalDelivery = {
 	dispose(): void;
 };
 const RESULT_ACK_TIMEOUT_MS = 5_000;
+const MAX_ACCEPTED_REQUESTS_PER_SESSION = 1_000;
 
 /** Resource registry around Pi-owned sessions. It never mirrors Pi conversation state. */
 export class PiRuntime {
 	private readonly sessions = new Map<string, OpenSession>();
 	private readonly opening = new Map<string, Promise<AgentSession>>();
 	private readonly deleting = new Map<string, Promise<void>>();
+	/** Undefined retains exclusion after failed disposal so a later close can retry the same handle. */
+	private readonly closing = new Map<string, Promise<void> | undefined>();
+	/** Bounded transport receipts only: resolved on Pi admission, never on turn completion. */
+	private readonly acceptedRequests = new WeakMap<AgentSession, Map<string, Promise<void>>>();
+	private closed = false;
+	private closePromise: Promise<void> | undefined;
 	private readonly sessionEvents = new Map<string, PQueue>();
 	private readonly pendingResponseGuidance = new Map<string, PendingResponseGuidance>();
 	private readonly externalDeliveries = new WeakMap<AgentSession, Map<string, ExternalDelivery>>();
@@ -116,29 +133,87 @@ export class PiRuntime {
 	}
 
 	async list(): Promise<SessionInfo[]> {
-		const found = new Map(
-			(await SessionManager.list(this.cwd, this.sessionDir)).map((item) => [item.id, item]),
-		);
-		for (const { session } of this.sessions.values()) {
-			if (found.has(session.sessionId)) continue;
-			const manager = session.sessionManager;
-			const created = new Date(manager.getHeader()?.timestamp ?? Date.now());
-			found.set(session.sessionId, {
-				path: manager.getSessionFile() ?? "",
-				id: session.sessionId,
+		return (await this.listPage({ limit: Number.MAX_SAFE_INTEGER })).sessions;
+	}
+
+	/** Page native resources before loading their transcripts; no title or message cache is retained. */
+	async listPage(
+		query: PiSessionListQuery = {},
+	): Promise<{ sessions: SessionInfo[]; nextCursor?: string }> {
+		const resources = await this.sessionResources(query.allowedIds);
+		const cursorIndex = query.cursor ? resources.findIndex(({ id }) => id === query.cursor) : -1;
+		if (query.cursor && cursorIndex < 0)
+			throw { kind: "not_found", reason: "conversation_cursor_not_found" };
+		const words = query.title?.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean) ?? [];
+		const limit = query.limit ?? 50;
+		const sessions: SessionInfo[] = [];
+		for (const resource of resources.slice(cursorIndex + 1)) {
+			let manager: SessionManager;
+			try {
+				manager =
+					this.sessions.get(resource.id)?.session.sessionManager ??
+					(await this.openSessionFile(resource));
+			} catch {
+				// Discovery, like Pi's native list, skips inaccessible or damaged resources.
+				continue;
+			}
+			const name = manager.getSessionName();
+			if (!words.every((word) => name?.toLocaleLowerCase().includes(word))) continue;
+			const messages = manager.getEntries().filter((entry) => entry.type === "message");
+			const firstUser = messages.find((entry) => entry.message.role === "user");
+			const firstMessage =
+				firstUser?.message.role === "user" ? userMessagePrompt(firstUser.message.content).text : "";
+			sessions.push({
+				path: resource.path,
+				id: resource.id,
 				cwd: manager.getCwd(),
-				name: session.sessionName,
-				created,
-				modified: created,
-				messageCount: 0,
-				firstMessage: "",
+				name,
+				created: new Date(manager.getHeader()?.timestamp ?? resource.modified),
+				modified: resource.modified,
+				messageCount: messages.length,
+				firstMessage,
 				allMessagesText: "",
 			});
+			if (sessions.length > limit) break;
 		}
-		return [...found.values()].sort((left, right) => +right.modified - +left.modified);
+		const page = sessions.slice(0, limit);
+		const last = page.at(-1);
+		return {
+			sessions: page,
+			...(sessions.length > limit && last ? { nextCursor: last.id } : {}),
+		};
+	}
+
+	private async sessionResources(allowedIds?: ReadonlySet<string>): Promise<SessionResource[]> {
+		const resources = new Map<string, SessionResource>();
+		for (const file of await readdir(this.sessionDir, { withFileTypes: true })) {
+			if (!file.isFile()) continue;
+			const id = nativeSessionId(file.name);
+			if (!id || (allowedIds && !allowedIds.has(id))) continue;
+			const path = resolve(this.sessionDir, file.name);
+			const info = await lstat(path).catch(() => undefined);
+			if (!info?.isFile() || info.isSymbolicLink()) continue;
+			if (resources.has(id)) throw { kind: "conflict", reason: "pi_session_resource_ambiguous" };
+			resources.set(id, { id, path, modified: info.mtime });
+		}
+		for (const { session } of this.sessions.values()) {
+			if (resources.has(session.sessionId) || (allowedIds && !allowedIds.has(session.sessionId)))
+				continue;
+			const header = session.sessionManager.getHeader();
+			if (!header) continue;
+			resources.set(session.sessionId, {
+				id: session.sessionId,
+				path: session.sessionManager.getSessionFile() ?? "",
+				modified: new Date(header.timestamp),
+			});
+		}
+		return [...resources.values()].sort(
+			(left, right) => +right.modified - +left.modified || left.id.localeCompare(right.id),
+		);
 	}
 
 	async create(name = "", beforeOpen?: (sessionId: string) => void): Promise<AgentSession> {
+		this.requireOpen();
 		const manager = SessionManager.create(this.cwd, this.sessionDir);
 		if (name) manager.appendSessionInfo(name);
 		beforeOpen?.(manager.getSessionId());
@@ -153,22 +228,44 @@ export class PiRuntime {
 		return this.sessions.get(sessionId)?.session;
 	}
 
-	async send(sessionId: string, text: string, images?: Images): Promise<void> {
+	async send(
+		sessionId: string,
+		text: string,
+		images?: Images,
+		clientMessageId?: string,
+	): Promise<void> {
 		return this.inSessionSequence(sessionId, async () => {
 			const session = await this.requireSessionNow(sessionId);
+			const receipts = this.acceptedRequests.get(session) ?? new Map<string, Promise<void>>();
+			const existing = clientMessageId ? receipts.get(clientMessageId) : undefined;
+			if (existing) return existing;
 			if (session.isStreaming) throw { kind: "unavailable", reason: "pi_session_busy" };
 			const shouldName =
 				!session.sessionName && !session.messages.some(({ role }) => role === "user");
 			let turn!: Promise<void>;
-			await new Promise<void>((accepted, rejected) => {
+			const accepted = new Promise<void>((resolve, reject) => {
 				turn = session.prompt(text, {
 					...(images?.length ? { images } : {}),
 					streamingBehavior: "followUp",
 					preflightResult: (ok) =>
-						ok ? accepted() : rejected({ kind: "unavailable", reason: "pi_prompt_rejected" }),
+						ok ? resolve() : reject({ kind: "unavailable", reason: "pi_prompt_rejected" }),
 				});
-				void turn.catch(rejected);
+				void turn.catch(reject);
 			});
+			if (clientMessageId) {
+				this.acceptedRequests.set(session, receipts);
+				receipts.set(clientMessageId, accepted);
+				if (receipts.size > MAX_ACCEPTED_REQUESTS_PER_SESSION) {
+					const oldest = receipts.keys().next().value;
+					if (oldest) receipts.delete(oldest);
+				}
+			}
+			try {
+				await accepted;
+			} catch (error) {
+				if (clientMessageId) receipts.delete(clientMessageId);
+				throw error;
+			}
 			if (shouldName)
 				void turn.then(() => this.nameFirstTurn(session, text)).catch(() => undefined);
 		});
@@ -460,7 +557,28 @@ export class PiRuntime {
 		sessionId: string,
 		disposition: PiSessionCloseDisposition = "discard-unpersisted",
 	): Promise<void> {
-		return this.inSessionSequence(sessionId, () => this.closeNow(sessionId, disposition));
+		this.requireOpen();
+		if (this.deleting.has(sessionId)) throw { kind: "unavailable", reason: "pi_session_deleting" };
+		return this.closeSession(sessionId, disposition);
+	}
+
+	private closeSession(sessionId: string, disposition: PiSessionCloseDisposition): Promise<void> {
+		const pending = this.closing.get(sessionId);
+		if (pending) return pending;
+		const closing = this.inSessionSequence(
+			sessionId,
+			() => this.closeNow(sessionId, disposition),
+			true,
+		)
+			.then(() => {
+				if (this.closing.get(sessionId) === closing) this.closing.delete(sessionId);
+			})
+			.catch((error: unknown) => {
+				if (this.closing.get(sessionId) === closing) this.closing.set(sessionId, undefined);
+				throw error;
+			});
+		this.closing.set(sessionId, closing);
+		return closing;
 	}
 
 	private async closeNow(
@@ -469,75 +587,131 @@ export class PiRuntime {
 	): Promise<void> {
 		const session = await this.current(sessionId).catch(() => undefined);
 		if (!session) return;
+		const handle = this.sessions.get(sessionId);
 		const manager = session.sessionManager;
 		const sessionFile = manager.getSessionFile();
-		const unmaterialized = Boolean(sessionFile && !existsSync(sessionFile));
+		handle?.titleAbort?.abort();
 		session.abortCompaction();
 		session.abortBranchSummary();
-		let aborted = false;
+		// Abort can materialize the first user/assistant turn. Judge emptiness only afterwards.
+		await session.abort();
+		await this.options.memory.drain(sessionId);
 		if (disposition === "preserve") {
 			if (!sessionFile) throw { kind: "unavailable", reason: "pi_session_not_persistable" };
-			if (unmaterialized) {
-				await session.abort();
-				aborted = true;
-				await materializeSession(manager, sessionFile);
-			}
+			if (!existsSync(sessionFile)) await materializeSession(manager, sessionFile);
 		}
-		const handle = this.sessions.get(sessionId);
-		this.sessions.delete(sessionId);
 		const deliveries = this.externalDeliveries.get(session);
 		if (deliveries) {
 			for (const operation of deliveries.values()) operation.dispose();
 			this.externalDeliveries.delete(session);
 		}
-		try {
-			if (!aborted) await session.abort();
-			await this.options.memory.drain(sessionId);
-		} finally {
-			handle?.unsubscribe();
-			session.dispose();
-			if (disposition === "discard-unpersisted" && unmaterialized)
-				this.options.sessionDiscarded?.(sessionId);
-		}
+		// Retain the exact owner and exclusion if abort, drain, or persistence fails.
+		session.dispose();
+		handle?.unsubscribe();
+		this.sessions.delete(sessionId);
+		this.acceptedRequests.delete(session);
+		if (disposition === "discard-unpersisted" && sessionFile && !existsSync(sessionFile))
+			this.options.sessionDiscarded?.(sessionId);
 	}
 
-	async closeAll(): Promise<void> {
-		const ids = new Set([...this.sessions.keys(), ...this.opening.keys()]);
-		await Promise.all([
-			...this.deleting.values(),
-			...[...ids].filter((id) => !this.deleting.has(id)).map((id) => this.close(id)),
+	closeAll(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
+		const ids = new Set([
+			...this.sessions.keys(),
+			...this.opening.keys(),
+			...this.sessionEvents.keys(),
+			...this.closing.keys(),
 		]);
+		this.closePromise = Promise.allSettled([
+			...this.deleting.values(),
+			...[...ids]
+				.filter((id) => !this.deleting.has(id))
+				.map((id) => this.closeSession(id, "discard-unpersisted")),
+		])
+			.then((results) => {
+				const failed = results.find((result) => result.status === "rejected");
+				if (failed?.status === "rejected") throw failed.reason;
+			})
+			.finally(() => {
+				this.closePromise = undefined;
+			});
+		return this.closePromise;
 	}
 
-	async delete(sessionId: string, remove: () => void | Promise<void>): Promise<void> {
+	/** Terminal resource fence: admitted Host work cannot reopen a Session after teardown starts. */
+	shutdown(): Promise<void> {
+		this.closed = true;
+		return this.closeAll();
+	}
+
+	async delete(
+		sessionId: string,
+		remove: (sessionPath?: string) => void | Promise<void>,
+	): Promise<void> {
+		this.requireOpen();
 		const pending = this.deleting.get(sessionId);
 		if (pending) return pending;
-		const deletion = (async () => {
-			await this.inSessionSequence(
-				sessionId,
-				async () => {
+		const deletion = this.inSessionSequence(
+			sessionId,
+			async () => {
+				const open = await this.current(sessionId).catch(() => undefined);
+				const manager =
+					open?.sessionManager ??
+					(await this.loadManager(sessionId).catch((error: unknown) => {
+						if (isSessionNotFound(error)) return undefined;
+						throw error;
+					}));
+				try {
 					await this.closeNow(sessionId);
-					await remove();
-				},
-				true,
-			);
-		})().finally(() => this.deleting.delete(sessionId));
+				} catch (error) {
+					this.closing.set(sessionId, undefined);
+					throw error;
+				}
+				this.closing.delete(sessionId);
+				await remove(manager?.getSessionFile());
+			},
+			true,
+		).finally(() => this.deleting.delete(sessionId));
 		this.deleting.set(sessionId, deletion);
 		return deletion;
 	}
 
+	private requireOpen(): void {
+		if (this.closed) throw { kind: "unavailable", reason: "pi_runtime_closed" };
+		if (this.closePromise) throw { kind: "unavailable", reason: "pi_runtime_closing" };
+	}
+
 	requireAvailable(sessionId: string): void {
+		this.requireOpen();
 		if (this.deleting.has(sessionId)) {
 			throw { kind: "unavailable", reason: "pi_session_deleting" };
+		}
+		if (this.closing.has(sessionId)) {
+			throw { kind: "unavailable", reason: "pi_session_closing" };
 		}
 	}
 
 	private async loadManager(sessionId: string): Promise<SessionManager> {
-		const match = (await SessionManager.list(this.cwd, this.sessionDir)).find(
-			(item) => item.id === sessionId,
+		const files = (await readdir(this.sessionDir, { withFileTypes: true })).filter(
+			(entry) => entry.isFile() && nativeSessionId(entry.name) === sessionId,
 		);
-		if (!match?.path) throw { kind: "not_found", reason: "pi_session_not_found" };
-		return SessionManager.open(match.path, this.sessionDir, this.cwd);
+		const file = files[0];
+		if (!file) throw { kind: "not_found", reason: "pi_session_not_found" };
+		if (files.length > 1) throw { kind: "conflict", reason: "pi_session_resource_ambiguous" };
+		return this.openSessionFile({ id: sessionId, path: resolve(this.sessionDir, file.name) });
+	}
+
+	private async openSessionFile(
+		resource: Pick<SessionResource, "id" | "path">,
+	): Promise<SessionManager> {
+		const info = await lstat(resource.path);
+		if (!info.isFile() || info.isSymbolicLink() || info.size === 0)
+			throw { kind: "not_found", reason: "pi_session_not_found" };
+		const manager = SessionManager.open(resource.path, this.sessionDir, this.cwd);
+		const header = manager.getHeader();
+		if (manager.getSessionId() !== resource.id || !header?.cwd || resolve(header.cwd) !== this.cwd)
+			throw { kind: "not_found", reason: "pi_session_not_found" };
+		return manager;
 	}
 
 	private async requireSessionNow(sessionId: string): Promise<AgentSession> {
@@ -638,6 +812,7 @@ export class PiRuntime {
 	}
 
 	private async openManager(manager: SessionManager): Promise<AgentSession> {
+		this.requireOpen();
 		const id = manager.getSessionId();
 		const current = this.sessions.get(id)?.session;
 		if (current) return current;
@@ -755,11 +930,15 @@ export class PiRuntime {
 		const model = route && models.getModel(route.providerId, route.modelId);
 		if (!model) throw { kind: "unavailable", reason: "provider_auth_required" };
 		hostTools = registerHostTools({
+			runners: this.options.runners,
 			sessionId: () => sessionId,
 			entryId: () => manager.getLeafId() ?? sessionId,
 			character: () => character,
 			store: this.options.store,
-			delegate: this.options.delegate,
+			delegate: (...args) => {
+				this.requireAvailable(sessionId);
+				return this.options.delegate(...args);
+			},
 			runRead: this.options.runRead,
 			runControl: this.options.runControl,
 			canon: (query, limit, moduleId) => this.options.canon(companionId, query, limit, moduleId),
@@ -916,27 +1095,48 @@ export class PiRuntime {
 	}
 
 	private async nameFirstTurn(session: AgentSession, text: string): Promise<void> {
+		const handle = this.sessions.get(session.sessionId);
 		const model = session.model;
-		if (!model || session.sessionName) return;
-		const result = await session.modelRuntime.completeSimple(
-			model,
-			{
-				systemPrompt:
-					"Write a concise title in the user's language. Return only the title, without quotes.",
-				messages: [{ role: "user", content: text, timestamp: Date.now() }],
-			},
-			{ maxTokens: 40, reasoning: "minimal" },
-		);
-		const title = result.content
-			.flatMap((part) => (part.type === "text" ? [part.text] : []))
-			.join("")
-			.replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
-			.replace(/[\r\n]+/g, " ")
-			.trim()
-			.slice(0, 80);
-		if (!title || session.sessionName) return;
-		session.setSessionName(title);
-		this.options.titleChanged?.(session.sessionId, title);
+		if (
+			!model ||
+			!handle ||
+			handle.session !== session ||
+			session.sessionName ||
+			handle.titleAbort ||
+			this.closed ||
+			this.closing.has(session.sessionId) ||
+			this.deleting.has(session.sessionId)
+		)
+			return;
+		const controller = new AbortController();
+		handle.titleAbort = controller;
+		try {
+			const result = await session.modelRuntime.completeSimple(
+				model,
+				{
+					systemPrompt:
+						"Write a concise title in the user's language. Return only the title, without quotes.",
+					messages: [{ role: "user", content: text, timestamp: Date.now() }],
+				},
+				{ maxTokens: 40, reasoning: "minimal", signal: controller.signal },
+			);
+			if (controller.signal.aborted) return;
+			const title = result.content
+				.flatMap((part) => (part.type === "text" ? [part.text] : []))
+				.join("")
+				.replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
+				.replace(/[\r\n]+/g, " ")
+				.trim()
+				.slice(0, 80);
+			if (!title) return;
+			await this.inSessionSequence(session.sessionId, () => {
+				if (this.sessions.get(session.sessionId) !== handle || session.sessionName) return;
+				session.setSessionName(title);
+				this.options.titleChanged?.(session.sessionId, title);
+			});
+		} finally {
+			if (handle.titleAbort === controller) delete handle.titleAbort;
+		}
 	}
 }
 
@@ -977,4 +1177,20 @@ function userMessagePrompt(content: Extract<AgentMessage, { role: "user" }>["con
 		text: text.join(""),
 		...(images.length ? { images } : {}),
 	};
+}
+
+function isSessionNotFound(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"reason" in error &&
+		error.reason === "pi_session_not_found"
+	);
+}
+
+/** Pi-created transcript names are resource locators, never conversation-content authority. */
+function nativeSessionId(fileName: string): string | undefined {
+	return /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\.jsonl$/u.exec(
+		fileName,
+	)?.[1];
 }

@@ -148,6 +148,7 @@ export const CacheKey = Object.freeze({
 	settings: () => ["settings"] as const,
 	settingsCapabilities: () => ["settings", "capabilities"] as const,
 	characters: () => ["characters"] as const,
+	characterRuntime: (characterId: string) => ["character", "runtime", characterId] as const,
 	characterPackage: (characterId: string) => ["character", "package", characterId] as const,
 	characterDeletionStatus: (characterId: string) =>
 		["character", "deletionStatus", characterId] as const,
@@ -175,6 +176,7 @@ export const CacheKeySchema = z.union([
 	z.tuple([z.literal("settings"), z.literal("capabilities")]),
 	z.tuple([z.literal("characters")]),
 	z.tuple([z.literal("character"), z.literal("package"), CacheIdentity]),
+	z.tuple([z.literal("character"), z.literal("runtime"), CacheIdentity]),
 	z.tuple([z.literal("character"), z.literal("deletionStatus"), CacheIdentity]),
 	z.tuple([z.literal("canon"), z.literal("sources"), CacheIdentity]),
 	z.tuple([z.literal("canon"), z.literal("modules"), CacheIdentity]),
@@ -191,9 +193,14 @@ export const CacheKeySchema = z.union([
 ]);
 export type CacheKey = z.infer<typeof CacheKeySchema>;
 
-export const InvalidationNotice = z.strictObject({
-	keys: z.array(CacheKeySchema).min(1).max(256),
-});
+export const InvalidationNotice = z.discriminatedUnion("scope", [
+	z.strictObject({ scope: z.literal("system"), keys: z.array(CacheKeySchema).min(1).max(256) }),
+	z.strictObject({
+		scope: z.literal("character"),
+		characterId: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+		keys: z.array(CacheKeySchema).min(1).max(256),
+	}),
+]);
 export const InvalidationBatch = z.strictObject({
 	notices: z.array(InvalidationNotice).max(MAX_ARRAY_LENGTH),
 });
@@ -226,7 +233,6 @@ export const CharacterSummary = z.strictObject({
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
 	subtitle: z.string().max(MAX_STRING_LENGTH),
 	avatarUrl: z.string().min(1).max(100_000).optional(),
-	active: z.boolean(),
 });
 export const CharacterListRequest = z.strictObject({
 	cursor: z.string().min(1).max(64).optional(),
@@ -475,9 +481,6 @@ const CharacterPackageId = z
 	.min(1)
 	.max(64)
 	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
-export const CharacterActivateRequest = z.strictObject({
-	characterId: CharacterPackageId,
-});
 export const CharacterPackageGetRequest = z.strictObject({
 	characterId: CharacterPackageId,
 });
@@ -508,7 +511,6 @@ export const CharacterDeletionStatusGetRequest = z.strictObject({
 });
 export const CharacterDeletionStatus = z.strictObject({
 	characterId: CharacterDeletionId,
-	active: z.boolean(),
 	default: z.boolean(),
 	runtimePresent: z.boolean(),
 	packagePresent: z.boolean(),
@@ -677,10 +679,6 @@ export const ConversationListResponse = z.strictObject({
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().optional(),
 });
-export const ConversationActiveGetRequest = z.strictObject({});
-export const ConversationSelectRequest = z.strictObject({
-	conversationId: ConversationId,
-});
 export const ConversationOpenRequest = z.strictObject({
 	conversationId: ConversationId,
 });
@@ -763,9 +761,6 @@ export const ConversationDetail = z.strictObject({
 		hasMoreBefore: z.boolean(),
 	}),
 	live: PiLiveSnapshot,
-});
-export const ConversationActiveResponse = z.strictObject({
-	activeConversation: ConversationDetail.nullable(),
 });
 export const ConversationOpenResponse = ConversationDetail;
 export const ConversationCreateResponse = ConversationDetail;
@@ -1367,6 +1362,61 @@ export const ModelDisableRequest = ModelRoute;
 // External agents
 // ---------------------------------------------------------------------------
 
+export const RunnerKind = z.enum(["pi", "codex", "custom"]);
+export const RunnerInfo = z.strictObject({
+	runnerId: z.string().min(1).max(64),
+	kind: RunnerKind,
+	name: z.string().min(1).max(100),
+	description: z.string().max(2000),
+	useWhen: z.string().max(2000),
+	limitations: z.string().max(2000),
+	enabled: z.boolean(),
+	configured: z.boolean(),
+});
+export const RunnerEnvironment = z.strictObject({
+	name: z
+		.string()
+		.regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+		.max(100),
+	value: z.string().max(8192).optional(),
+	secret: z.boolean(),
+});
+export const CustomRunnerConfiguration = z.strictObject({
+	command: z.string().min(1).max(4096),
+	args: z.array(z.string().max(4096)).max(64),
+	environment: z.array(RunnerEnvironment).max(64),
+	dependencyPaths: z.array(z.string().min(1).max(4096)).max(16).default([]),
+	authMethodId: z.string().min(1).max(256).optional(),
+});
+export const RunnerProfile = RunnerInfo.extend({
+	configuration: CustomRunnerConfiguration.optional(),
+});
+export const RunnerListRequest = z.strictObject({});
+export const RunnerListResponse = z.strictObject({ items: z.array(RunnerProfile).max(100) });
+export const RunnerSaveRequest = z.strictObject({
+	runnerId: z.string().min(1).max(64).optional(),
+	name: z.string().min(1).max(100),
+	description: z.string().max(2000),
+	useWhen: z.string().max(2000),
+	limitations: z.string().max(2000),
+	enabled: z.boolean(),
+	configuration: CustomRunnerConfiguration.optional(),
+});
+export const RunnerSaveResponse = z.strictObject({ runner: RunnerProfile });
+export const RunnerIdRequest = z.strictObject({ runnerId: z.string().min(1).max(64) });
+export const RunnerTestResponse = z.strictObject({
+	protocolVersion: z.number().int(),
+	name: z.string(),
+	version: z.string(),
+	authenticated: z.boolean(),
+	authMethods: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+	capabilities: z.strictObject({
+		loadSession: z.boolean(),
+		resume: z.boolean(),
+		steer: z.boolean(),
+	}),
+});
+
 export const ExternalAgentCandidate = z.strictObject({
 	candidatePath: z.string().min(1),
 	canonicalPath: z.string().min(1).nullable(),
@@ -1456,13 +1506,7 @@ export const RunAction = z.enum([
 	"respondPermission",
 	"retryDelivery",
 ]);
-export const ArtifactStatus = z.enum([
-	"created",
-	"verified",
-	"verification_failed",
-	"adopted",
-	"saved",
-]);
+export const ArtifactVerification = z.enum(["pending", "verified", "failed"]);
 export const RunEvidenceSummary = z.strictObject({
 	kind: z.string().min(1).max(128),
 	title: z.string().min(1).max(128).optional(),
@@ -1476,7 +1520,9 @@ export const ArtifactSummary = z.strictObject({
 	mime: z.string().min(1).max(255),
 	bytes: z.number().int().safe().nonnegative(),
 	sha256: z.string().regex(/^[0-9a-f]{64}$/),
-	status: ArtifactStatus,
+	verification: ArtifactVerification,
+	saved: z.boolean(),
+	adopted: z.boolean(),
 	createdAt: WireTimestamp,
 });
 export const RunPermission = z.strictObject({
@@ -1539,7 +1585,31 @@ export const RunGetRequest = z.strictObject({
 	cursor: z.string().min(1).max(256).optional(),
 	limit: z.number().int().min(1).max(100).optional(),
 });
+export const RunProvenance = z.strictObject({
+	entries: z
+		.array(
+			z.strictObject({
+				executor: z.enum(["pi-acp", "codex", "custom"]),
+				profileId: z.string().min(1).max(64),
+				launchedAt: WireTimestamp,
+				version: z
+					.string()
+					.min(1)
+					.max(128)
+					.regex(/^[^\r\n]+$/)
+					.optional(),
+				sha256: z
+					.string()
+					.regex(/^[0-9a-f]{64}$/)
+					.optional(),
+			}),
+		)
+		.max(20),
+	unavailableCount: z.number().int().min(0).max(20),
+	hasMore: z.boolean(),
+});
 export const RunGetResponse = z.strictObject({
+	provenance: RunProvenance,
 	run: Run,
 	instruction: z.string(),
 	inputPaths: z.array(z.string().min(1)),
@@ -1951,6 +2021,7 @@ export const CompanionStateUpdateRequest = z.strictObject({
 	conversationId: ConversationId,
 	changes: z.array(CompanionStateChange).min(1).max(50),
 });
+export const BootstrapResponse = z.strictObject({ defaultCharacterId: CharacterPackageId });
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
 	onboarding: OnboardingResponse,
@@ -1961,12 +2032,14 @@ export const SnapshotResponse = z.strictObject({
 export const LivePush = z.discriminatedUnion("type", [
 	z.strictObject({
 		type: z.literal("pi"),
+		characterId: CharacterPackageId,
 		conversationId: ConversationId,
 		event: PiAgentSessionEvent,
 		version: PiProjectionVersion.optional(),
 	}),
 	z.strictObject({
 		type: z.literal("conversationActivity"),
+		characterId: CharacterPackageId,
 		conversationId: ConversationId,
 		operationId: z.string().min(1).max(256),
 		activity: z.enum(["memory_recall", "context", "memory_capture"]),
@@ -1976,10 +2049,11 @@ export const LivePush = z.discriminatedUnion("type", [
 	}),
 	z.strictObject({
 		type: z.literal("companionState"),
+		characterId: CharacterPackageId,
 		conversationId: ConversationId,
 		state: CompanionStateResponse,
 	}),
-	z.strictObject({ type: z.literal("run"), companionId: CharacterDisplay.shape.id, run: Run }),
+	z.strictObject({ type: z.literal("run"), characterId: CharacterPackageId, run: Run }),
 	z.strictObject({
 		type: z.literal("embeddingAcquisition"),
 		state: LocalEmbeddingAcquisitionState,
@@ -2002,8 +2076,10 @@ export interface RpcEndpoint<
 	ChannelName extends string = string,
 	Request extends Schema = Schema,
 	Response extends Schema = Schema,
+	Scope extends "system" | "character" = "system" | "character",
 > {
 	readonly kind: "rpc";
+	readonly scope: Scope;
 	readonly operation: "query" | "mutation";
 	readonly channel: ChannelName;
 	readonly request: Request;
@@ -2018,28 +2094,76 @@ const endpoint = <
 	request: Request,
 	response: Response,
 	operation: "query" | "mutation",
-): RpcEndpoint<ChannelName, Request, Response> => ({
+): RpcEndpoint<ChannelName, Request, Response, "system"> => ({
 	kind: "rpc",
+	scope: "system",
 	operation,
 	channel,
 	request,
 	response,
 });
 
+function withCharacterId(request: Schema): Schema {
+	if (request instanceof z.ZodObject)
+		return request.safeExtend({ characterId: CharacterPackageId });
+	if (request instanceof z.ZodDiscriminatedUnion)
+		return z.union(request.options.map((option) => withCharacterId(option as Schema)));
+	throw new Error("Character endpoint payload must be an object or discriminated object union");
+}
+
+/** Add explicit ownership to a character endpoint without duplicating payload schemas. */
+const characterEndpoint = <
+	const ChannelName extends string,
+	Request extends Schema,
+	Response extends Schema,
+>(
+	channel: ChannelName,
+	request: Request,
+	response: Response,
+	operation: "query" | "mutation",
+): RpcEndpoint<
+	ChannelName,
+	z.ZodType<
+		z.infer<Request> extends Record<string, never>
+			? { characterId: string }
+			: z.infer<Request> & { characterId: string }
+	>,
+	Response,
+	"character"
+> => ({
+	kind: "rpc",
+	scope: "character",
+	channel,
+	request: withCharacterId(request) as z.ZodType<
+		z.infer<Request> extends Record<string, never>
+			? { characterId: string }
+			: z.infer<Request> & { characterId: string }
+	>,
+	response,
+	operation,
+});
+
 /** The sole runtime and type-level source of truth for every Host RPC channel. */
 export const RPC = {
+	bootstrap: { get: endpoint("bootstrap.get", z.strictObject({}), BootstrapResponse, "query") },
 	snapshot: {
-		get: endpoint("snapshot.get", SnapshotGetRequest, SnapshotResponse, "query"),
+		get: characterEndpoint("snapshot.get", SnapshotGetRequest, SnapshotResponse, "query"),
 	},
 	character: {
-		get: endpoint("character.get", CharacterGetRequest, CharacterResponse, "query"),
-		list: endpoint("character.list", CharacterListRequest, CharacterListResponse, "query"),
-		activate: endpoint(
-			"character.activate",
-			CharacterActivateRequest,
-			CharacterResponse,
+		memoryGet: characterEndpoint(
+			"character.memoryGet",
+			z.strictObject({}),
+			z.strictObject({ enabled: z.boolean() }),
+			"query",
+		),
+		memorySet: characterEndpoint(
+			"character.memorySet",
+			z.strictObject({ enabled: z.boolean() }),
+			z.strictObject({ enabled: z.boolean() }),
 			"mutation",
 		),
+		get: characterEndpoint("character.get", CharacterGetRequest, CharacterResponse, "query"),
+		list: endpoint("character.list", CharacterListRequest, CharacterListResponse, "query"),
 		packageGet: endpoint(
 			"character.packageGet",
 			CharacterPackageGetRequest,
@@ -2164,8 +2288,13 @@ export const RPC = {
 		),
 	},
 	companionState: {
-		get: endpoint("companionState.get", CompanionStateGetRequest, CompanionStateResponse, "query"),
-		update: endpoint(
+		get: characterEndpoint(
+			"companionState.get",
+			CompanionStateGetRequest,
+			CompanionStateResponse,
+			"query",
+		),
+		update: characterEndpoint(
 			"companionState.update",
 			CompanionStateUpdateRequest,
 			EmptyResponse,
@@ -2173,66 +2302,94 @@ export const RPC = {
 		),
 	},
 	onboarding: {
-		get: endpoint("onboarding.get", OnboardingGetRequest, OnboardingResponse, "query"),
-		submit: endpoint("onboarding.submit", OnboardingSubmitRequest, OnboardingResponse, "mutation"),
-	},
-	conversation: {
-		list: endpoint("conversation.list", ConversationListRequest, ConversationListResponse, "query"),
-		activeGet: endpoint(
-			"conversation.activeGet",
-			ConversationActiveGetRequest,
-			ConversationActiveResponse,
-			"query",
-		),
-		select: endpoint(
-			"conversation.select",
-			ConversationSelectRequest,
-			ConversationActiveResponse,
+		get: characterEndpoint("onboarding.get", OnboardingGetRequest, OnboardingResponse, "query"),
+		submit: characterEndpoint(
+			"onboarding.submit",
+			OnboardingSubmitRequest,
+			OnboardingResponse,
 			"mutation",
 		),
-		create: endpoint(
+	},
+	conversation: {
+		list: characterEndpoint(
+			"conversation.list",
+			ConversationListRequest,
+			ConversationListResponse,
+			"query",
+		),
+		create: characterEndpoint(
 			"conversation.create",
 			ConversationCreateRequest,
 			ConversationCreateResponse,
 			"mutation",
 		),
-		open: endpoint("conversation.open", ConversationOpenRequest, ConversationOpenResponse, "query"),
-		history: endpoint(
+		open: characterEndpoint(
+			"conversation.open",
+			ConversationOpenRequest,
+			ConversationOpenResponse,
+			"query",
+		),
+		history: characterEndpoint(
 			"conversation.history",
 			ConversationHistoryRequest,
 			ConversationHistoryResponse,
 			"query",
 		),
-		rename: endpoint("conversation.rename", ConversationRenameRequest, EmptyResponse, "mutation"),
-		archive: endpoint(
-			"conversation.archive",
-			ConversationArchiveRequest,
-			ConversationActiveResponse,
+		rename: characterEndpoint(
+			"conversation.rename",
+			ConversationRenameRequest,
+			EmptyResponse,
 			"mutation",
 		),
-		delete: endpoint(
+		archive: characterEndpoint(
+			"conversation.archive",
+			ConversationArchiveRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		delete: characterEndpoint(
 			"conversation.delete",
 			ConversationDeleteRequest,
-			ConversationActiveResponse,
+			EmptyResponse,
 			"mutation",
 		),
 	},
 	message: {
-		send: endpoint("message.send", MessageSendRequest, MessageSendResponse, "mutation"),
-		correct: endpoint("message.correct", MessageCorrectRequest, ConversationDetail, "mutation"),
-		switchVersion: endpoint(
+		send: characterEndpoint("message.send", MessageSendRequest, MessageSendResponse, "mutation"),
+		correct: characterEndpoint(
+			"message.correct",
+			MessageCorrectRequest,
+			ConversationDetail,
+			"mutation",
+		),
+		switchVersion: characterEndpoint(
 			"message.switchVersion",
 			MessageSwitchVersionRequest,
 			ConversationDetail,
 			"mutation",
 		),
-		edit: endpoint("message.edit", MessageEditRequest, ConversationDetail, "mutation"),
-		continue: endpoint("message.continue", MessageContinueRequest, EmptyResponse, "mutation"),
-		branch: endpoint("message.branch", MessageBranchRequest, MessageBranchResponse, "mutation"),
-		abort: endpoint("message.abort", MessageAbortRequest, EmptyResponse, "mutation"),
+		edit: characterEndpoint("message.edit", MessageEditRequest, ConversationDetail, "mutation"),
+		continue: characterEndpoint(
+			"message.continue",
+			MessageContinueRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		branch: characterEndpoint(
+			"message.branch",
+			MessageBranchRequest,
+			MessageBranchResponse,
+			"mutation",
+		),
+		abort: characterEndpoint("message.abort", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
-		inspect: endpoint("memory.inspect", MemoryInspectRequest, MemoryInspectResponse, "query"),
+		inspect: characterEndpoint(
+			"memory.inspect",
+			MemoryInspectRequest,
+			MemoryInspectResponse,
+			"query",
+		),
 		localEmbeddingInventory: endpoint(
 			"memory.localEmbeddingInventory",
 			z.strictObject({}),
@@ -2279,38 +2436,38 @@ export const RPC = {
 		),
 	},
 	canon: {
-		listSources: endpoint(
+		listSources: characterEndpoint(
 			"canon.listSources",
 			CanonListSourcesRequest,
 			CanonListSourcesResponse,
 			"query",
 		),
-		addSource: endpoint(
+		addSource: characterEndpoint(
 			"canon.addSource",
 			CanonAddSourceRequest,
 			CanonAddSourceResponse,
 			"mutation",
 		),
-		search: endpoint("canon.search", CanonSearchRequest, CanonSearchResponse, "query"),
-		removeSource: endpoint(
+		search: characterEndpoint("canon.search", CanonSearchRequest, CanonSearchResponse, "query"),
+		removeSource: characterEndpoint(
 			"canon.removeSource",
 			CanonRemoveSourceRequest,
 			EmptyResponse,
 			"mutation",
 		),
-		listModules: endpoint(
+		listModules: characterEndpoint(
 			"canon.listModules",
 			CanonListModulesRequest,
 			CanonListModulesResponse,
 			"query",
 		),
-		upsertModule: endpoint(
+		upsertModule: characterEndpoint(
 			"canon.upsertModule",
 			CanonUpsertModuleRequest,
 			CanonUpsertModuleResponse,
 			"mutation",
 		),
-		deleteModule: endpoint(
+		deleteModule: characterEndpoint(
 			"canon.deleteModule",
 			CanonDeleteModuleRequest,
 			EmptyResponse,
@@ -2370,19 +2527,19 @@ export const RPC = {
 		poolGet: endpoint("model.pool.get", ModelPoolGetRequest, ModelPoolGetResponse, "query"),
 		enable: endpoint("model.enable", ModelEnableRequest, ModelEnableResponse, "mutation"),
 		disable: endpoint("model.disable", ModelDisableRequest, EmptyResponse, "mutation"),
-		defaultsGet: endpoint(
+		defaultsGet: characterEndpoint(
 			"model.defaults.get",
 			ModelDefaultsGetRequest,
 			ModelDefaultsGetResponse,
 			"query",
 		),
-		defaultsSetReply: endpoint(
+		defaultsSetReply: characterEndpoint(
 			"model.defaults.setReply",
 			ModelDefaultsSetReplyRequest,
 			ModelDefaultsSetReplyResponse,
 			"mutation",
 		),
-		defaultsSetVision: endpoint(
+		defaultsSetVision: characterEndpoint(
 			"model.defaults.setVision",
 			ModelDefaultsSetVisionRequest,
 			ModelDefaultsSetVisionResponse,
@@ -2400,22 +2557,36 @@ export const RPC = {
 			SystemModelDefaultsSetResponse,
 			"mutation",
 		),
-		defaultsInitialize: endpoint(
+		defaultsInitialize: characterEndpoint(
 			"model.defaults.initialize",
 			ModelDefaultsInitializeRequest,
 			ModelDefaultsInitializeResponse,
 			"mutation",
 		),
-		defaultsCompleteOnboarding: endpoint(
+		defaultsCompleteOnboarding: characterEndpoint(
 			"model.defaults.completeOnboarding",
 			ModelDefaultsCompleteOnboardingRequest,
 			ModelDefaultsCompleteOnboardingResponse,
 			"mutation",
 		),
-		routeGet: endpoint("model.route.get", ModelRouteGetRequest, ModelRouteGetResponse, "query"),
-		routeSet: endpoint("model.route.set", ModelRouteSetRequest, ModelRouteSetResponse, "mutation"),
+		routeGet: characterEndpoint(
+			"model.route.get",
+			ModelRouteGetRequest,
+			ModelRouteGetResponse,
+			"query",
+		),
+		routeSet: characterEndpoint(
+			"model.route.set",
+			ModelRouteSetRequest,
+			ModelRouteSetResponse,
+			"mutation",
+		),
 	},
 	externalAgent: {
+		list: endpoint("externalAgent.list", RunnerListRequest, RunnerListResponse, "query"),
+		save: endpoint("externalAgent.save", RunnerSaveRequest, RunnerSaveResponse, "mutation"),
+		test: endpoint("externalAgent.test", RunnerIdRequest, RunnerTestResponse, "mutation"),
+
 		discoverCodex: endpoint(
 			"externalAgent.discoverCodex",
 			ExternalAgentDiscoverCodexRequest,
@@ -2436,19 +2607,19 @@ export const RPC = {
 		),
 	},
 	run: {
-		list: endpoint("run.list", RunListRequest, RunListResponse, "query"),
-		get: endpoint("run.get", RunGetRequest, RunGetResponse, "query"),
-		steer: endpoint("run.steer", RunSteerRequest, RunSteerResponse, "mutation"),
-		interrupt: endpoint("run.interrupt", RunInterruptRequest, RunResponse, "mutation"),
-		resume: endpoint("run.resume", RunResumeRequest, RunResponse, "mutation"),
-		cancel: endpoint("run.cancel", RunCancelRequest, RunResponse, "mutation"),
-		retryDelivery: endpoint(
+		list: characterEndpoint("run.list", RunListRequest, RunListResponse, "query"),
+		get: characterEndpoint("run.get", RunGetRequest, RunGetResponse, "query"),
+		steer: characterEndpoint("run.steer", RunSteerRequest, RunSteerResponse, "mutation"),
+		interrupt: characterEndpoint("run.interrupt", RunInterruptRequest, RunResponse, "mutation"),
+		resume: characterEndpoint("run.resume", RunResumeRequest, RunResponse, "mutation"),
+		cancel: characterEndpoint("run.cancel", RunCancelRequest, RunResponse, "mutation"),
+		retryDelivery: characterEndpoint(
 			"run.retryDelivery",
 			RunRetryDeliveryRequest,
 			RunRetryDeliveryResponse,
 			"mutation",
 		),
-		respondPermission: endpoint(
+		respondPermission: characterEndpoint(
 			"run.respondPermission",
 			RunRespondPermissionRequest,
 			RunResponse,
@@ -2456,10 +2627,25 @@ export const RPC = {
 		),
 	},
 	artifact: {
-		read: endpoint("artifact.read", ArtifactReadRequest, ArtifactReadResponse, "query"),
-		open: endpoint("artifact.open", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
-		reveal: endpoint("artifact.reveal", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
-		saveAs: endpoint("artifact.saveAs", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
+		read: characterEndpoint("artifact.read", ArtifactReadRequest, ArtifactReadResponse, "query"),
+		open: characterEndpoint(
+			"artifact.open",
+			ArtifactActionRequest,
+			ArtifactActionResponse,
+			"mutation",
+		),
+		reveal: characterEndpoint(
+			"artifact.reveal",
+			ArtifactActionRequest,
+			ArtifactActionResponse,
+			"mutation",
+		),
+		saveAs: characterEndpoint(
+			"artifact.saveAs",
+			ArtifactActionRequest,
+			ArtifactActionResponse,
+			"mutation",
+		),
 	},
 	settings: {
 		get: endpoint("settings.get", SettingsGetRequest, SettingsResponse, "query"),
@@ -2472,7 +2658,7 @@ export const RPC = {
 		),
 	},
 	diagnostics: {
-		exportPage: endpoint(
+		exportPage: characterEndpoint(
 			"diagnostics.exportPage",
 			z.strictObject({
 				traceId: DiagnosticTraceId,
@@ -2486,7 +2672,7 @@ export const RPC = {
 			}),
 			"query",
 		),
-		renderer: endpoint(
+		renderer: characterEndpoint(
 			"diagnostics.renderer",
 			z.strictObject({
 				rendererId: z.string().uuid(),
@@ -2514,26 +2700,31 @@ export const RPC = {
 			EmptyResponse,
 			"mutation",
 		),
-		pin: endpoint(
+		pin: characterEndpoint(
 			"diagnostics.pin",
 			z.strictObject({ traceId: DiagnosticTraceId, pinned: z.boolean() }),
 			EmptyResponse,
 			"mutation",
 		),
-		metrics: endpoint(
+		metrics: characterEndpoint(
 			"diagnostics.metrics",
 			z.strictObject({}),
 			z.strictObject({ content: z.string() }),
 			"query",
 		),
-		get: endpoint("diagnostics.get", z.strictObject({}), DiagnosticsSettingsResponse, "query"),
-		set: endpoint(
+		get: characterEndpoint(
+			"diagnostics.get",
+			z.strictObject({}),
+			DiagnosticsSettingsResponse,
+			"query",
+		),
+		set: characterEndpoint(
 			"diagnostics.set",
 			z.strictObject({ policy: DiagnosticsPolicy }),
 			DiagnosticsSettingsResponse,
 			"mutation",
 		),
-		list: endpoint(
+		list: characterEndpoint(
 			"diagnostics.list",
 			z.strictObject({
 				incidents: z.boolean().optional(),
@@ -2550,7 +2741,7 @@ export const RPC = {
 			}),
 			"query",
 		),
-		read: endpoint(
+		read: characterEndpoint(
 			"diagnostics.read",
 			z.strictObject({
 				traceId: DiagnosticTraceId,
@@ -2563,19 +2754,19 @@ export const RPC = {
 			}),
 			"query",
 		),
-		payload: endpoint(
+		payload: characterEndpoint(
 			"diagnostics.payload",
 			z.strictObject({ traceId: DiagnosticTraceId, sha256: z.string().regex(/^[a-f0-9]{64}$/) }),
 			z.strictObject({ content: z.string() }),
 			"query",
 		),
-		export: endpoint(
+		export: characterEndpoint(
 			"diagnostics.export",
 			z.strictObject({ traceId: DiagnosticTraceId }),
 			z.strictObject({ content: z.string() }),
 			"query",
 		),
-		reveal: endpoint(
+		reveal: characterEndpoint(
 			"diagnostics.reveal",
 			z.strictObject({ scope: z.enum(["system", "character", "memory", "latest"]) }),
 			EmptyResponse,
@@ -2588,8 +2779,8 @@ export const RPC = {
 		apply: endpoint("update.apply", UpdateApplyRequest, UpdateApplyResponse, "mutation"),
 	},
 	audit: {
-		list: endpoint("audit.list", AuditListRequest, AuditListResponse, "query"),
-		export: endpoint("audit.export", AuditExportRequest, AuditExportResponse, "query"),
+		list: characterEndpoint("audit.list", AuditListRequest, AuditListResponse, "query"),
+		export: characterEndpoint("audit.export", AuditExportRequest, AuditExportResponse, "query"),
 	},
 } as const;
 export type AnyRpcEndpoint = RpcEndpoint;

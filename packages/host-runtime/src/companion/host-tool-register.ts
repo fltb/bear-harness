@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import type { RunnerInfo } from "@bear-harness/protocol";
 import { z } from "@bear-harness/schema";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { OfficeParser } from "officeparser";
@@ -19,13 +20,20 @@ export interface HostToolInput {
 	entryId(): string;
 	character(): CharacterPackage;
 	store: CompanionStateStore;
+	runners?(): RunnerInfo[];
 	delegate(input: {
+		runnerId?: string;
 		conversationId: string;
 		triggerEntryId: string;
 		toolCallId: string;
 		inputPaths: string[];
 		instruction: string;
-	}): Promise<{ accepted: true; runId: string; executor: "pi" }>;
+	}): Promise<{
+		accepted: true;
+		runId: string;
+		executor: "pi" | "codex" | "custom";
+		runnerId?: string;
+	}>;
 	runRead(conversationId: string, runId?: string): Promise<unknown>;
 	runControl(
 		conversationId: string,
@@ -94,6 +102,14 @@ const DocumentArgs = z.strictObject({
 });
 const ImageArgs = z.strictObject({ path: z.string().min(1).max(4096) });
 const DelegateArgs = z.strictObject({
+	runnerId: z
+		.string()
+		.min(1)
+		.max(64)
+		.optional()
+		.describe(
+			"Exact runnerId from host_runners. Omit to use the built-in Pi Worker. Never silently substitute a user-specified runner.",
+		),
 	instruction: z.string().min(1),
 	inputPaths: z.array(z.string().min(1)).default([]),
 });
@@ -196,6 +212,13 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 					),
 				}
 			: {}),
+		host_runners: tool(
+			"host_runners",
+			"Available workers",
+			z.strictObject({}),
+			() => success({ runners: input.runners?.() ?? [] }),
+			"Read configured worker profiles, their intended uses and limitations. Use before choosing a non-default runner. Descriptions express configured guidance, not independently proven expertise; configured does not guarantee authentication or optional ACP capabilities. Do not delegate ordinary conversation merely because a runner exists.",
+		),
 		host_delegate: tool(
 			"host_delegate",
 			"Delegate work",
@@ -212,7 +235,7 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 					}),
 				);
 			},
-			"Ask the built-in Pi Worker to start a separate Run for this invoking conversation. The accepted receipt identifies the Run, not completion. Input paths must be absolute user-supplied file references.",
+			"Start a separate Run for this invoking conversation. Omit runnerId to use the built-in Pi Worker. To choose another worker, query host_runners and pass its exact runnerId based on the user request, intended use and limitations. Respect a user-specified runner; an unavailable selection is an error, not permission to substitute. The accepted receipt identifies the Run, not completion. Input paths must be absolute user-supplied file references.",
 		),
 		host_run_read: tool(
 			"host_run_read",

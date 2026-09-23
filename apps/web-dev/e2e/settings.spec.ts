@@ -69,7 +69,7 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 
 	const invalidRequest = await page.request.post("/rpc/onboarding.get", {
 		headers,
-		data: { unexpected: true },
+		data: { characterId: "jizhou", unexpected: true },
 	});
 	// Schema rejection is a domain failure: it resolves HTTP 200 with the
 	// validated envelope, exactly like the companion client observes it.
@@ -102,7 +102,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const activeId = await activeConversationId(page);
 	const renamed = await page.request.post("/rpc/conversation.rename", {
 		headers: { "x-bear-web-dev-token": bootstrap.token },
-		data: { conversationId: activeId, title: zhCN.sidebar.newConversation },
+		data: { characterId: "jizhou", conversationId: activeId, title: zhCN.sidebar.newConversation },
 	});
 	await expect(renamed).toBeOK();
 	const conversationItems = conversations.getByRole("button");
@@ -318,7 +318,10 @@ test("settings re-adds the last provider with the same identity and can chat aft
 		ok: true,
 		data: { settings: { firstRunStage: "role" } },
 	});
-	const defaults = await page.request.post("/rpc/model.defaults.get", { headers, data: {} });
+	const defaults = await page.request.post("/rpc/model.defaults.get", {
+		headers,
+		data: { characterId: "jizhou" },
+	});
 	expect(await defaults.json()).toMatchObject({ ok: true, data: { onboardingComplete: true } });
 	await settings.getByRole("button", { name: zhCN.settings.addProvider }).click();
 	const add = page.getByRole("dialog", { name: zhCN.settings.addProvider });

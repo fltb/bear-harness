@@ -3,12 +3,14 @@
 import {
 	existsSync,
 	lstatSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	symlinkSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -80,6 +82,34 @@ afterEach(() => {
 });
 
 describe("physical character deletion", () => {
+	it("finishes character-local orphan maintenance before admitting its first operation", async () => {
+		const runtime = createHostRuntime({
+			dataDir: root(),
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		try {
+			await runtime.start();
+			const cas = storage(runtime).layout.companion("jizhou").artifacts;
+			mkdirSync(cas, { recursive: true });
+			const stale = join(cas, "a".repeat(64));
+			const recent = join(cas, "b".repeat(64));
+			const unknown = join(cas, "keep-me.txt");
+			for (const path of [stale, recent, unknown]) writeFileSync(path, "orphan candidate");
+			const old = new Date(Date.now() - 8 * 86_400_000);
+			utimesSync(stale, old, old);
+			utimesSync(unknown, old, old);
+			await runtime.useCharacter("jizhou", () => {
+				expect(existsSync(stale)).toBe(false);
+				expect(existsSync(recent)).toBe(true);
+				expect(existsSync(unknown)).toBe(true);
+			});
+		} finally {
+			await runtime.close();
+		}
+	});
+
 	it("deletes an inactive runtime independently, closes its database, then deletes its package", async () => {
 		const dataDir = root();
 		const runtime = createHostRuntime({
@@ -91,7 +121,8 @@ describe("physical character deletion", () => {
 		await runtime.start();
 		await importCharacter(runtime, "deletable-role");
 		const registry = storage(runtime);
-		const handle = registry.open("deletable-role");
+		await runtime.useCharacter("deletable-role", () => {});
+		const handle = registry.peek("deletable-role")!;
 		const runtimePath = registry.layout.companion("deletable-role").root;
 		const packagePath = registry.layout.characterPackage("deletable-role");
 		expect(existsSync(runtimePath)).toBe(true);
@@ -105,7 +136,6 @@ describe("physical character deletion", () => {
 			data: {
 				status: {
 					characterId: "deletable-role",
-					active: false,
 					default: false,
 					runtimePresent: true,
 					packagePresent: true,
@@ -127,7 +157,7 @@ describe("physical character deletion", () => {
 		expect(closeDatabase).toHaveBeenCalledOnce();
 		expect(existsSync(runtimePath)).toBe(false);
 		expect(existsSync(packagePath)).toBe(true);
-		expect(runtime.deleteCharacterRuntime("deletable-role")).toEqual({ deleted: false });
+		expect(await runtime.deleteCharacterRuntime("deletable-role")).toEqual({ deleted: false });
 
 		expect(
 			await runtime.dispatch("character.packageDelete", { characterId: "deletable-role" }),
@@ -153,7 +183,7 @@ describe("physical character deletion", () => {
 		await runtime.close();
 	}, 20_000);
 
-	it("refuses active runtime, active package, and the default package", async () => {
+	it("deletes any explicitly identified open runtime while retaining unrelated owners and the default package", async () => {
 		const dataDir = root();
 		const runtime = createHostRuntime({
 			dataDir,
@@ -162,28 +192,55 @@ describe("physical character deletion", () => {
 			credentialVault: vault,
 		});
 		await runtime.start();
-		expect(
-			thrown(() => runtime.deleteCharacterRuntime(productConfig.defaultCharacterId)),
-		).toMatchObject({ kind: "conflict", reason: "character_runtime_active" });
-		expect(
-			thrown(() => runtime.deleteCharacterPackage(productConfig.defaultCharacterId)),
-		).toMatchObject({ kind: "conflict", reason: "character_package_default" });
-
-		await importCharacter(runtime, "active-role");
-		const activated = await runtime.dispatch("character.activate", {
-			characterId: "active-role",
-		});
-		if (!activated.ok) throw new Error(`${activated.error.kind}: ${activated.error.reason}`);
-		expect(thrown(() => runtime.deleteCharacterRuntime("active-role"))).toMatchObject({
-			kind: "conflict",
-			reason: "character_runtime_active",
-		});
-		expect(thrown(() => runtime.deleteCharacterPackage("active-role"))).toMatchObject({
-			kind: "conflict",
-			reason: "character_package_active",
-		});
-		await runtime.close();
+		try {
+			await importCharacter(runtime, "open-role");
+			const first = await runtime.useCharacter(productConfig.defaultCharacterId, (r) => r);
+			const other = await runtime.useCharacter("open-role", (r) => r);
+			const stopFirst = vi.spyOn(first, "stop");
+			const closeOther = vi.spyOn(other, "close");
+			expect(await runtime.deleteCharacterRuntime("open-role")).toEqual({ deleted: true });
+			expect(closeOther).toHaveBeenCalledOnce();
+			expect(stopFirst).not.toHaveBeenCalled();
+			expect(await runtime.useCharacter(productConfig.defaultCharacterId, (r) => r)).toBe(first);
+			expect(await runtime.deleteCharacterRuntime(productConfig.defaultCharacterId)).toEqual({
+				deleted: true,
+			});
+			expect(
+				thrown(() => runtime.deleteCharacterPackage(productConfig.defaultCharacterId)),
+			).toMatchObject({ reason: "character_package_default" });
+		} finally {
+			await runtime.close();
+		}
 	}, 20_000);
+
+	it("preserves an unopened runtime whose executor ownership is still unresolved", async () => {
+		const dataDir = root();
+		const runtime = createHostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		const registry = storage(runtime);
+		const characterId = productConfig.defaultCharacterId;
+		const handle = registry.open(characterId);
+		handle.database.connection
+			.prepare("INSERT INTO conversations(id, companion_id) VALUES(?, ?)")
+			.run("unknown-session", characterId);
+		handle.database.connection.exec(`
+			INSERT INTO runs(id, conversation_id, trigger_entry_id, executor_profile, title, instruction, status)
+			VALUES('unknown-run', 'unknown-session', 'entry', 'pi-default', 'Unknown controller', 'Work', 'running');
+		`);
+		registry.release(handle);
+		await expect(runtime.deleteCharacterRuntime(characterId)).rejects.toMatchObject({
+			kind: "conflict",
+			reason: "external_agent_controller_unavailable",
+		});
+		expect(existsSync(registry.layout.companion(characterId).database)).toBe(true);
+		expect(registry.peek(characterId)).toBeUndefined();
+		await runtime.close();
+		expect(existsSync(registry.layout.companion(characterId).root)).toBe(true);
+	});
 
 	it("rejects unsafe ids and replacement symlinks without touching their targets", async () => {
 		const dataDir = root();
@@ -196,18 +253,22 @@ describe("physical character deletion", () => {
 		await runtime.start();
 		const outside = join(dataDir, "outside");
 		writeFileSync(outside, "keep", "utf8");
-		expect(() => runtime.deleteCharacterRuntime("../outside")).toThrow(/safe path component/);
+		await expect(runtime.deleteCharacterRuntime("../outside")).rejects.toThrow(
+			/safe path component/,
+		);
 		expect(readFileSync(outside, "utf8")).toBe("keep");
 
 		const registry = storage(runtime);
 		const linkedRuntime = registry.layout.companion("linked-role").root;
 		symlinkSync(dataDir, linkedRuntime, "dir");
-		expect(() => runtime.deleteCharacterRuntime("linked-role")).toThrow(/must be a real directory/);
+		await expect(runtime.deleteCharacterRuntime("linked-role")).rejects.toThrow(
+			/must be a real directory/,
+		);
 		expect(lstatSync(linkedRuntime).isSymbolicLink()).toBe(true);
 		expect(readFileSync(outside, "utf8")).toBe("keep");
 
 		await importCharacter(runtime, "linked-package");
-		runtime.deleteCharacterRuntime("linked-package");
+		await runtime.deleteCharacterRuntime("linked-package");
 		const packagePath = registry.layout.characterPackage("linked-package");
 		const outsidePackage = join(dataDir, "outside-package");
 		renameSync(packagePath, outsidePackage);

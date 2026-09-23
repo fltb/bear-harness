@@ -1,13 +1,13 @@
 /**
  * Codex ACP executor profile.
  *
- * The consented Codex binary remains user-owned and is re-verified at every
+ * The discovered Codex binary remains user-owned and is re-verified at every
  * launch. The maintained ACP adapter is the only transport: its stdout is
  * ACP JSONL, and its tool updates, permission requests, completion, and
  * cancellation flow through the shared Host controller.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
@@ -17,7 +17,6 @@ import {
 	readFileSync,
 	readlinkSync,
 	realpathSync,
-	rmSync,
 	type Stats,
 	statSync,
 } from "node:fs";
@@ -31,6 +30,7 @@ import type { AppDatabase } from "../storage/database.js";
 import type { InvalidationHub } from "../storage/invalidation-hub.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
+import { codexAcpDialect } from "./acp-dialect.js";
 import { AcpExecutorController } from "./acp-executor.js";
 import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
@@ -76,7 +76,7 @@ export interface CodexConsentRequest {
 	sha256: string;
 }
 
-/** The capability record stored in `executor_profiles.capability_json`. */
+/** Run-owned executable snapshot; installation registration stores only home and consent. */
 export interface CodexProfileCapability extends CodexConsentRequest {
 	codexHome: string;
 	codeModeHostPath?: string;
@@ -86,6 +86,7 @@ export interface CodexProfileCapability extends CodexConsentRequest {
 
 /** The manifest recorded in `run_manifests.manifest_json` at launch. */
 export interface CodexRunManifest {
+	canonicalPath: string;
 	schemaVersion: 1;
 	executor: "codex";
 	profileId: string;
@@ -117,15 +118,23 @@ async function sha256Of(file: string): Promise<string> {
 }
 
 /** Hidden-argv version probe; returns the first x.y.z token, or null. */
-function probeVersion(finalBin: string): string | null {
+async function probeVersion(finalBin: string): Promise<string | null> {
 	let stdout = "";
 	let stderr = "";
 	try {
-		stdout = execFileSync(finalBin, ["--version"], {
-			encoding: "utf8",
-			timeout: VERSION_PROBE_TIMEOUT_MS,
-			windowsHide: true,
-		});
+		stdout = await new Promise<string>((resolve, reject) =>
+			execFile(
+				finalBin,
+				["--version"],
+				{
+					encoding: "utf8",
+					timeout: VERSION_PROBE_TIMEOUT_MS,
+					windowsHide: true,
+				},
+				(error, stdout, stderr) =>
+					error ? reject(Object.assign(error, { stdout, stderr })) : resolve(stdout),
+			),
+		);
 	} catch (e) {
 		const err = e as Error & { stdout?: string | Buffer; stderr?: string | Buffer };
 		stdout = err.stdout !== undefined ? String(err.stdout) : "";
@@ -136,13 +145,13 @@ function probeVersion(finalBin: string): string | null {
 }
 
 export class CodexAdapter extends AcpExecutorController {
-	private readonly adapterPath = createRequire(import.meta.url).resolve(
-		"@agentclientprotocol/codex-acp",
-	);
+	private readonly adapterPath = createRequire(import.meta.url)
+		.resolve("@agentclientprotocol/codex-acp")
+		.replace(/\.asar([/\\])/, ".asar.unpacked$1");
 
 	constructor(
 		private readonly systemDb: AppDatabase,
-		private readonly runDb: AppDatabase,
+		private readonly runDb: AppDatabase | undefined,
 		private readonly invalidations: InvalidationHub,
 	) {
 		super();
@@ -241,7 +250,7 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 		if (!canonicalPath.startsWith(this.installRootOf(candidatePath) + sep)) return base;
 
-		const version = probeVersion(canonicalPath);
+		const version = await probeVersion(canonicalPath);
 		if (version === null) return base; // probe failed — no parseable version
 
 		let sha256: string;
@@ -291,22 +300,27 @@ export class CodexAdapter extends AcpExecutorController {
 			capability.codeModeHostPath = codeModeHostPath;
 			capability.codeModeHostSha256 = await sha256Of(codeModeHostPath);
 		}
-		// Deterministic id so re-consent upserts instead of duplicating.
-		const profileId =
-			"codex-" +
-			createHash("sha256")
-				.update(
-					`${profileConfig.canonicalPath}\u0000${profileConfig.version}\u0000${profileConfig.sha256}`,
-				)
-				.digest("hex")
-				.slice(0, 16);
+		// Installation registration survives binary upgrades; existing IDs remain stable.
+		const previous = this.systemDb
+			.select()
+			.from(executorProfiles)
+			.where(eq(executorProfiles.profileType, "codex"))
+			.orderBy(desc(executorProfiles.createdAt), executorProfiles.id)
+			.limit(1)
+			.get();
+		const profileId = previous?.id ?? "codex-default";
+		const registration = {
+			...previous?.configJson,
+			codexHome: capability.codexHome,
+			consentedAt: capability.consentedAt,
+		};
 
 		this.systemDb
 			.insert(executorProfiles)
-			.values({ id: profileId, profileType: "codex", capabilityJson: { ...capability } })
+			.values({ id: profileId, profileType: "codex", configJson: registration })
 			.onConflictDoUpdate({
 				target: executorProfiles.id,
-				set: { capabilityJson: { ...capability } },
+				set: { configJson: registration },
 			})
 			.run();
 
@@ -314,30 +328,64 @@ export class CodexAdapter extends AcpExecutorController {
 	}
 
 	/**
-	 * Re-verify the user-consented Codex binary, record a secret-free manifest,
+	 * Re-verify the Run-resolved Codex binary, record a secret-free manifest,
 	 * then start its maintained ACP adapter. Completion and evidence are
 	 * delivered through the shared external-agent controller.
 	 */
-	override async launch(request: ExecutorLaunchRequest): Promise<void> {
+	protected override async prepareLaunch(request: ExecutorLaunchRequest): Promise<void> {
 		const capability = codexCapability(request.profile.capabilities);
 		if (managedCodexExecutable(capability.canonicalPath) !== capability.canonicalPath) {
 			fail("profile_invalid", "codex profile must consent the exact native executable");
 		}
-		if (probeVersion(capability.canonicalPath) !== capability.version) {
-			fail("executor_binary_changed", "consented Codex version no longer matches");
+		if ((await probeVersion(capability.canonicalPath)) !== capability.version) {
+			fail("executor_binary_changed", "resolved Codex version no longer matches");
 		}
 		if ((await sha256Of(capability.canonicalPath)) !== capability.sha256) {
-			fail("executor_binary_changed", "consented Codex hash no longer matches");
+			fail("executor_binary_changed", "resolved Codex hash no longer matches");
 		}
 		const codeModeHostPath = codexCodeModeHost(capability.canonicalPath);
 		if (
-			codeModeHostPath !== capability.codeModeHostPath ||
+			codeModeHostPath !== (capability.codeModeHostPath ?? null) ||
 			(codeModeHostPath !== null &&
 				(await sha256Of(codeModeHostPath)) !== capability.codeModeHostSha256)
 		) {
-			fail("executor_binary_changed", "consented Codex tool host no longer matches");
+			fail("executor_binary_changed", "resolved Codex tool host no longer matches");
 		}
+	}
 
+	/** Resolve only NEW executions. Restore uses the immutable recovery profile. */
+	private async resolveLaunch(request: ExecutorLaunchRequest): Promise<ExecutorLaunchRequest> {
+		const registration = request.profile.capabilities;
+		if (
+			typeof registration.codexHome !== "string" ||
+			!isAbsolute(registration.codexHome) ||
+			typeof registration.consentedAt !== "string"
+		)
+			fail("profile_invalid", "Codex registration is invalid");
+		const candidate = (await this.discover()).find((item) => item.status === "usable");
+		if (!candidate?.canonicalPath || !candidate.version || !candidate.sha256)
+			fail("unavailable", "no_codex_found");
+		const codeModeHostPath = codexCodeModeHost(candidate.canonicalPath);
+		const capabilities = {
+			codexHome: registration.codexHome,
+			consentedAt: registration.consentedAt,
+			canonicalPath: candidate.canonicalPath,
+			version: candidate.version,
+			sha256: candidate.sha256,
+			...(codeModeHostPath
+				? { codeModeHostPath, codeModeHostSha256: await sha256Of(codeModeHostPath) }
+				: {}),
+		};
+		return { ...request, profile: { ...request.profile, capabilities } };
+	}
+
+	override async test(request: ExecutorLaunchRequest, signal?: AbortSignal) {
+		return super.test(await this.resolveLaunch(request), signal);
+	}
+
+	override async launch(request: ExecutorLaunchRequest): Promise<void> {
+		request = await this.resolveLaunch(request);
+		const capability = codexCapability(request.profile.capabilities);
 		const manifest: CodexRunManifest = {
 			schemaVersion: 1,
 			executor: "codex",
@@ -346,10 +394,11 @@ export class CodexAdapter extends AcpExecutorController {
 			triggerEntryId: request.run.triggerEntryId,
 			version: capability.version,
 			sha256: capability.sha256,
+			canonicalPath: capability.canonicalPath,
 			launchedAt: new Date().toISOString(),
 		};
 		this.runDb
-			.insert(runManifests)
+			?.insert(runManifests)
 			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
 			.run();
 		this.invalidations.invalidate(CacheKey.audit());
@@ -375,9 +424,15 @@ export class CodexAdapter extends AcpExecutorController {
 			CODEX_HOME: codexHome,
 		});
 		return {
+			dialect: codexAcpDialect,
 			command: process.execPath,
 			args: [this.adapterPath],
 			cwd,
+			writablePaths: [codexHome],
+			executablePaths: [
+				capability.canonicalPath,
+				...(capability.codeModeHostPath ? [capability.codeModeHostPath] : []),
+			],
 			readOnlyPaths: request.task.readOnlyPaths,
 			env,
 		};
@@ -386,35 +441,29 @@ export class CodexAdapter extends AcpExecutorController {
 	/** Current Codex availability. */
 	async status(): Promise<CodexStatus> {
 		const row = this.systemDb
-			.select({ id: executorProfiles.id, capability: executorProfiles.capabilityJson })
+			.select({ id: executorProfiles.id, capability: executorProfiles.configJson })
 			.from(executorProfiles)
 			.where(eq(executorProfiles.profileType, "codex"))
-			.orderBy(desc(executorProfiles.createdAt))
+			.orderBy(desc(executorProfiles.createdAt), executorProfiles.id)
 			.limit(1)
 			.get();
-		if (row) {
-			const capability = row.capability as Partial<CodexProfileCapability>;
-			if (
-				capability &&
-				typeof capability.consentedAt === "string" &&
-				typeof capability.canonicalPath === "string" &&
-				typeof capability.version === "string" &&
-				typeof capability.sha256 === "string" &&
-				managedCodexExecutable(capability.canonicalPath) === capability.canonicalPath &&
-				probeVersion(capability.canonicalPath) === capability.version &&
-				(await sha256Of(capability.canonicalPath).catch(() => null)) === capability.sha256 &&
-				(await validCodeModeHostCapability(capability))
-			) {
-				return {
-					available: true,
-					profileId: row.id,
-					version: capability.version,
-					hash: capability.sha256,
-				};
-			}
+		const candidates = await this.discover();
+		const candidate = candidates.find((item) => item.status === "usable");
+		if (
+			row &&
+			typeof row.capability.codexHome === "string" &&
+			typeof row.capability.consentedAt === "string" &&
+			candidate?.version &&
+			candidate.sha256
+		) {
+			return {
+				available: true,
+				profileId: row.id,
+				version: candidate.version,
+				hash: candidate.sha256,
+			};
 		}
 
-		const candidates = await this.discover();
 		return candidates.some((candidate) => candidate.status === "usable")
 			? { available: false, reason: "not_connected" }
 			: { available: false, reason: "no_codex_found" };
@@ -474,21 +523,6 @@ export function codexCodeModeHost(codexExecutable: string): string | null {
 	}
 }
 
-async function validCodeModeHostCapability(
-	capability: Partial<CodexProfileCapability>,
-): Promise<boolean> {
-	if (typeof capability.canonicalPath !== "string") return false;
-	const current = codexCodeModeHost(capability.canonicalPath);
-	if (current === null) {
-		return capability.codeModeHostPath === undefined && capability.codeModeHostSha256 === undefined;
-	}
-	return (
-		capability.codeModeHostPath === current &&
-		typeof capability.codeModeHostSha256 === "string" &&
-		(await sha256Of(current).catch(() => null)) === capability.codeModeHostSha256
-	);
-}
-
 const CODEX_HOME_SNAPSHOT_FILES = ["auth.json", "config.toml"] as const;
 
 /**
@@ -502,7 +536,8 @@ function materializeCodexHomeSnapshot(sourceHome: string, snapshotHome: string):
 	if (source === snapshot) {
 		fail("profile_invalid", "canonical Codex home cannot be the per-run snapshot");
 	}
-	rmSync(snapshot, { recursive: true, force: true });
+	// Preserve per-Run session history across transport reconnection.
+	// Credentials are refreshed below; worker-owned session files remain intact.
 	ensurePrivateDirectory(snapshot);
 
 	for (const fileName of CODEX_HOME_SNAPSHOT_FILES) {

@@ -5,7 +5,6 @@ import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
-	activeConversations,
 	artifactAdoptions,
 	artifacts,
 	canonSources,
@@ -15,7 +14,7 @@ import {
 	runs,
 } from "../storage/schema.js";
 import type { CompanionStateStore, CompanionStateTransaction } from "./companion-store.js";
-import type { PiRuntime } from "./pi-runtime.js";
+import type { PiRuntime, PiSessionListQuery } from "./pi-runtime.js";
 
 export interface SessionCatalogQuery {
 	archived?: boolean;
@@ -35,9 +34,18 @@ export class SessionCatalog {
 		private readonly state: CompanionStateStore,
 		private readonly options: SessionCatalogOptions = {},
 	) {}
-	private selectionTail: Promise<void> = Promise.resolve();
+	/** Catalog mutations serialize only for their own resource, never the window selection. */
+	private readonly mutations = new Map<string, Promise<unknown>>();
 
 	async list(companionId: string, query: SessionCatalogQuery = {}) {
+		return (await this.listPage(companionId, { ...query, limit: Number.MAX_SAFE_INTEGER }))
+			.sessions;
+	}
+
+	async listPage(
+		companionId: string,
+		query: SessionCatalogQuery & Pick<PiSessionListQuery, "cursor" | "limit"> = {},
+	) {
 		const rows = this.db
 			.select({ id: conversations.id })
 			.from(conversations)
@@ -48,53 +56,25 @@ export class SessionCatalog {
 				),
 			)
 			.all();
-		const allowed = new Set(rows.map((row) => row.id));
-		const words = query.title?.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean) ?? [];
-		return (await this.pi.list())
-			.filter((session) => allowed.has(session.id))
-			.filter((session) => {
-				const name = session.name?.toLocaleLowerCase() ?? "";
-				return words.every((word) => name.includes(word));
-			})
-			.sort((left, right) => right.modified.getTime() - left.modified.getTime());
+		return this.pi.listPage({ ...query, allowedIds: new Set(rows.map(({ id }) => id)) });
 	}
 
-	async createAndSelect(companionId: string, title = "") {
-		return this.enqueueSelectionMutation(async () => {
-			const previousConversationId = this.activeConversationId(companionId);
-			let sessionId: string | undefined;
-			let registered = false;
-			try {
-				return await this.pi.create(title, (id) => {
-					sessionId = id;
-					this.registerAndSelect(companionId, id);
-					registered = true;
-				});
-			} catch (error) {
-				if (registered && sessionId)
-					this.rollbackRegistration(companionId, sessionId, previousConversationId);
-				throw error;
-			}
-		});
+	async create(companionId: string, title = "") {
+		let sessionId: string | undefined;
+		try {
+			return await this.pi.create(title, (id) => {
+				this.register(companionId, id);
+				sessionId = id;
+			});
+		} catch (error) {
+			if (sessionId) this.rollbackRegistration(companionId, sessionId);
+			throw error;
+		}
 	}
 
 	async open(companionId: string, sessionId: string) {
 		this.requireOwned(companionId, sessionId);
 		return this.pi.open(sessionId);
-	}
-
-	async activeGet(companionId: string) {
-		const sessionId = this.activeConversationId(companionId);
-		return sessionId ? this.pi.open(sessionId) : undefined;
-	}
-
-	async select(companionId: string, sessionId: string) {
-		return this.enqueueSelectionMutation(async () => {
-			this.requireSelectable(companionId, sessionId);
-			const session = await this.pi.open(sessionId);
-			this.persistActive(companionId, sessionId);
-			return session;
-		});
 	}
 
 	async rename(companionId: string, sessionId: string, title: string) {
@@ -103,7 +83,7 @@ export class SessionCatalog {
 	}
 
 	async fork(companionId: string, sourceSessionId: string, entryId: string) {
-		return this.enqueueSelectionMutation(async () => {
+		return this.mutate(sourceSessionId, async () => {
 			this.requireOwned(companionId, sourceSessionId);
 			const piSessions = await this.pi.list();
 			const source = piSessions.find((session) => session.id === sourceSessionId);
@@ -114,73 +94,61 @@ export class SessionCatalog {
 				suffix += 1;
 			}
 			const forkTitle = `${sourceTitle}(${suffix})`;
-			const previousConversationId = this.activeConversationId(companionId);
 			let sessionId: string | undefined;
 			let registered = false;
 			try {
 				return await this.pi.fork(sourceSessionId, entryId, forkTitle, (id) => {
 					sessionId = id;
-					this.registerAndSelect(companionId, id, (tx) =>
+					this.register(companionId, id, (tx) =>
 						this.state.cloneConversationState(tx, companionId, sourceSessionId, id),
 					);
 					registered = true;
 				});
 			} catch (error) {
-				if (registered && sessionId)
-					this.rollbackRegistration(companionId, sessionId, previousConversationId);
+				if (registered && sessionId) this.rollbackRegistration(companionId, sessionId);
 				throw error;
 			}
 		});
 	}
 
 	async archive(companionId: string, sessionId: string, archived: boolean): Promise<void> {
-		return this.enqueueSelectionMutation(async () => {
+		return this.mutate(sessionId, async () => {
 			this.requireOwned(companionId, sessionId);
 			if (archived) await this.pi.close(sessionId, "preserve");
-			this.db.transaction((tx) => {
-				tx.update(conversations)
-					.set({ archivedAt: archived ? new Date().toISOString() : null })
-					.where(eq(conversations.id, sessionId))
-					.run();
-				if (archived) {
-					tx.delete(activeConversations)
-						.where(
-							and(
-								eq(activeConversations.companionId, companionId),
-								eq(activeConversations.conversationId, sessionId),
-							),
-						)
-						.run();
-				}
-			});
+			this.db
+				.update(conversations)
+				.set({ archivedAt: archived ? new Date().toISOString() : null })
+				.where(and(eq(conversations.id, sessionId), eq(conversations.companionId, companionId)))
+				.run();
 		});
 	}
 
 	async delete(companionId: string, sessionId: string): Promise<void> {
-		return this.enqueueSelectionMutation(async () => {
+		return this.mutate(sessionId, async () => {
 			const owner = this.ownerOf(sessionId);
 			if (!owner) return;
 			if (owner !== companionId) throw { kind: "not_found", reason: "conversation_not_found" };
-			await this.pi.delete(sessionId, async () => {
-				const session = (await this.pi.list()).find((candidate) => candidate.id === sessionId);
+			await this.pi.delete(sessionId, async (sessionPath) => {
 				await this.options.beforeDelete?.(sessionId);
-				if (session?.path) await deleteSessionFile(session.path);
-				const hashes = this.deleteOwnedData(companionId, sessionId);
-				this.options.artifacts?.purgeUnreferenced(hashes);
+				const ownedRuns = this.db
+					.select({ id: runs.id })
+					.from(runs)
+					.where(eq(runs.conversationId, sessionId))
+					.all()
+					.map(({ id }) => id);
+				const remove = async () => {
+					if (sessionPath) await deleteSessionFile(sessionPath);
+					const hashes = this.deleteOwnedData(companionId, sessionId);
+					this.options.artifacts?.purgeUnreferenced(hashes);
+				};
+				if (this.options.artifacts) await this.options.artifacts.withRunDeletion(ownedRuns, remove);
+				else await remove();
 			});
 		});
 	}
 
 	private deleteOwnedData(companionId: string, sessionId: string): string[] {
 		return this.db.transaction((tx) => {
-			tx.delete(activeConversations)
-				.where(
-					and(
-						eq(activeConversations.companionId, companionId),
-						eq(activeConversations.conversationId, sessionId),
-					),
-				)
-				.run();
 			const ownedRuns = tx
 				.select({ id: runs.id })
 				.from(runs)
@@ -218,16 +186,18 @@ export class SessionCatalog {
 		});
 	}
 
-	private enqueueSelectionMutation<T>(mutation: () => Promise<T>): Promise<T> {
-		const result = this.selectionTail.then(mutation, mutation);
-		this.selectionTail = result.then(
-			() => undefined,
-			() => undefined,
-		);
-		return result;
+	private async mutate<T>(sessionId: string, mutation: () => Promise<T>): Promise<T> {
+		const previous = this.mutations.get(sessionId);
+		const result = previous ? previous.then(mutation, mutation) : mutation();
+		this.mutations.set(sessionId, result);
+		try {
+			return await result;
+		} finally {
+			if (this.mutations.get(sessionId) === result) this.mutations.delete(sessionId);
+		}
 	}
 
-	private registerAndSelect(
+	private register(
 		companionId: string,
 		sessionId: string,
 		initialize?: (tx: CompanionStateTransaction) => void,
@@ -235,79 +205,14 @@ export class SessionCatalog {
 		this.db.transaction((tx) => {
 			tx.insert(conversations).values({ id: sessionId, companionId }).run();
 			initialize?.(tx);
-			tx.insert(activeConversations)
-				.values({
-					companionId,
-					conversationId: sessionId,
-					updatedAt: new Date().toISOString(),
-				})
-				.onConflictDoUpdate({
-					target: activeConversations.companionId,
-					set: {
-						conversationId: sessionId,
-						updatedAt: new Date().toISOString(),
-					},
-				})
-				.run();
 		});
 	}
 
-	private rollbackRegistration(
-		companionId: string,
-		sessionId: string,
-		previousConversationId: string | undefined,
-	): void {
-		this.db.transaction((tx) => {
-			const cleared = tx
-				.delete(activeConversations)
-				.where(
-					and(
-						eq(activeConversations.companionId, companionId),
-						eq(activeConversations.conversationId, sessionId),
-					),
-				)
-				.run();
-			tx.delete(conversations).where(eq(conversations.id, sessionId)).run();
-			if (cleared.changes && previousConversationId) {
-				tx.insert(activeConversations)
-					.values({
-						companionId,
-						conversationId: previousConversationId,
-						updatedAt: new Date().toISOString(),
-					})
-					.run();
-			}
-		});
-	}
-
-	private persistActive(companionId: string, sessionId: string): void {
-		const updatedAt = new Date().toISOString();
+	private rollbackRegistration(companionId: string, sessionId: string): void {
 		this.db
-			.insert(activeConversations)
-			.values({ companionId, conversationId: sessionId, updatedAt })
-			.onConflictDoUpdate({
-				target: activeConversations.companionId,
-				set: { conversationId: sessionId, updatedAt },
-			})
-			.run();
-	}
-
-	private activeConversationId(companionId: string): string | undefined {
-		return this.db
-			.select({ conversationId: activeConversations.conversationId })
-			.from(activeConversations)
-			.where(eq(activeConversations.companionId, companionId))
-			.get()?.conversationId;
-	}
-
-	private requireSelectable(companionId: string, sessionId: string): void {
-		const conversation = this.db
-			.select({ archivedAt: conversations.archivedAt })
-			.from(conversations)
+			.delete(conversations)
 			.where(and(eq(conversations.id, sessionId), eq(conversations.companionId, companionId)))
-			.get();
-		if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
-		if (conversation.archivedAt) throw { kind: "conflict", reason: "conversation_archived" };
+			.run();
 	}
 
 	private requireOwned(companionId: string, sessionId: string) {

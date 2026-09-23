@@ -1,5 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -96,6 +97,9 @@ describe("NetworkAndMemorySettings", () => {
 			.fn()
 			.mockResolvedValue({ ok: true, data: { settings: disabledSettings } });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 		expect(
@@ -128,6 +132,9 @@ describe("NetworkAndMemorySettings", () => {
 			data: { candidates: [{ ...candidate, installed: true }], activeTarget: target },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage } = await openSettings();
 		const embedding = embeddingSettings(backstage);
 		expect(
@@ -146,6 +153,9 @@ describe("NetworkAndMemorySettings", () => {
 			data: { candidates: [{ ...candidate, installed: true }] },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		await user.click(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
@@ -183,6 +193,9 @@ describe("NetworkAndMemorySettings", () => {
 			},
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings("network");
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
 		const listbox = await screen.findByRole("listbox", { name: zhCN.settings.proxyMode });
@@ -247,6 +260,9 @@ describe("NetworkAndMemorySettings", () => {
 			},
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage } = await openSettings("network");
 		await waitForSettings(backstage);
 		expect(selectTrigger(backstage, zhCN.settings.proxyMode)).toHaveTextContent(
@@ -260,6 +276,9 @@ describe("NetworkAndMemorySettings", () => {
 	it("keeps provider choices as drafts until memory configuration is explicitly saved", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		expect(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.none }),
@@ -281,6 +300,9 @@ describe("NetworkAndMemorySettings", () => {
 	it("saves proxy changes via settings.set", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
@@ -299,6 +321,9 @@ describe("NetworkAndMemorySettings", () => {
 	it("acquires embedding files independently of configuration and proxy saves", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		await user.click(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
@@ -333,6 +358,9 @@ describe("NetworkAndMemorySettings", () => {
 	it("shows feedback on successful proxy save", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 		await user.click(networkSaveButton(backstage));
@@ -348,6 +376,9 @@ describe("NetworkAndMemorySettings", () => {
 			error: { kind: "internal", reason: "settings_write_failed" },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 		await user.click(networkSaveButton(backstage));
@@ -359,6 +390,9 @@ describe("NetworkAndMemorySettings", () => {
 	it("uses the inline mirror draft for acquisition without persisting memory configuration", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		const embedding = embeddingSettings(backstage);
 		await user.click(
@@ -404,6 +438,9 @@ describe("NetworkAndMemorySettings", () => {
 			return { ok: true as const, data: { settings: localSettings } };
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		expect(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.remote }),
@@ -461,6 +498,9 @@ describe("NetworkAndMemorySettings", () => {
 			data: { ...progress, revision: 3, phase: "cancelled" },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		await user.click(
 			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
@@ -529,6 +569,9 @@ describe("NetworkAndMemorySettings", () => {
 			};
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
 		await user.click(
@@ -595,6 +638,9 @@ describe("NetworkAndMemorySettings", () => {
 			};
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const { backstage, user } = await openSettings();
 		await user.click(selectTrigger(backstage, zhCN.settings.localModel));
 		await user.click(await screen.findByRole("option", { name: alternate.name }));

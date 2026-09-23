@@ -49,7 +49,7 @@ function collectProtocolContract(node, file, source) {
 		file === "packages/protocol/src/schema.ts" &&
 		node.type === "CallExpression" &&
 		node.callee?.type === "Identifier" &&
-		node.callee.name === "endpoint"
+		["endpoint", "characterEndpoint"].includes(node.callee.name)
 	) {
 		const [channel, request, response] = node.arguments ?? [];
 		if (

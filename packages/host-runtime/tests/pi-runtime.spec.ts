@@ -1,6 +1,17 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	unlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LivePush, PiProjectionVersion } from "@bear-harness/protocol";
@@ -179,6 +190,7 @@ async function nativeSetup(
 		context?: PiRuntimeOptions["context"];
 		configureModels?(models: ModelRuntime): void;
 		defaultModel?: { providerId: string; modelId: string };
+		sessionDiscarded?: PiRuntimeOptions["sessionDiscarded"];
 	} = {},
 ) {
 	const dataDir = root();
@@ -209,7 +221,7 @@ async function nativeSetup(
 		events.push({ type: "done", reason: "stop", message: assistantMessage() });
 		return events;
 	});
-	const activities: Extract<LivePush, { type: "conversationActivity" }>[] = [];
+	const activities: Omit<Extract<LivePush, { type: "conversationActivity" }>, "characterId">[] = [];
 	const nativeEvents: PiSessionEvent[] = [];
 	const runtime = new PiRuntime({
 		paths: { runtime: join(dataDir, "runtime"), sessions: join(dataDir, "sessions") },
@@ -226,10 +238,12 @@ async function nativeSetup(
 			explicit: { read: async () => "", edit: async () => "" },
 			...overrides.memory,
 		},
-		sessionActivity: (event: Extract<LivePush, { type: "conversationActivity" }>) =>
-			activities.push(event),
+		sessionActivity: (
+			event: Omit<Extract<LivePush, { type: "conversationActivity" }>, "characterId">,
+		) => activities.push(event),
 		sessionEvent: (sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion) =>
 			nativeEvents.push({ sessionId, event, version }),
+		sessionDiscarded: overrides.sessionDiscarded,
 	} as unknown as PiRuntimeOptions);
 	const session = await runtime.create("Native lifecycle");
 	return { runtime, session, activities, nativeEvents, stream };
@@ -252,6 +266,89 @@ describe("PiRuntime session registry", () => {
 		expect(right.sessionId).toBe(id);
 		expect(buildSession).toHaveBeenCalledTimes(1);
 		expect(runtime.snapshot(id)?.sessionId).toBe(id);
+	});
+
+	it("locates one native transcript without listing or opening unrelated transcripts", async () => {
+		const dataDir = root();
+		const ids = Array.from({ length: 12 }, (_, index) =>
+			persistedSession(dataDir, `Session ${index}`),
+		);
+		const { runtime } = setup(dataDir);
+		const nativeList = vi.spyOn(SessionManager, "list");
+		const nativeOpen = vi.spyOn(SessionManager, "open");
+		try {
+			expect((await runtime.open(ids[5]!)).sessionId).toBe(ids[5]);
+			expect(nativeList).not.toHaveBeenCalled();
+			expect(nativeOpen).toHaveBeenCalledOnce();
+			expect(nativeOpen.mock.calls[0]?.[0]).toContain(`_${ids[5]}.jsonl`);
+		} finally {
+			nativeList.mockRestore();
+			nativeOpen.mockRestore();
+		}
+	});
+
+	it("pages native file metadata before reading transcripts and searches current native titles", async () => {
+		const dataDir = root();
+		const ids = Array.from({ length: 6 }, (_, index) =>
+			persistedSession(dataDir, `Session ${index}`),
+		);
+		for (const [index, id] of ids.entries()) {
+			const file = readdirSync(join(dataDir, "sessions")).find((name) =>
+				name.endsWith(`_${id}.jsonl`),
+			)!;
+			const modified = new Date(1000 * (index + 1));
+			utimesSync(join(dataDir, "sessions", file), modified, modified);
+		}
+		const { runtime } = setup(dataDir);
+		const allowedIds = new Set(ids.slice(0, 5));
+		const nativeOpen = vi.spyOn(SessionManager, "open");
+		try {
+			const first = await runtime.listPage({ allowedIds, limit: 2 });
+			expect(first.sessions.map(({ id }) => id)).toEqual([ids[4], ids[3]]);
+			expect(first.nextCursor).toBe(ids[3]);
+			expect(nativeOpen).toHaveBeenCalledTimes(3);
+			nativeOpen.mockClear();
+			const second = await runtime.listPage({ allowedIds, limit: 2, cursor: first.nextCursor });
+			expect(second.sessions.map(({ id }) => id)).toEqual([ids[2], ids[1]]);
+			expect(nativeOpen).toHaveBeenCalledTimes(3);
+			await runtime.rename(ids[2]!, "Fresh Native Title");
+			expect(
+				(await runtime.listPage({ allowedIds, title: "fresh TITLE", limit: 2 })).sessions.map(
+					({ id }) => id,
+				),
+			).toEqual([ids[2]]);
+			await expect(runtime.listPage({ allowedIds, cursor: ids[5] })).rejects.toMatchObject({
+				reason: "conversation_cursor_not_found",
+			});
+		} finally {
+			nativeOpen.mockRestore();
+		}
+	});
+
+	it("rejects foreign ownership, symlink and duplicate native transcript resources", async () => {
+		const dataDir = root();
+		const otherDir = root();
+		const otherId = persistedSession(otherDir, "Foreign");
+		const otherName = readdirSync(join(otherDir, "sessions"))[0]!;
+		const otherFile = join(otherDir, "sessions", otherName);
+		const { runtime } = setup(dataDir);
+		symlinkSync(otherFile, join(dataDir, "sessions", otherName));
+		await expect(runtime.open(otherId)).rejects.toMatchObject({ reason: "pi_session_not_found" });
+		unlinkSync(join(dataDir, "sessions", otherName));
+		copyFileSync(otherFile, join(dataDir, "sessions", otherName));
+		await expect(runtime.open(otherId)).rejects.toMatchObject({ reason: "pi_session_not_found" });
+		expect((await runtime.listPage()).sessions).toEqual([]);
+		const id = persistedSession(dataDir, "Local");
+		const localName = readdirSync(join(dataDir, "sessions")).find((name) =>
+			name.endsWith(`_${id}.jsonl`),
+		)!;
+		copyFileSync(
+			join(dataDir, "sessions", localName),
+			join(dataDir, "sessions", `2025-01-01T00-00-00-000Z_${id}.jsonl`),
+		);
+		await expect(runtime.open(id)).rejects.toMatchObject({
+			reason: "pi_session_resource_ambiguous",
+		});
 	});
 
 	it("lists a native empty handle, then discards its missing transcript on close", async () => {
@@ -540,6 +637,84 @@ describe("PiRuntime session registry", () => {
 		expect(built.get(beta)?.abort).not.toHaveBeenCalled();
 		expect(runtime.snapshot(alpha)).toBeUndefined();
 		expect(runtime.snapshot(beta)?.sessionId).toBe(beta);
+	});
+
+	it("excludes reopen during close and retains the exact owner when disposal must be retried", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Retry close");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		const fake = built.get(id)!;
+		const abort = Promise.withResolvers<void>();
+		fake.abort.mockImplementationOnce(() => abort.promise);
+		const closing = runtime.close(id);
+		const failed = expect(closing).rejects.toThrow("temporary abort failure");
+		await vi.waitFor(() => expect(fake.abort).toHaveBeenCalledOnce());
+		await expect(runtime.open(id)).rejects.toMatchObject({ reason: "pi_session_closing" });
+		abort.reject(new Error("temporary abort failure"));
+		await failed;
+		expect(runtime.snapshot(id)).toBe(session);
+		expect(fake.dispose).not.toHaveBeenCalled();
+		await expect(runtime.send(id, "blocked")).rejects.toMatchObject({
+			reason: "pi_session_closing",
+		});
+		await runtime.close(id);
+		expect(fake.dispose).toHaveBeenCalledOnce();
+		expect(runtime.snapshot(id)).toBeUndefined();
+		expect(await runtime.open(id)).not.toBe(session);
+		await runtime.closeAll();
+	});
+
+	it("shutdown drains an already opening handle and rejects new construction", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Opening");
+		const { runtime } = setup(dataDir);
+		const ready = Promise.withResolvers<void>();
+		let fake: FakeSession | undefined;
+		const build = vi.fn(async (manager: SessionManager) => {
+			fake = fakeSession(manager);
+			await ready.promise;
+			return fake.session;
+		});
+		Object.assign(runtime, { buildSession: build });
+		const opening = runtime.open(id);
+		await vi.waitFor(() => expect(build).toHaveBeenCalledOnce());
+		const closing = runtime.shutdown();
+		await expect(runtime.create()).rejects.toMatchObject({ reason: "pi_runtime_closed" });
+		ready.resolve();
+		await opening;
+		await closing;
+		expect(fake?.dispose).toHaveBeenCalledOnce();
+		expect(runtime.snapshot(id)).toBeUndefined();
+	});
+
+	it("ignores a delayed title after deletion without recreating the transcript", async () => {
+		const dataDir = root();
+		const { runtime } = setup(dataDir);
+		const session = await runtime.create();
+		const title = Promise.withResolvers<ReturnType<typeof assistantMessage>>();
+		const completeSimple = vi.fn(() => title.promise);
+		Object.assign(session, {
+			model: { provider: "provider", id: "model" },
+			modelRuntime: { completeSimple },
+			prompt: vi.fn(async (text, options) => {
+				session.sessionManager.appendMessage({ role: "user", content: text, timestamp: 1 });
+				session.sessionManager.appendMessage(assistantMessage());
+				options.preflightResult(true);
+			}),
+		});
+		await runtime.send(session.sessionId, "first turn");
+		await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledOnce());
+		const file = session.sessionManager.getSessionFile()!;
+		await runtime.delete(session.sessionId, (path) => {
+			expect(path).toBe(file);
+			unlinkSync(path!);
+		});
+		title.resolve(assistantMessage("Late title"));
+		await title.promise;
+		await Promise.resolve();
+		expect(existsSync(file)).toBe(false);
+		expect(session.sessionManager.getSessionName()).toBeUndefined();
 	});
 
 	it.runIf(typeof (globalThis as { gc?: () => void }).gc === "function")(
@@ -874,6 +1049,55 @@ describe("PiRuntime session registry", () => {
 		await runtime.closeAll();
 	});
 
+	it("deduplicates transport admission without waiting for the Pi turn and isolates session receipts", async () => {
+		const dataDir = root();
+		const { runtime } = setup(dataDir);
+		const alpha = await runtime.open(persistedSession(dataDir, "Alpha"));
+		const beta = await runtime.open(persistedSession(dataDir, "Beta"));
+		const turn = Promise.withResolvers<void>();
+		const prompt = vi.fn((_text, options) => {
+			Object.assign(alpha, { isStreaming: true });
+			options.preflightResult(true);
+			return turn.promise;
+		});
+		const betaPrompt = vi.fn(async (_text, options) => options.preflightResult(true));
+		Object.assign(alpha, { prompt });
+		Object.assign(beta, { prompt: betaPrompt });
+		await Promise.all([
+			runtime.send(alpha.sessionId, "once", undefined, "request-1"),
+			runtime.send(alpha.sessionId, "once", undefined, "request-1"),
+			runtime.send(beta.sessionId, "other session", undefined, "request-1"),
+		]);
+		expect(prompt).toHaveBeenCalledOnce();
+		expect(betaPrompt).toHaveBeenCalledOnce();
+		expect(alpha.isStreaming).toBe(true);
+		await expect(
+			runtime.send(alpha.sessionId, "next", undefined, "request-2"),
+		).rejects.toMatchObject({ reason: "pi_session_busy" });
+		turn.resolve();
+		await runtime.closeAll();
+	});
+
+	it("forgets rejected receipts and evicts old admission receipts at the resource bound", async () => {
+		const dataDir = root();
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(persistedSession(dataDir, "Receipts"));
+		const prompt = vi.fn(async (_text, options) => options.preflightResult(true));
+		prompt.mockImplementationOnce(async (_text, options) => options.preflightResult(false));
+		Object.assign(session, { prompt });
+		await expect(
+			runtime.send(session.sessionId, "retry", undefined, "retry"),
+		).rejects.toMatchObject({ reason: "pi_prompt_rejected" });
+		await runtime.send(session.sessionId, "retry", undefined, "retry");
+		await runtime.send(session.sessionId, "retry", undefined, "retry");
+		expect(prompt).toHaveBeenCalledTimes(2);
+		for (let index = 0; index < 1_000; index += 1)
+			await runtime.send(session.sessionId, "request", undefined, `request-${index}`);
+		await runtime.send(session.sessionId, "retry", undefined, "retry");
+		expect(prompt).toHaveBeenCalledTimes(1_003);
+		await runtime.closeAll();
+	});
+
 	it("delegates external result queue capacity to Pi", async () => {
 		const dataDir = root();
 		const id = persistedSession(dataDir, "Full result queue");
@@ -1044,6 +1268,45 @@ describe("PiRuntime session registry", () => {
 });
 
 describe("PiRuntime native stage lifecycle", () => {
+	it("keeps the first native transcript when abort during close materializes it", async () => {
+		const discarded = vi.fn();
+		const { runtime, session, stream } = await nativeSetup({
+			memory: { enabled: () => false },
+			sessionDiscarded: discarded,
+		});
+		stream.mockImplementation((_model, _context, options) => {
+			const events = new AssistantMessageEventStream();
+			options?.signal?.addEventListener(
+				"abort",
+				() =>
+					events.push({
+						type: "error",
+						reason: "aborted",
+						error: {
+							...assistantMessage(),
+							provider: "test",
+							model: "test-model",
+							stopReason: "aborted",
+							errorMessage: "Request aborted",
+						},
+					}),
+				{ once: true },
+			);
+			return events;
+		});
+		await runtime.send(session.sessionId, "first question");
+		await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce());
+		const file = session.sessionManager.getSessionFile()!;
+		expect(existsSync(file)).toBe(false);
+		await runtime.close(session.sessionId);
+		expect(discarded).not.toHaveBeenCalled();
+		expect(existsSync(file)).toBe(true);
+		expect((await runtime.list()).map(({ id }) => id)).toContain(session.sessionId);
+		const reopened = await runtime.open(session.sessionId);
+		expect(reopened.messages.map(({ role }) => role)).toEqual(["user", "assistant"]);
+		await runtime.closeAll();
+	});
+
 	it("routes isolated native search through the model selected at execution time", async () => {
 		const requests: string[] = [];
 		vi.stubGlobal(
@@ -1472,8 +1735,10 @@ describe("PiRuntime native stage lifecycle", () => {
 		const closing = runtime.close(session.sessionId);
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		expect(dispose).not.toHaveBeenCalled();
-		await runtime.abort(session.sessionId);
-		expect(runtime.snapshot(session.sessionId)).toBeUndefined();
+		await expect(runtime.abort(session.sessionId)).rejects.toMatchObject({
+			reason: "pi_session_closing",
+		});
+		expect(runtime.snapshot(session.sessionId)).toBe(session);
 		expect(dispose).not.toHaveBeenCalled();
 		finishCapture();
 		await closing;

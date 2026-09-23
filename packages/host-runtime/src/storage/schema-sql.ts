@@ -19,11 +19,6 @@ CREATE TABLE companion_identity (
 	name TEXT NOT NULL,
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE active_character (
-	singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-	character_id TEXT NOT NULL REFERENCES companion_identity(id),
-	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE app_settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	system_model_onboarding_complete INTEGER NOT NULL DEFAULT 0
@@ -66,8 +61,8 @@ CREATE TABLE configured_models (
 );
 CREATE TABLE executor_profiles (
 	id TEXT PRIMARY KEY,
-	profile_type TEXT NOT NULL CHECK (profile_type IN ('pi','codex')),
-	capability_json TEXT NOT NULL DEFAULT '{}',
+	profile_type TEXT NOT NULL CHECK (profile_type IN ('pi','codex','custom')),
+	config_json TEXT NOT NULL DEFAULT '{}',
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE character_drafts (
@@ -88,7 +83,7 @@ CREATE TABLE character_draft_revisions (
 	PRIMARY KEY (draft_id, revision)
 );
 INSERT INTO app_settings (id) VALUES (1);
-INSERT INTO executor_profiles (id, profile_type, capability_json)
+INSERT INTO executor_profiles (id, profile_type, config_json)
 	VALUES ('pi-default', 'pi', '{}');
 INSERT INTO installation_identity (id, installation_id)
 VALUES (1, lower(
@@ -99,7 +94,17 @@ VALUES (1, lower(
 ));
 `;
 
+/** One character's consent; independent of installation embedding capability. */
+export const CHARACTER_MEMORY_SETTINGS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS character_memory_settings (
+	id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+	enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1))
+);
+INSERT OR IGNORE INTO character_memory_settings (id) VALUES (1);
+`;
+
 export const COMPANION_SCHEMA_SQL = `
+${CHARACTER_MEMORY_SETTINGS_SCHEMA_SQL}
 CREATE TABLE runtime_identity (
 	id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 	companion_id TEXT NOT NULL UNIQUE,
@@ -112,11 +117,6 @@ CREATE TABLE conversations (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 	archived_at TEXT
-);
-CREATE TABLE active_conversations (
-	companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
-	conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_conversations_active ON conversations(companion_id, archived_at, updated_at);
 CREATE TABLE model_route_settings (
@@ -175,8 +175,9 @@ CREATE TABLE artifacts (
 	mime TEXT NOT NULL,
 	bytes INTEGER NOT NULL DEFAULT 0,
 	sha256 TEXT NOT NULL,
-	status TEXT NOT NULL DEFAULT 'created'
-		CHECK (status IN ('created','verified','verification_failed','adopted','saved')),
+	verification TEXT NOT NULL DEFAULT 'pending'
+		CHECK (verification IN ('pending','verified','failed')),
+	saved INTEGER NOT NULL DEFAULT 0 CHECK (saved IN (0,1)),
 	producer_run_id TEXT REFERENCES runs(id),
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

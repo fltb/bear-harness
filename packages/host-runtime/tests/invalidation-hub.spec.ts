@@ -15,6 +15,7 @@ describe("InvalidationHub", () => {
 		hub.invalidate(CacheKey.conversations(), CacheKey.conversations());
 
 		expect(first).toHaveBeenCalledWith({
+			scope: "system",
 			keys: [["conversations"]],
 		});
 		expect(second).toHaveBeenCalledTimes(1);

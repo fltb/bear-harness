@@ -19,7 +19,6 @@ const refreshesByClient = new WeakMap<QueryClient, Map<string, Refresh>>();
 export const queryKeys = {
 	snapshot: CacheKey.snapshot(),
 	conversations: CacheKey.conversations(),
-	activeConversation: ["conversation", "active"] as const,
 	archivedConversations: [...CacheKey.conversations(), "archived"] as const,
 	conversation: CacheKey.conversation,
 	companionState: CacheKey.companionState,

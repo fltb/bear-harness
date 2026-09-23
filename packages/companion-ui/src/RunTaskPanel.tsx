@@ -5,7 +5,7 @@ import { RunEventTimeline } from "./RunActivity.js";
 import type { RunInfo } from "./stores/ipc.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button, TextField } from "./ui/primitives.js";
-import { PermissionCard, WorkRunCard } from "./WorkPanel.js";
+import { PermissionCard, RunProvenance, WorkRunCard } from "./WorkPanel.js";
 
 export function RunTaskPanel() {
 	const workflow = useShellWorkflowStore();
@@ -237,6 +237,10 @@ function TaskDetails(props: { runId: string; onBack(): void }) {
 							<Show when={!run().artifacts.length}>
 								<p class="task-notice">{t("work.task.noArtifacts")}</p>
 							</Show>
+							<details class="task-disclosure">
+								<summary>{t("work.result.provenance")}</summary>
+								<RunProvenance provenance={data().provenance} />
+							</details>
 							<section class="task-evidence" aria-label={t("work.activity.timeline")}>
 								<div class="task-panel-heading">
 									<h4>{t("work.activity.timeline")}</h4>

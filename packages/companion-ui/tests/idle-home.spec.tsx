@@ -1,6 +1,7 @@
 import { setProductLocale } from "@bear-harness/i18n";
 import { en, zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -11,6 +12,9 @@ describe("idle homepage (official config, no bridge)", () => {
 	it("renders the localized app identity and shell frame", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		expect(document.title).toBe(zhCN.shell.productName);
 		expect(screen.getByRole("application", { name: zhCN.shell.productName })).toBeInTheDocument();
@@ -67,6 +71,9 @@ describe("idle homepage (official config, no bridge)", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());
 		await waitFor(() => expect(providerList).toHaveBeenCalled());
@@ -75,9 +82,12 @@ describe("idle homepage (official config, no bridge)", () => {
 		).toBeInTheDocument();
 	});
 
-	it("keeps the shell with accessibility landmarks", () => {
+	it("keeps the shell with accessibility landmarks", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		expect(
 			screen.getByRole("navigation", { name: zhCN.sidebar.conversations }),
@@ -91,6 +101,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const backstage = screen.getByRole("button", { name: zhCN.sidebar.characterSettings });
 		expect(backstage).toBeEnabled();
@@ -122,6 +135,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		expect(
 			screen.queryByRole("button", { name: zhCN.sidebar.archivedConversations }),
@@ -139,6 +155,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 		const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
@@ -170,6 +189,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		});
 
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const warning = await screen.findByRole("status");
 		expect(warning).toHaveTextContent("ja-JP");

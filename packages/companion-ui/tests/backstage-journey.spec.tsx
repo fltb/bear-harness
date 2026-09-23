@@ -1,9 +1,8 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { Button } from "@kobalte/core/button";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import userEvent from "@testing-library/user-event";
 import { strToU8, zipSync } from "fflate";
-import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
@@ -27,7 +26,10 @@ describe("ordinary-user backstage journey", () => {
 		);
 		const store = {
 			embedding: createEmbeddingBinding() as never,
+			settings: { data: () => ({ memoryVectorService: { enabled: false } }) },
 			characters: {
+				memoryGet: vi.fn(async () => ({ enabled: false })),
+				memorySet: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
 				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
 				characters: () => [
 					{
@@ -64,9 +66,11 @@ describe("ordinary-user backstage journey", () => {
 		} as unknown as CompanionStore;
 
 		render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open initialTab="roles" onClose={() => undefined} />
-			</DesktopProvider>
+			<QueryClientProvider client={new QueryClient()}>
+				<DesktopProvider store={store}>
+					<Backstage open initialTab="roles" onClose={() => undefined} />
+				</DesktopProvider>
+			</QueryClientProvider>
 		));
 
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
@@ -84,11 +88,12 @@ describe("ordinary-user backstage journey", () => {
 		expect(confirmPluginTrust).toHaveBeenCalledWith("imported-role");
 	});
 
-	it("warns before stopping an active reply to switch characters", async () => {
+	it("switches the displayed character while another character is streaming", async () => {
 		const user = userEvent.setup();
 		const activate = vi.fn(() => Promise.resolve());
 		const store = {
 			embedding: createEmbeddingBinding() as never,
+			settings: { data: () => ({ memoryVectorService: { enabled: false } }) },
 			model: {
 				models: () => [],
 				data: () => ({ defaults: { vision: { mode: "auto" }, onboardingComplete: true } }),
@@ -103,6 +108,8 @@ describe("ordinary-user backstage journey", () => {
 				followUp: [],
 			},
 			characters: {
+				memoryGet: vi.fn(async () => ({ enabled: false })),
+				memorySet: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
 				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
 				observeTrust: () => ({
 					data: () => ({
@@ -144,9 +151,11 @@ describe("ordinary-user backstage journey", () => {
 		} as unknown as CompanionStore;
 
 		render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open initialTab="roles" onClose={() => undefined} />
-			</DesktopProvider>
+			<QueryClientProvider client={new QueryClient()}>
+				<DesktopProvider store={store}>
+					<Backstage open initialTab="roles" onClose={() => undefined} />
+				</DesktopProvider>
+			</QueryClientProvider>
 		));
 
 		const backstage = await screen.findByRole("dialog", {
@@ -156,32 +165,10 @@ describe("ordinary-user backstage journey", () => {
 			name: zhCN.backstage.roleSwitch,
 		});
 		await user.click(switchButton);
-		let warning = await screen.findByRole("dialog", {
-			name: zhCN.backstage.roleSwitchBusyTitle,
-		});
-		expect(
-			within(warning).getByText(
-				zhCN.backstage.roleSwitchBusyDescription.replace("{name}", "Target Character"),
-			),
-		).toBeVisible();
-		expect(activate).not.toHaveBeenCalled();
-
-		await user.click(
-			within(warning).getByRole("button", { name: zhCN.backstage.roleSwitchBusyCancel }),
-		);
-		await waitFor(() =>
-			expect(
-				screen.queryByRole("dialog", { name: zhCN.backstage.roleSwitchBusyTitle }),
-			).not.toBeInTheDocument(),
-		);
-		expect(activate).not.toHaveBeenCalled();
-
-		await user.click(switchButton);
-		warning = await screen.findByRole("dialog", { name: zhCN.backstage.roleSwitchBusyTitle });
-		await user.click(
-			within(warning).getByRole("button", { name: zhCN.backstage.roleSwitchBusyConfirm }),
-		);
 		await waitFor(() => expect(activate).toHaveBeenCalledWith("target-character"));
+		expect(activate).toHaveBeenCalledTimes(1);
+		expect(store.activePiLiveState.isStreaming).toBe(true);
+		expect(screen.getAllByRole("dialog")).toHaveLength(1);
 	});
 
 	it("opens character and system settings as distinct destinations and imports a ZIP package", async () => {
@@ -190,13 +177,15 @@ describe("ordinary-user backstage journey", () => {
 		const store = {
 			embedding: createEmbeddingBinding() as never,
 			characters: {
+				memoryGet: vi.fn(async () => ({ enabled: false })),
+				memorySet: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
 				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
 				characters: () => [],
 				activate: vi.fn(),
 				import: importPackage,
 			},
 			settings: {
-				data: () => ({ relationshipMemoryEnabled: false, networkProxy: { mode: "direct" } }),
+				data: () => ({ memoryVectorService: { enabled: false }, networkProxy: { mode: "direct" } }),
 				get: vi.fn(),
 			},
 			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
@@ -209,9 +198,11 @@ describe("ordinary-user backstage journey", () => {
 		} as unknown as CompanionStore;
 
 		const characterView = render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open initialTab="roles" onClose={() => undefined} />
-			</DesktopProvider>
+			<QueryClientProvider client={new QueryClient()}>
+				<DesktopProvider store={store}>
+					<Backstage open initialTab="roles" onClose={() => undefined} />
+				</DesktopProvider>
+			</QueryClientProvider>
 		));
 		const characterDialog = await screen.findByRole("dialog", {
 			name: zhCN.sidebar.characterSettings,
@@ -231,9 +222,11 @@ describe("ordinary-user backstage journey", () => {
 
 		const closeSystemSettings = vi.fn();
 		render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open initialTab="settings" onClose={closeSystemSettings} />
-			</DesktopProvider>
+			<QueryClientProvider client={new QueryClient()}>
+				<DesktopProvider store={store}>
+					<Backstage open initialTab="settings" onClose={closeSystemSettings} />
+				</DesktopProvider>
+			</QueryClientProvider>
 		));
 		const systemDialog = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
 		expect(within(systemDialog).queryByRole("tablist")).not.toBeInTheDocument();
@@ -281,15 +274,19 @@ describe("ordinary-user backstage journey", () => {
 				set: vi.fn(() => Promise.resolve()),
 			},
 			characters: {
+				memoryGet: vi.fn(async () => ({ enabled: false })),
+				memorySet: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
 				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
 				characters: () => [],
 			},
 			character,
 		} as unknown as CompanionStore;
 		render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open onClose={() => undefined} />
-			</DesktopProvider>
+			<QueryClientProvider client={new QueryClient()}>
+				<DesktopProvider store={store}>
+					<Backstage open onClose={() => undefined} />
+				</DesktopProvider>
+			</QueryClientProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		expect(

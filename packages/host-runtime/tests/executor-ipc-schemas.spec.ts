@@ -34,20 +34,25 @@ describe("executor control IPC schemas", () => {
 	it("requires the exact pending permission request and option rather than treating resume as approval", () => {
 		expect(
 			schema("run.respondPermission").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				requestId: "permission-1",
 				optionId: "allow-once",
 			}).success,
 		).toBe(true);
-		expect(schema("run.cancel").safeParse({ runId: "run-1" }).success).toBe(true);
+		expect(schema("run.cancel").safeParse({ characterId: "bear", runId: "run-1" }).success).toBe(
+			true,
+		);
 		expect(
 			schema("run.respondPermission").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				optionId: "allow-once",
 			}).success,
 		).toBe(false);
 		expect(
 			schema("run.resume").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				requestId: "permission-1",
 				optionId: "allow-once",
@@ -58,6 +63,7 @@ describe("executor control IPC schemas", () => {
 	it("bounds task history and evidence pages without rejecting valid cursors", () => {
 		expect(
 			schema("run.list").safeParse({
+				characterId: "bear",
 				conversationId: "conversation-1",
 				scope: "history",
 				cursor: "page-2",
@@ -66,21 +72,23 @@ describe("executor control IPC schemas", () => {
 		).toBe(true);
 		expect(
 			schema("run.get").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				cursor: "evidence-2",
 				limit: 100,
 			}).success,
 		).toBe(true);
-		expect(schema("run.list").safeParse({ limit: 101 }).success).toBe(false);
-		expect(schema("run.get").safeParse({ runId: "run-1", limit: 0 }).success).toBe(false);
+		expect(schema("run.list").safeParse({ characterId: "bear", limit: 101 }).success).toBe(false);
 		expect(
-			schema("run.get").safeParse({
-				runId: "run-1",
-				cursor: "x".repeat(257),
-			}).success,
+			schema("run.get").safeParse({ characterId: "bear", runId: "run-1", limit: 0 }).success,
+		).toBe(false);
+		expect(
+			schema("run.get").safeParse({ characterId: "bear", runId: "run-1", cursor: "x".repeat(257) })
+				.success,
 		).toBe(false);
 		expect(
 			schema("run.get").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				path: "/private/worker-output",
 			}).success,
@@ -90,12 +98,14 @@ describe("executor control IPC schemas", () => {
 	it("accepts continuation instructions beyond the former quota and reports steering without claiming completion", () => {
 		expect(
 			schema("run.resume").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				instruction: "Continue with only the verified inputs.",
 			}).success,
 		).toBe(true);
 		expect(
 			schema("run.resume").safeParse({
+				characterId: "bear",
 				runId: "run-1",
 				instruction: "x".repeat(12001),
 			}).success,

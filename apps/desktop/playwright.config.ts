@@ -15,7 +15,7 @@ export default defineConfig({
 	timeout: 90_000,
 	workers: 1,
 	reporter: [["list"]],
-	outputDir: resolve(here, "../../test-results"),
+	outputDir: resolve(here, "../../test-results/electron"),
 	forbidOnly: true,
 	retries: 0,
 });

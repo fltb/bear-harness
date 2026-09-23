@@ -1,6 +1,7 @@
 import { createCompanionClient } from "@bear-harness/companion-client";
-import { CompanionApp } from "@bear-harness/companion-ui";
+import { CompanionApp, useCompanionStore } from "@bear-harness/companion-ui";
 import { productConfig } from "@bear-harness/product-config";
+import { onCleanup } from "solid-js";
 import { render } from "solid-js/web";
 import "@bear-harness/companion-ui/styles.css";
 import { DEMO_CHARACTERS, SCENARIO } from "./demo/scenario";
@@ -44,8 +45,26 @@ function showError(error: unknown): void {
 	window.dispatchEvent(new CustomEvent("demo:fault", { detail: { message } }));
 }
 
+// Observe the real window-local store; the scripted Host never owns UI selection.
+let inspectSelection: () => { characterId: string | null; activeConversationId: string | null } =
+	() => ({ characterId: null, activeConversationId: null });
+function ObserveSelection() {
+	const store = useCompanionStore();
+	inspectSelection = () => ({
+		characterId: store.character?.id ?? null,
+		activeConversationId: store.activeConversationId,
+	});
+	onCleanup(() => {
+		inspectSelection = () => ({ characterId: null, activeConversationId: null });
+	});
+	return null;
+}
 const appDispose = render(
-	() => <CompanionApp product={productConfig} client={client} platform="web" />,
+	() => (
+		<CompanionApp product={productConfig} client={client} platform="web">
+			<ObserveSelection />
+		</CompanionApp>
+	),
 	root,
 );
 const ready = (async () => {
@@ -53,7 +72,8 @@ const ready = (async () => {
 	await new Promise<void>((resolve) =>
 		requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
 	);
-	if (!root.querySelector('[role="application"]')) throw new Error("CompanionApp did not mount");
+	await waitFor(() => Boolean(root.querySelector('[role="application"]')), "CompanionApp mount");
+	await selectConversation("jizhou-night-reading");
 })();
 
 function visibleButtons(): HTMLButtonElement[] {
@@ -99,7 +119,7 @@ async function closeBackstage(): Promise<void> {
 	await waitFor(() => !document.querySelector(".backstage-sheet"), "backstage close");
 }
 async function switchCharacter(name: string, id: string): Promise<void> {
-	if ((transport.inspect().characterId as string) === id) return;
+	if (inspectSelection().characterId === id) return;
 	if (!document.querySelector(".backstage-sheet")) clickButton("角色设置");
 	await waitFor(
 		() =>
@@ -117,7 +137,7 @@ async function switchCharacter(name: string, id: string): Promise<void> {
 	);
 	if (!switcher) throw new Error(`required real role switch control not found: ${name}`);
 	switcher.click();
-	await waitFor(() => (transport.inspect().characterId as string) === id, `${name} activation`);
+	await waitFor(() => inspectSelection().characterId === id, `${name} activation`);
 	await closeBackstage();
 }
 async function selectConversation(id: string): Promise<void> {
@@ -129,14 +149,14 @@ async function selectConversation(id: string): Promise<void> {
 	if (!button) throw new Error(`required real conversation control not found: ${id}`);
 	button.click();
 	await waitFor(
-		() => (transport.inspect().activeConversationId as string) === id,
+		() => inspectSelection().activeConversationId === id,
 		`conversation ${id} selection`,
 	);
 }
 async function createConversation(): Promise<void> {
 	clickButton("新建对话");
 	await waitFor(
-		() => transport.inspect().activeConversationId === "jizhou-night-reading-2",
+		() => inspectSelection().activeConversationId === "jizhou-night-reading-2",
 		"real new conversation creation",
 	);
 }
@@ -303,6 +323,7 @@ const demo: DemoApi = {
 		const area = document.querySelector(".composer textarea");
 		return {
 			...transport.inspect(),
+			...inspectSelection(),
 			sceneId: currentScene,
 			characterIds: Object.keys(DEMO_CHARACTERS),
 			cursorTarget: target ? controlCenter(target) : lastControl,

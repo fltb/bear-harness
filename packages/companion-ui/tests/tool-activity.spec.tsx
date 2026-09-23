@@ -7,10 +7,17 @@ import type {
 	PiSessionEntry,
 } from "@bear-harness/protocol";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/App.js";
-import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
+import {
+	createTestClient,
+	OFFICIAL_PRODUCT,
+	pushInvalidation,
+	pushPiEvent,
+	THEMED_CHARACTER,
+} from "./fixtures.js";
 
 const toolEntry = (
 	id: string,
@@ -116,11 +123,11 @@ function configure(
 			...live,
 		},
 	};
-	client.conversation.activeGet = vi.fn(async () => ({
+	client.conversation.open = vi.fn(async () => ({
 		ok: true as const,
-		data: { activeConversation: detail },
+		data: detail,
 	}));
-	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
+
 	client.conversation.open = vi.fn(async () => ({ ok: true as const, data: detail }));
 }
 
@@ -133,6 +140,9 @@ describe("Pi native tool rendering", () => {
 			]),
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const jump = await screen.findByRole("button", { name: zhCN.messages.jumpToResponseEnd });
 		expect(jump.closest("header")).not.toBeNull();
 		expect(jump.closest("header")).toHaveTextContent(THEMED_CHARACTER.name);
@@ -159,6 +169,9 @@ describe("Pi native tool rendering", () => {
 			assistantEntry("next-response", [{ type: "text", text: "Next response" }]),
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await screen.findByText("Next response");
 		const rows = screen.getAllByTestId("virtual-timeline-item");
 		expect(rows.filter((row) => row.dataset.responseStart === "true")).toHaveLength(2);
@@ -183,6 +196,9 @@ describe("Pi native tool rendering", () => {
 			assistantEntry("response", [{ type: "text", text: "Visible response" }]),
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		const response = (await screen.findByText("Visible response")).closest("article")!;
 		const reasoning = screen.getByText("Private reasoning").closest("article")!;
 		expect(within(reasoning).queryByRole("button")).not.toBeInTheDocument();
@@ -204,6 +220,9 @@ describe("Pi native tool rendering", () => {
 			toolEntry("result", "read"),
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await user.click(await screen.findByText("read", { exact: true }));
 		expect(screen.getAllByTestId("virtual-timeline-item")).toHaveLength(1);
 		expect(screen.getByTestId("virtual-timeline-item")).toHaveAttribute(
@@ -218,6 +237,9 @@ describe("Pi native tool rendering", () => {
 		const user = userEvent.setup();
 		configure(client, []);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await screen.findByRole("region", { name: zhCN.messages.conversation });
 
 		pushPiEvent(client, {
@@ -335,6 +357,9 @@ describe("Pi native tool rendering", () => {
 			version: { instanceId, sequence: 0 },
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await screen.findByRole("region", { name: zhCN.messages.conversation });
 
 		pushPiEvent(client, {
@@ -475,6 +500,9 @@ describe("Pi native tool rendering", () => {
 		const { client } = createTestClient();
 		configure(client, []);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await screen.findByRole("region", { name: zhCN.messages.conversation });
 		const live = {
 			isStreaming: false,
@@ -545,6 +573,9 @@ describe("Pi native tool rendering", () => {
 		const { client } = createTestClient();
 		configure(client, [], THEMED_CHARACTER, { isCompacting: true });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		expect(await screen.findByTestId("conversation-activity")).toHaveAttribute(
 			"data-activity",
 			"compaction",
@@ -558,6 +589,9 @@ describe("Pi native tool rendering", () => {
 		const { client } = createTestClient();
 		configure(client, [], THEMED_CHARACTER, { isStreaming: true, isCompacting: true });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		expect(await screen.findByRole("button", { name: zhCN.composer.stopLabel })).toBeEnabled();
 		expect(screen.getByTestId("conversation-activity")).toHaveAttribute(
 			"data-activity",
@@ -576,6 +610,9 @@ describe("Pi native tool rendering", () => {
 			followUp: ["Then describe the result"],
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		expect(await screen.findByRole("button", { name: zhCN.composer.stopLabel })).toBeEnabled();
 		expect(screen.getByTestId("conversation-activity")).toHaveAttribute("data-activity", "retry");
 		pushPiEvent(client, {
@@ -630,6 +667,9 @@ describe("Pi native tool rendering", () => {
 			{ ...THEMED_CHARACTER, media: [media] },
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await user.click(await screen.findByText("host_choices"));
 		expect(screen.getByText(/"message": "Continue investigating\."/)).toBeVisible();
 		expect(
@@ -664,6 +704,9 @@ describe("Pi native tool rendering", () => {
 			tools.map((name, index) => toolEntry(`tool-${index}`, name, { matches: ["found"] })),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		for (const name of tools) {
 			const article = await screen.findByRole("article", {
 				name: `${name} ${zhCN.messages.toolActivity.completed}`,
@@ -684,6 +727,9 @@ describe("Pi native tool rendering", () => {
 			}),
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await user.click(await screen.findByText("explicit_memory"));
 		expect(screen.getByText(/"changed": false/)).toBeVisible();
 		expect(screen.getByText(/用户明确要求记住北辰。/)).toBeVisible();
@@ -749,8 +795,17 @@ describe("Pi native tool rendering", () => {
 			},
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
+		const resultNotice = await screen.findByRole("article", {
+			name: zhCN.messages.toolActivity.externalResult,
+		});
+		await userEvent
+			.setup()
+			.click(within(resultNotice).getByText(zhCN.messages.native.source, { selector: "summary" }));
 		expect(
-			await screen.findByText("Run run-42 (pi) failed: compiler rejected input"),
+			within(resultNotice).getByText("Run run-42 (pi) failed: compiler rejected input"),
 		).toBeVisible();
 		expect(screen.getByText("native-provider / native-model")).toBeVisible();
 		expect(screen.getByText("high")).toBeVisible();
@@ -786,6 +841,9 @@ describe("Pi native tool rendering", () => {
 			result,
 		]);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		await user.click(await screen.findByText("read"));
 		expect(screen.getByText(/"offset": 900/)).toBeVisible();
 		expect(screen.getByText(longOutput)).toBeVisible();
@@ -817,6 +875,9 @@ describe("Pi native tool rendering", () => {
 			streamingMessage: saved.type === "message" ? saved.message : undefined,
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 		expect(await screen.findByText("Partial verified reply")).toBeVisible();
 		expect(screen.getByRole("alert")).toHaveTextContent("provider quota exhausted");
 		expect(screen.getByRole("alert")).not.toHaveTextContent("invalid_request_error");
@@ -834,5 +895,100 @@ describe("Pi native tool rendering", () => {
 			"Partial verified reply",
 		);
 		expect(screen.getByRole("alert")).toHaveTextContent("provider quota exhausted");
+	});
+	it("opens every historical result file from a custom message and refreshes saved metadata", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		const createdAt = "2026-01-01T00:00:00.000Z";
+		let files = ["first", "second"].map((id) => ({
+			id,
+			name: `${id}.txt`,
+			mime: "text/plain",
+			bytes: id.length,
+			sha256: "a".repeat(64),
+			createdAt,
+			verification: "verified" as const,
+			saved: false,
+			adopted: false,
+		}));
+		const historical = () => ({
+			id: "historical-run",
+			conversationId: "conversation-1",
+			triggerEntryId: "old-trigger",
+			executorProfile: "pi-default",
+			title: "Historical result",
+			status: "completed" as const,
+			artifacts: files,
+			evidence: [],
+		});
+		configure(client, [
+			{
+				type: "custom_message",
+				id: "result-entry",
+				parentId: null,
+				timestamp: createdAt,
+				customType: "host_external_agent_result",
+				content: "Original result content",
+				display: true,
+				details: { runId: "historical-run" },
+			},
+		]);
+		client.run.list = vi.fn(async () => ({ ok: true, data: { runs: [] } }));
+		client.run.get = vi.fn(async () => ({
+			ok: true,
+			data: {
+				run: historical(),
+				instruction: "Historical instructions",
+				inputPaths: [],
+				evidence: [],
+				provenance: {
+					entries: [{ executor: "pi-acp", profileId: "pi-default", launchedAt: createdAt }],
+					unavailableCount: 0,
+					hasMore: false,
+				},
+			},
+		}));
+		client.artifact.read = vi.fn(async ({ artifactId }) => ({
+			ok: true,
+			data: {
+				artifact: files.find((file) => file.id === artifactId)!,
+				offset: 0,
+				nextOffset: artifactId.length,
+				eof: true,
+				base64: btoa(artifactId),
+			},
+		}));
+		client.artifact.saveAs = vi.fn(async ({ artifactId }) => {
+			files = files.map((file) => (file.id === artifactId ? { ...file, saved: true } : file));
+			pushInvalidation(client, {
+				scope: "character",
+				characterId: THEMED_CHARACTER.id,
+				keys: [["runs"]],
+			});
+			return { ok: true, data: { outcome: "completed" } };
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await user.click(
+			await screen.findByRole("button", { name: `${zhCN.work.timeline.viewArtifacts}: first.txt` }),
+		);
+		let preview = await screen.findByRole("dialog", { name: "first.txt" });
+		expect(await within(preview).findByText("first", { selector: "pre" })).toBeVisible();
+		await user.click(within(preview).getByRole("button", { name: /second\.txt/ }));
+		preview = await screen.findByRole("dialog", { name: "second.txt" });
+		expect(await within(preview).findByText("second", { selector: "pre" })).toBeVisible();
+		await user.click(within(preview).getByRole("button", { name: zhCN.work.download }));
+		await user.click(
+			within(preview).getByText(zhCN.work.result.provenance, { selector: "summary" }),
+		);
+		expect(
+			await within(preview).findByText(new RegExp(zhCN.work.artifactUsage.saved)),
+		).toBeVisible();
+		expect(within(preview).getByText(zhCN.work.artifactVerification.verified)).toBeVisible();
+		expect(client.artifact.saveAs).toHaveBeenCalledWith({
+			characterId: THEMED_CHARACTER.id,
+			conversationId: "conversation-1",
+			runId: "historical-run",
+			artifactId: "second",
+		});
 	});
 });

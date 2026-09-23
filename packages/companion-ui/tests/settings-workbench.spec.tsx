@@ -1,5 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -17,6 +18,9 @@ it("reports both Error and non-Error language update failures", async () => {
 	const user = userEvent.setup();
 	const { client } = createTestClient();
 	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+	await waitForBootstrap(() =>
+		expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+	);
 
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 	const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
@@ -39,13 +43,17 @@ it("reports both Error and non-Error language update failures", async () => {
 	);
 });
 
-it("masks the work-agent settings entry for this release", async () => {
+it("opens the runner configuration page from system settings", async () => {
 	const user = userEvent.setup();
 	const { client } = createTestClient();
 	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+	await waitForBootstrap(() =>
+		expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+	);
 
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 	const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
-	expect(within(settings).queryByRole("button", { name: zhCN.settings.workAgent })).toBeNull();
-	expect(within(settings).queryByText(zhCN.settings.optionalCodexAgent)).toBeNull();
+	await user.click(within(settings).getByRole("button", { name: zhCN.settings.workAgent }));
+	expect(await within(settings).findByText(zhCN.settings.runnerProfiles)).toBeInTheDocument();
+	expect(within(settings).getByRole("button", { name: zhCN.settings.runnerAdd })).toBeEnabled();
 });

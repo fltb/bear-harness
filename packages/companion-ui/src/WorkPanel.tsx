@@ -17,6 +17,7 @@ import type {
 	ArtifactActionResponse,
 	ArtifactIdentity,
 	ArtifactReadResponse,
+	RunGetResponse,
 	RunInfo,
 	RunPermissionRequest,
 } from "./stores/ipc.js";
@@ -91,7 +92,6 @@ async function readArtifactBytes(
 			page.artifact.mime !== expected.mime ||
 			page.artifact.bytes !== expected.bytes ||
 			page.artifact.sha256 !== expected.sha256 ||
-			page.artifact.status !== expected.status ||
 			page.artifact.createdAt !== expected.createdAt
 		)
 			throw new Error("artifact_metadata_changed_during_read");
@@ -223,6 +223,40 @@ function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+export function RunProvenance(props: { provenance: RunGetResponse["provenance"] }) {
+	const [t] = useTranslation(undefined, { i18n });
+	return (
+		<>
+			<Show
+				when={props.provenance.entries.length > 0}
+				fallback={<p>{t("work.result.noProvenance")}</p>}
+			>
+				<ul>
+					<For each={props.provenance.entries}>
+						{(launch) => (
+							<li>
+								<p>
+									{launch.executor} · {launch.profileId} · {launch.launchedAt}
+								</p>
+								<Show when={launch.version}>{(version) => <p>{version()}</p>}</Show>
+								<Show when={launch.sha256}>{(sha256) => <code>{sha256()}</code>}</Show>
+							</li>
+						)}
+					</For>
+				</ul>
+			</Show>
+			<Show when={props.provenance.unavailableCount > 0}>
+				<p role="status">
+					{t("work.result.provenanceUnavailable", { count: props.provenance.unavailableCount })}
+				</p>
+			</Show>
+			<Show when={props.provenance.hasMore}>
+				<p role="status">{t("work.result.provenanceTruncated")}</p>
+			</Show>
+		</>
+	);
 }
 
 type ArtifactIssue = "corrupted" | "missing" | "unsupported" | "unavailable";
@@ -474,25 +508,42 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 		setOpen(false);
 		finishMotionExitImmediately(completeClose);
 	};
-	const kind = previewKind(props.selection.artifact.mime);
-	const previewSupported =
-		props.selection.artifact.status !== "verification_failed" &&
-		kind !== "unsupported" &&
-		props.selection.artifact.bytes <= MAX_ARTIFACT_PREVIEW_BYTES;
-	const identity: ArtifactIdentity = {
-		conversationId: props.selection.run.conversationId,
-		runId: props.selection.run.id,
-		artifactId: props.selection.artifact.id,
+	const detail = workflow.host.run.observeDetail(() => props.selection.runId);
+	const run = createMemo(() => {
+		const current = detail.isError ? undefined : detail.data?.run;
+		return current?.id === props.selection.runId &&
+			current.conversationId === props.selection.conversationId
+			? current
+			: undefined;
+	});
+	const artifact = createMemo(() =>
+		run()?.artifacts.find((item) => item.id === props.selection.artifactId),
+	);
+	const previewSupported = () => {
+		const current = artifact();
+		return (
+			!!current &&
+			current.verification !== "failed" &&
+			previewKind(current.mime) !== "unsupported" &&
+			current.bytes <= MAX_ARTIFACT_PREVIEW_BYTES
+		);
 	};
+	const identity: ArtifactIdentity = {
+		conversationId: props.selection.conversationId,
+		runId: props.selection.runId,
+		artifactId: props.selection.artifactId,
+	};
+	const artifactApi = workflow.host.artifact;
 	const preview = createQuery(() => ({
 		queryKey: [
 			"artifact-preview",
+			props.selection.characterId,
 			identity.conversationId,
 			identity.runId,
 			identity.artifactId,
 		] as const,
-		queryFn: () => readArtifactPreview(workflow.host.artifact, identity),
-		enabled: previewSupported,
+		queryFn: () => readArtifactPreview(artifactApi, identity),
+		enabled: previewSupported(),
 		retry: false,
 		staleTime: Number.POSITIVE_INFINITY,
 		gcTime: 0,
@@ -500,9 +551,9 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 	}));
 	const [actionBusy, setActionBusy] = createSignal(false);
 	const [actionError, setActionError] = createSignal<string | null>(null);
-	const [actionOutcome, setActionOutcome] = createSignal<ArtifactActionResponse["outcome"] | null>(
-		null,
-	);
+	const [actionOutcome, setActionOutcome] = createSignal<
+		ArtifactActionResponse["outcome"] | "download_started" | null
+	>(null);
 	let actionGeneration = 0;
 	let mounted = true;
 	onCleanup(() => {
@@ -511,16 +562,16 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 	});
 
 	const runArtifactAction = async (action: "open" | "reveal" | "saveAs"): Promise<void> => {
-		if (actionBusy()) return;
+		if (actionBusy() || !artifact()) return;
 		const generation = ++actionGeneration;
 		setActionBusy(true);
 		setActionError(null);
 		setActionOutcome(null);
 		try {
-			const outcome = await workflow.host.artifact[action](identity);
+			const outcome = await artifactApi[action](identity);
 			if (action === "saveAs" && outcome.outcome === "unsupported") {
-				await downloadArtifactInBrowser(workflow.host.artifact, identity);
-				if (mounted && generation === actionGeneration) setActionOutcome("completed");
+				await downloadArtifactInBrowser(artifactApi, identity);
+				if (mounted && generation === actionGeneration) setActionOutcome("download_started");
 			} else if (mounted && generation === actionGeneration) setActionOutcome(outcome.outcome);
 		} catch (cause) {
 			if (mounted && generation === actionGeneration)
@@ -531,6 +582,8 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 	};
 	const actionOutcomeLabel = () => {
 		switch (actionOutcome()) {
+			case "download_started":
+				return t("work.result.downloadStarted");
 			case "completed":
 				return t("work.timeline.completed");
 			case "cancelled":
@@ -543,8 +596,8 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 	};
 	const workLabels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const previewIssue = (): ArtifactIssue | undefined => {
-		if (props.selection.artifact.status === "verification_failed") return "corrupted";
-		if (!previewSupported) return "unsupported";
+		if (artifact()?.verification === "failed") return "corrupted";
+		if (!previewSupported()) return "unsupported";
 		if (preview.error) return artifactIssue(preview.error);
 		return undefined;
 	};
@@ -563,8 +616,8 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 			/>
 			<Dialog.Content
 				class="attachment-preview-column motion-drawer-inline"
-				data-artifact-preview={props.selection.artifact.id}
-				aria-label={props.selection.artifact.name}
+				data-artifact-preview={props.selection.artifactId}
+				aria-label={artifact()?.name ?? t("work.result.title")}
 				onAnimationEnd={(event) => {
 					if (event.target === event.currentTarget) completeClose();
 				}}
@@ -577,163 +630,192 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 			>
 				<header>
 					<div class="attachment-preview-heading">
-						<small>{t("work.result.sourceFrom", { summary: props.selection.run.title })}</small>
-						<strong>{props.selection.artifact.name}</strong>
+						<small>
+							{t("work.result.sourceFrom", { summary: run()?.title ?? t("work.result.title") })}
+						</small>
+						<strong>{artifact()?.name ?? t("work.result.title")}</strong>
 					</div>
 					<Button type="button" aria-label={t("work.result.close")} onClick={requestClose}>
 						×
 					</Button>
 				</header>
 				<div class="attachment-preview-body">
-					<ul class="attachment-preview-files" aria-label={t("work.result.tabsLabel")}>
-						<For each={props.selection.run.artifacts}>
-							{(artifact) => (
-								<li>
-									<Button
-										type="button"
-										aria-current={artifact.id === props.selection.artifact.id ? "true" : undefined}
-										onClick={() => workflow.selectArtifact(props.selection.run.id, artifact.id)}
+					<Show when={detail.isPending}>
+						<p role="status">{t("settings.loading")}</p>
+					</Show>
+					<Show when={detail.error || (detail.isSuccess && !artifact())}>
+						<p role="alert">
+							{t(`work.result.issues.${detail.error ? artifactIssue(detail.error) : "missing"}`)}
+						</p>
+						<Button
+							type="button"
+							disabled={detail.isFetching}
+							onClick={() => void detail.refetch()}
+						>
+							{t("work.task.retry")}
+						</Button>
+					</Show>
+					<Show when={artifact()}>
+						<ul class="attachment-preview-files" aria-label={t("work.result.tabsLabel")}>
+							<For each={run()!.artifacts}>
+								{(artifact) => (
+									<li>
+										<Button
+											type="button"
+											aria-current={artifact.id === props.selection.artifactId ? "true" : undefined}
+											onClick={() => workflow.selectArtifact(artifact.id)}
+										>
+											<span>{artifact.name}</span>
+											<small>
+												{artifact.mime} · {formatBytes(artifact.bytes)}
+											</small>
+										</Button>
+									</li>
+								)}
+							</For>
+						</ul>
+						<section
+							class="attachment-preview-media"
+							aria-label={artifact()?.name ?? t("work.result.title")}
+							aria-live="polite"
+							aria-busy={previewState() === "loading"}
+							data-preview-state={previewState()}
+						>
+							<Show when={previewIssue()} keyed>
+								{(issue) => (
+									<p
+										class={
+											issue === "unsupported"
+												? "attachment-preview-status"
+												: "attachment-preview-error"
+										}
+										role={issue === "unsupported" ? "status" : "alert"}
 									>
-										<span>{artifact.name}</span>
-										<small>
-											{artifact.mime} · {formatBytes(artifact.bytes)}
-										</small>
-									</Button>
-								</li>
-							)}
-						</For>
-					</ul>
-					<section
-						class="attachment-preview-media"
-						aria-label={props.selection.artifact.name}
-						aria-live="polite"
-						aria-busy={previewState() === "loading"}
-						data-preview-state={previewState()}
-					>
-						<Show when={previewIssue()} keyed>
-							{(issue) => (
-								<p
-									class={
-										issue === "unsupported"
-											? "attachment-preview-status"
-											: "attachment-preview-error"
-									}
-									role={issue === "unsupported" ? "status" : "alert"}
-								>
-									{t(`work.result.issues.${issue}`)}
-								</p>
-							)}
-						</Show>
-						<Show when={!previewIssue() && preview.isPending}>
-							<p class="attachment-preview-status">{t("settings.loading")}</p>
-						</Show>
-						<Show when={preview.data} keyed>
-							{(loaded) => (
-								<LoadedArtifactPreviewContent
-									loaded={loaded}
-									name={props.selection.artifact.name}
-								/>
-							)}
-						</Show>
-					</section>
-					<details class="task-disclosure">
-						<summary>{t("work.result.provenance")}</summary>
-						<dl class="attachment-preview-metadata">
-							<div>
-								<dt>{t("work.result.filePage.name")}</dt>
-								<dd>{props.selection.artifact.name}</dd>
-							</div>
-							<div>
-								<dt>{t("work.result.filePage.mime")}</dt>
-								<dd>{props.selection.artifact.mime}</dd>
-							</div>
-							<div>
-								<dt>{t("work.result.filePage.size")}</dt>
-								<dd>{formatBytes(props.selection.artifact.bytes)}</dd>
-							</div>
-							<div>
-								<dt>{t("work.result.filePage.sha256")}</dt>
-								<dd>
-									<code>{props.selection.artifact.sha256}</code>
-								</dd>
-							</div>
-							<div>
-								<dt>{t("work.result.filePage.status")}</dt>
-								<dd>{t(`work.artifactStatuses.${props.selection.artifact.status}`)}</dd>
-							</div>
-							<div>
-								<dt>{t("work.result.createdAt")}</dt>
-								<dd data-testid="artifact-created-at">{props.selection.artifact.createdAt}</dd>
-							</div>
-						</dl>
-						<section class="attachment-preview-metadata" aria-label={t("work.result.provenance")}>
-							<h3>{t("work.result.provenance")}</h3>
-							<dl>
-								<div>
-									<dt>{t("work.result.producerRun")}</dt>
-									<dd>
-										<code data-testid="artifact-producer-run">{props.selection.run.id}</code>
-									</dd>
-								</div>
-								<div>
-									<dt>{t("work.result.executorProfile")}</dt>
-									<dd>{props.selection.run.executorProfile}</dd>
-								</div>
-								<div>
-									<dt>{t("work.result.triggerEntry")}</dt>
-									<dd>
-										<code data-testid="artifact-trigger-entry">
-											{props.selection.run.triggerEntryId}
-										</code>
-									</dd>
-								</div>
-							</dl>
-							<Show when={props.selection.run.summary} keyed>
-								{(summary) => (
-									<div>
-										<strong>{t("work.result.summary")}</strong>
-										<p>{summary}</p>
-									</div>
+										{t(`work.result.issues.${issue}`)}
+									</p>
 								)}
 							</Show>
-							<h3>{t("work.result.evidence")}</h3>
-							<Show
-								when={props.selection.run.evidence.length > 0}
-								fallback={<p>{t("work.result.noEvidence")}</p>}
-							>
-								<ul aria-label={t("work.result.evidence")}>
-									<For each={props.selection.run.evidence}>
-										{(item) => (
-											<li>
-												<strong>{item.kind}</strong>
-												<Show when={item.summary}> · {item.summary}</Show>
-												<small> · {item.createdAt}</small>
-											</li>
-										)}
-									</For>
-								</ul>
+							<Show when={!previewIssue() && preview.isPending}>
+								<p class="attachment-preview-status">{t("settings.loading")}</p>
+							</Show>
+							<Show when={!previewIssue() && preview.data} keyed>
+								{(loaded) => (
+									<LoadedArtifactPreviewContent
+										loaded={loaded}
+										name={artifact()?.name ?? t("work.result.title")}
+									/>
+								)}
 							</Show>
 						</section>
-					</details>
+						<details class="task-disclosure">
+							<summary>{t("work.result.provenance")}</summary>
+							<dl class="attachment-preview-metadata">
+								<div>
+									<dt>{t("work.result.filePage.name")}</dt>
+									<dd>{artifact()?.name ?? t("work.result.title")}</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.filePage.mime")}</dt>
+									<dd>{artifact()!.mime}</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.filePage.size")}</dt>
+									<dd>{formatBytes(artifact()!.bytes)}</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.filePage.sha256")}</dt>
+									<dd>
+										<code>{artifact()!.sha256}</code>
+									</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.filePage.status")}</dt>
+									<dd>
+										<span>{t(`work.artifactVerification.${artifact()!.verification}`)}</span>
+										<Show when={artifact()!.saved}>
+											<span> · {t("work.artifactUsage.saved")}</span>
+										</Show>
+										<Show when={artifact()!.adopted}>
+											<span> · {t("work.artifactUsage.adopted")}</span>
+										</Show>
+									</dd>
+								</div>
+								<div>
+									<dt>{t("work.result.createdAt")}</dt>
+									<dd data-testid="artifact-created-at">{artifact()!.createdAt}</dd>
+								</div>
+							</dl>
+							<section class="attachment-preview-metadata" aria-label={t("work.result.provenance")}>
+								<h3>{t("work.result.provenance")}</h3>
+								<dl>
+									<div>
+										<dt>{t("work.result.producerRun")}</dt>
+										<dd>
+											<code data-testid="artifact-producer-run">{run()!.id}</code>
+										</dd>
+									</div>
+									<div>
+										<dt>{t("work.result.executorProfile")}</dt>
+										<dd>
+											<Show when={detail.data}>
+												{(data) => <RunProvenance provenance={data().provenance} />}
+											</Show>
+										</dd>
+									</div>
+									<div>
+										<dt>{t("work.result.triggerEntry")}</dt>
+										<dd>
+											<code data-testid="artifact-trigger-entry">{run()!.triggerEntryId}</code>
+										</dd>
+									</div>
+								</dl>
+								<Show when={run()!.summary} keyed>
+									{(summary) => (
+										<div>
+											<strong>{t("work.result.summary")}</strong>
+											<p>{summary}</p>
+										</div>
+									)}
+								</Show>
+								<h3>{t("work.result.evidence")}</h3>
+								<Show
+									when={run()!.evidence.length > 0}
+									fallback={<p>{t("work.result.noEvidence")}</p>}
+								>
+									<ul aria-label={t("work.result.evidence")}>
+										<For each={run()!.evidence}>
+											{(item) => (
+												<li>
+													<strong>{item.kind}</strong>
+													<Show when={item.summary}> · {item.summary}</Show>
+													<small> · {item.createdAt}</small>
+												</li>
+											)}
+										</For>
+									</ul>
+								</Show>
+							</section>
+						</details>
+					</Show>
 				</div>
 				<footer class="attachment-preview-actions">
 					<Button
 						type="button"
-						disabled={actionBusy()}
+						disabled={actionBusy() || !artifact()}
 						onClick={() => void runArtifactAction("open")}
 					>
 						{workLabels()?.artifact_open ?? t("work.timeline.viewArtifacts")}
 					</Button>
 					<Button
 						type="button"
-						disabled={actionBusy()}
+						disabled={actionBusy() || !artifact()}
 						onClick={() => void runArtifactAction("reveal")}
 					>
 						{workLabels()?.artifact_reveal ?? t("work.timeline.revealDetails")}
 					</Button>
 					<Button
 						type="button"
-						disabled={actionBusy()}
+						disabled={actionBusy() || !artifact()}
 						onClick={() => void runArtifactAction("saveAs")}
 					>
 						{t("work.download")}

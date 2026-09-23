@@ -197,29 +197,17 @@ describe("character package import", () => {
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
-		const lifecycle = Reflect.get(runtime, "lifecycle") as {
-			active(): { runtime: { companionId: string; close(): Promise<void> } };
-		};
-		const previousRole = lifecycle.active().runtime as {
-			companionId: string;
-			close(): Promise<void>;
-		};
-		const originalClose = previousRole.close.bind(previousRole);
-		const closePrevious = vi.spyOn(previousRole, "close").mockImplementationOnce(async () => {
-			await originalClose();
-			throw new Error("cleanup failed after closing resources");
-		});
+		const previousRole = await runtime.useCharacter("jizhou", (r) => r);
+		const closePrevious = vi.spyOn(previousRole, "close");
 		await expect(
-			runtime.dispatch("character.activate", { characterId: "imported-role" }),
+			runtime.dispatch("character.get", { characterId: "imported-role" }),
+		).resolves.toMatchObject({ ok: true, data: { character: { id: "imported-role" } } });
+		expect(await runtime.useCharacter("jizhou", (r) => r)).toBe(previousRole);
+		expect(closePrevious).not.toHaveBeenCalled();
+
+		await expect(
+			runtime.dispatch("canon.listModules", { characterId: "imported-role" }),
 		).resolves.toMatchObject({
-			ok: true,
-			data: { character: { id: "imported-role" } },
-		});
-		const activeRole = lifecycle.active().runtime;
-		expect(activeRole).not.toBe(previousRole);
-		expect(activeRole.companionId).toBe("imported-role");
-		expect(closePrevious).toHaveBeenCalledOnce();
-		await expect(runtime.dispatch("canon.listModules", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				modules: expect.arrayContaining([
@@ -245,7 +233,9 @@ describe("character package import", () => {
 				characters: expect.arrayContaining([expect.objectContaining({ id: "imported-role" })]),
 			},
 		});
-		await expect(restarted.dispatch("character.get", {})).resolves.toMatchObject({
+		await expect(
+			restarted.dispatch("character.get", { characterId: "imported-role" }),
+		).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
@@ -287,8 +277,8 @@ describe("character package import", () => {
 			reply: { providerId: "seed-models", modelId: "a" },
 			vision: { mode: "auto" },
 		});
-		await call("model.defaults.initialize", {});
-		await call("model.defaults.completeOnboarding", {});
+		await call("model.defaults.initialize", { characterId: "jizhou" });
+		await call("model.defaults.completeOnboarding", { characterId: "jizhou" });
 
 		await call("model.systemDefaults.set", {
 			reply: { providerId: "seed-models", modelId: "b" },
@@ -303,32 +293,43 @@ describe("character package import", () => {
 				.replace("id: jizhou", "id: seeded-role"),
 		).toString("base64");
 		await call("character.import", { files });
-		await call("character.activate", { characterId: "seeded-role" });
-		await expect(call("model.defaults.get", {})).resolves.toMatchObject({
-			reply: { providerId: "seed-models", modelId: "b" },
-			onboardingComplete: false,
-		});
+		await call("character.get", { characterId: "seeded-role" });
+		await expect(call("model.defaults.get", { characterId: "seeded-role" })).resolves.toMatchObject(
+			{
+				reply: { providerId: "seed-models", modelId: "b" },
+				onboardingComplete: false,
+			},
+		);
 		await call("model.defaults.setReply", {
+			characterId: "seeded-role",
 			reply: { providerId: "seed-models", modelId: "c" },
 		});
-		await call("model.defaults.completeOnboarding", {});
+		await call("model.defaults.completeOnboarding", { characterId: "seeded-role" });
 		const secondConversation = (await call("conversation.create", {
+			characterId: "seeded-role",
 			title: "Second role",
 		})) as { conversationId: string };
 		await expect(
-			call("model.route.get", { conversationId: secondConversation.conversationId }),
+			call("model.route.get", {
+				characterId: "seeded-role",
+				conversationId: secondConversation.conversationId,
+			}),
 		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "c" } });
 
-		await call("character.activate", { characterId: "jizhou" });
-		await expect(call("model.defaults.get", {})).resolves.toMatchObject({
+		await call("character.get", { characterId: "jizhou" });
+		await expect(call("model.defaults.get", { characterId: "jizhou" })).resolves.toMatchObject({
 			reply: { providerId: "seed-models", modelId: "a" },
 			onboardingComplete: true,
 		});
 		const firstConversation = (await call("conversation.create", {
+			characterId: "jizhou",
 			title: "First role",
 		})) as { conversationId: string };
 		await expect(
-			call("model.route.get", { conversationId: firstConversation.conversationId }),
+			call("model.route.get", {
+				characterId: "jizhou",
+				conversationId: firstConversation.conversationId,
+			}),
 		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "a" } });
 		await runtime.close();
 	}, 20_000);

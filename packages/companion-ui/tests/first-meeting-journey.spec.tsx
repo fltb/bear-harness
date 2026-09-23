@@ -1,7 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import type {
 	ConfiguredModel,
-	InvalidationNotice,
 	ModelDefaultsGetResponse,
 	OnboardingResponse,
 	ProviderInfo,
@@ -18,7 +17,7 @@ import {
 	createCompanionStore,
 	DesktopProvider,
 } from "../src/stores/companion.js";
-import { createTestClient, THEMED_CHARACTER } from "./fixtures.js";
+import { createTestClient, pushInvalidation, THEMED_CHARACTER } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -62,45 +61,19 @@ function firstRunHost(
 		defaults?: SystemModelDefaultsGetResponse;
 		stage?: SettingsData["firstRunStage"];
 		roleDefaults?: ModelDefaultsGetResponse;
+		memoryEnabled?: boolean;
 		platform?: string;
 	} = {},
 ) {
 	const { client } = createTestClient();
 	const ok = <T,>(data: T) => Promise.resolve({ ok: true as const, data });
-	const notices: InvalidationNotice[] = [];
-	let receiveNotice: ((notice: InvalidationNotice | undefined) => void) | undefined;
-	client.invalidations.stream = async function* (signal) {
-		while (!signal.aborted) {
-			const notice =
-				notices.shift() ??
-				(await new Promise<InvalidationNotice | undefined>((resolve) => {
-					const abort = () => {
-						if (receiveNotice === deliver) receiveNotice = undefined;
-						resolve(undefined);
-					};
-					const deliver = (value: InvalidationNotice | undefined) => {
-						signal.removeEventListener("abort", abort);
-						resolve(value);
-					};
-					receiveNotice = deliver;
-					signal.addEventListener("abort", abort, { once: true });
-				}));
-			if (notice && !signal.aborted) yield notice;
-		}
-	};
-	const publishDefaults = () => {
-		const notice: InvalidationNotice = { keys: [["models", "defaults"]] };
-		const deliver = receiveNotice;
-		if (deliver) {
-			receiveNotice = undefined;
-			deliver(notice);
-		} else notices.push(notice);
-	};
 	let settings: SettingsData = {
 		firstRunStage: options.stage ?? "model",
-		relationshipMemoryEnabled: false,
+		relationshipMemoryEnabled: options.memoryEnabled ?? false,
 		networkProxy: { mode: "direct" },
-		memoryVectorService: { enabled: false, provider: "none" },
+		memoryVectorService: options.memoryEnabled
+			? { enabled: true, provider: "local", localModel: "test-embedding", dimensions: 384 }
+			: { enabled: false, provider: "none" },
 		modelDownloadSource: { type: "official" },
 	};
 	let providers = options.providers ?? [candidate];
@@ -129,6 +102,11 @@ function firstRunHost(
 	});
 	client.model.systemDefaultsGet = vi.fn(() => ok(systemDefaults));
 	client.model.defaultsGet = vi.fn(() => ok(defaults));
+	client.model.defaultsInitialize = vi.fn(() => {
+		if (!defaults.reply && systemDefaults.reply)
+			defaults = { ...systemDefaults, onboardingComplete: false };
+		return ok(defaults);
+	});
 	client.model.defaultsSetReply = vi.fn(({ reply }) => {
 		const { reply: _previous, ...rest } = defaults;
 		defaults = { ...rest, ...(reply ? { reply } : {}) };
@@ -145,8 +123,6 @@ function firstRunHost(
 	client.systemOnboarding.completeModel = vi.fn(({ reply, vision }) => {
 		systemDefaults = { reply, vision };
 		settings = { ...settings, firstRunStage: "embedding" };
-		defaults = { ...systemDefaults, onboardingComplete: false };
-		publishDefaults();
 		return ok({ settings, defaults: systemDefaults });
 	});
 	client.systemOnboarding.completeEmbedding = vi.fn(() => {
@@ -166,7 +142,7 @@ function firstRunHost(
 		const view = render(() => (
 			<QueryClientProvider client={queryClient}>
 				{(() => {
-					store = createCompanionStore(client);
+					store = createCompanionStore(client, "test-character");
 					return (
 						<DesktopProvider store={store}>
 							<FirstMeeting platform={options.platform} />
@@ -283,6 +259,68 @@ describe("Host-backed first-run setup", () => {
 				},
 			}),
 		);
+	});
+
+	it("asks for character memory consent after system setup and waits for its save before confirmation", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunHost({
+			stage: "role",
+			models: [replyModel],
+			memoryEnabled: true,
+			defaults: { reply: replyRoute, vision: { mode: "auto" } },
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: false },
+		});
+		const saving = Promise.withResolvers<{ ok: true; data: { enabled: boolean } }>();
+		setup.client.character.memorySet = vi.fn(() => saving.promise);
+		setup.mount();
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		const consent = within(dialog).getByRole("checkbox", {
+			name: zhCN.relationshipMemory.consentLabel.replace("{name}", THEMED_CHARACTER.name),
+		});
+		await waitFor(() => expect(consent).toBeEnabled());
+		expect(consent).not.toBeChecked();
+		const confirm = within(dialog).getByRole("button", { name: zhCN.modelSetup.confirmRole });
+		await user.click(consent);
+		expect(confirm).toBeDisabled();
+		expect(setup.client.character.memorySet).toHaveBeenCalledWith({
+			characterId: THEMED_CHARACTER.id,
+			enabled: true,
+		});
+		saving.resolve({ ok: true, data: { enabled: true } });
+		await waitFor(() => expect(consent).toBeChecked());
+		await waitFor(() => expect(confirm).toBeEnabled());
+		await user.click(confirm);
+		await waitFor(() =>
+			expect(setup.client.model.defaultsCompleteOnboarding).toHaveBeenCalledWith({
+				characterId: THEMED_CHARACTER.id,
+			}),
+		);
+		expect(setup.client.systemOnboarding.completeModel).not.toHaveBeenCalled();
+		expect(setup.client.systemOnboarding.completeEmbedding).not.toHaveBeenCalled();
+	});
+
+	it("links missing character memory prerequisites to system settings during onboarding", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunHost({
+			stage: "role",
+			models: [replyModel],
+			defaults: { reply: replyRoute, vision: { mode: "auto" } },
+			roleDefaults: { reply: replyRoute, vision: { mode: "auto" }, onboardingComplete: false },
+		});
+		setup.mount();
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		expect(within(dialog).getByRole("checkbox")).toBeDisabled();
+		expect(within(dialog).getByText(zhCN.relationshipMemory.systemRequired)).toBeVisible();
+		await user.click(
+			within(dialog).getByRole("button", { name: zhCN.relationshipMemory.systemSettings }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
+			).not.toBeInTheDocument(),
+		);
+		expect(setup.client.character.memorySet).not.toHaveBeenCalled();
+		expect(setup.client.systemOnboarding.completeEmbedding).not.toHaveBeenCalled();
 	});
 
 	it.each([replyRoute, undefined])(
@@ -409,7 +447,7 @@ describe("Host-backed first-run setup", () => {
 				},
 			},
 		}));
-		const { queryClient } = setup.mount();
+		setup.mount();
 		const dialog = await screen.findByRole("dialog", { name: "Introduction" });
 		await user.type(within(dialog).getByRole("textbox", { name: "Your name" }), "Unsaved name");
 		let release!: () => void;
@@ -421,14 +459,16 @@ describe("Host-backed first-run setup", () => {
 			await pending;
 			return getDefaults();
 		});
-		const refresh = queryClient.invalidateQueries({ queryKey: ["models", "defaults"] });
-		await waitFor(() =>
-			expect(queryClient.isFetching({ queryKey: ["models", "defaults"] })).toBe(1),
-		);
+		pushInvalidation(setup.client, {
+			scope: "character",
+			characterId: THEMED_CHARACTER.id,
+			keys: [["models", "defaults"]],
+		});
+		await waitFor(() => expect(setup.client.model.defaultsGet).toHaveBeenCalled());
 		expect(dialog).toBeVisible();
 		expect(within(dialog).getByRole("textbox", { name: "Your name" })).toHaveValue("Unsaved name");
 		release();
-		await refresh;
+		await waitFor(() => expect(setup.client.model.defaultsGet).toHaveResolved());
 		expect(dialog).toBeVisible();
 		expect(within(dialog).getByRole("textbox", { name: "Your name" })).toHaveValue("Unsaved name");
 	});
@@ -452,14 +492,12 @@ describe("Host-backed first-run setup", () => {
 			if (character.id !== THEMED_CHARACTER.id) await pending;
 			return { ok: true as const, data: onboarding };
 		});
-		setup.client.character.activate = vi.fn(async () => {
-			character = { ...THEMED_CHARACTER, id: "second-character" };
-			onboarding = { status: "active", currentStepId: "hello", stateData: { answers: {} } };
-			return { ok: true as const, data: { character } };
-		});
+
 		const { store } = setup.mount();
 		await waitFor(() => expect(store.characterSetupReady).toBe(true));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		character = { ...THEMED_CHARACTER, id: "second-character" };
+		onboarding = { status: "active", currentStepId: "hello", stateData: { answers: {} } };
 		const activation = store.characters.activate("second-character");
 		await waitFor(() => expect(store.character?.id).toBe("second-character"));
 		expect(store.characterSetupReady).toBe(false);
@@ -474,14 +512,18 @@ describe("Host-backed first-run setup", () => {
 		setup.client.model.defaultsGet = vi.fn(async () => {
 			throw new Error("role defaults unavailable");
 		});
-		const { queryClient } = setup.mount();
+		setup.mount();
 		expect(await screen.findByRole("alert")).toHaveTextContent("role defaults unavailable");
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		setup.client.model.defaultsGet = vi.fn(async () => ({
 			ok: true as const,
 			data: { vision: { mode: "auto" as const }, onboardingComplete: false },
 		}));
-		await queryClient.invalidateQueries({ queryKey: ["models", "defaults"] });
+		pushInvalidation(setup.client, {
+			scope: "character",
+			characterId: THEMED_CHARACTER.id,
+			keys: [["models", "defaults"]],
+		});
 		await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
@@ -602,6 +644,9 @@ describe("Host-backed first-run setup", () => {
 		secondRender.unmount();
 		setup.mount();
 		expect(await confirmRole(user)).toBeVisible();
+		expect(setup.client.model.defaultsInitialize).toHaveBeenCalledWith({
+			characterId: THEMED_CHARACTER.id,
+		});
 		expect(setup.client.systemOnboarding.completeModel).toHaveBeenCalledTimes(1);
 		expect(setup.client.onboarding.submit).not.toHaveBeenCalled();
 	});
@@ -637,6 +682,9 @@ describe("Host-backed first-run setup", () => {
 			choice: "none",
 		});
 		expect(await confirmRole(user)).toBeVisible();
+		expect(setup.client.model.defaultsInitialize).toHaveBeenCalledWith({
+			characterId: THEMED_CHARACTER.id,
+		});
 		expect(store.settings.data()?.relationshipMemoryEnabled).toBe(false);
 		expect(setup.client.onboarding.submit).not.toHaveBeenCalled();
 		expect(setup.client.settings.set).not.toHaveBeenCalled();

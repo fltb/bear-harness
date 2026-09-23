@@ -61,8 +61,12 @@ function packageFiles(
 	});
 }
 
-async function completeCharacterSetup(page: Page, token: string): Promise<void> {
-	await rpc(page, token, "model.defaults.completeOnboarding", {});
+async function completeCharacterSetup(
+	page: Page,
+	token: string,
+	characterId: string,
+): Promise<void> {
+	await rpc(page, token, "model.defaults.completeOnboarding", { characterId });
 	const answers: Record<string, string | undefined> = {
 		welcome: undefined,
 		nickname: "林",
@@ -71,12 +75,13 @@ async function completeCharacterSetup(page: Page, token: string): Promise<void> 
 		page,
 		token,
 		"onboarding.get",
-		{},
+		{ characterId },
 	);
 	while (onboarding.status === "active") {
 		const stepId = onboarding.currentStepId;
 		if (!stepId || !(stepId in answers)) throw new Error(`Unhandled onboarding step: ${stepId}`);
 		onboarding = await rpc(page, token, "onboarding.submit", {
+			characterId,
 			stepId,
 			answer: answers[stepId],
 		});
@@ -87,32 +92,16 @@ async function openCharacterSwitch(page: Page, name: string) {
 	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
 	await expect(dialog).toBeVisible();
-	const candidates = await dialog
-		.getByRole("button", { name: zhCN.backstage.roleSwitch, exact: true })
-		.all();
-	const target = (
-		await Promise.all(
-			candidates.map(async (candidate) => ({
-				candidate,
-				matches: await candidate.evaluate((button) =>
-					button.parentElement?.textContent?.includes(name),
-				),
-			})),
-		)
-	).find(({ matches }) => matches)?.candidate;
-	expect(target, `missing character switch control for ${name}`).toBeDefined();
-	if (!target) throw new Error(`missing character switch control for ${name}`);
+	const target = dialog
+		.getByRole("article", { name, exact: true })
+		.getByRole("button", { name: zhCN.backstage.roleSwitch, exact: true });
+	await expect(target).toBeVisible();
 	return { dialog, target };
 }
 
 async function switchCharacter(page: Page, name: string): Promise<void> {
 	const { dialog, target } = await openCharacterSwitch(page, name);
-	const activated = page.waitForResponse(
-		(response) =>
-			response.request().method() === "POST" && response.url().includes("/rpc/character.activate"),
-	);
 	await target.click();
-	expect((await activated).ok()).toBe(true);
 	await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(
@@ -124,7 +113,6 @@ async function switchCharacter(page: Page, name: string): Promise<void> {
 
 test.afterEach(async ({ page }) => {
 	const { token } = await (await page.request.get("/bootstrap")).json();
-	await rpc(page, token, "character.activate", { characterId: "jizhou" });
 	for (const character of testCharacters) {
 		await rpc(page, token, "character.runtimeDelete", { characterId: character.id }).catch(
 			() => undefined,
@@ -135,7 +123,7 @@ test.afterEach(async ({ page }) => {
 	}
 });
 
-test("two characters isolate conversations and warn before an active-reply switch", async ({
+test("two characters and windows retain independent selections while a background reply continues", async ({
 	page,
 }) => {
 	const pageErrors: string[] = [];
@@ -149,9 +137,8 @@ test("two characters isolate conversations and warn before an active-reply switc
 		await rpc(page, token, "character.import", {
 			files: packageFiles(character.id, character.name, character.accent),
 		});
-		await rpc(page, token, "character.activate", { characterId: character.id });
-		await completeCharacterSetup(page, token);
-		await page.reload();
+		await completeCharacterSetup(page, token, character.id);
+		await switchCharacter(page, character.name);
 		await expect(
 			page
 				.getByRole("complementary")
@@ -164,10 +151,10 @@ test("two characters isolate conversations and warn before an active-reply switc
 		const conversationId = await activeConversationId(page);
 		conversationIds.set(character.id, conversationId);
 		await rpc(page, token, "model.route.set", {
+			characterId: character.id,
 			conversationId,
 			selected: { providerId: "e2e-rule", modelId: "rule-model" },
 		});
-		await page.reload();
 		await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled({
 			timeout: 15_000,
 		});
@@ -180,8 +167,7 @@ test("two characters isolate conversations and warn before an active-reply switc
 		).toBeVisible();
 	}
 
-	await rpc(page, token, "character.activate", { characterId: testCharacters[0].id });
-	await page.reload();
+	await switchCharacter(page, testCharacters[0].name);
 	await expect(
 		page
 			.getByRole("complementary")
@@ -236,46 +222,42 @@ test("two characters isolate conversations and warn before an active-reply switc
 		await sendMessage(page, `E2E_WAIT_TEXT_${hold.id}`);
 		await hold.entered();
 		await expect(page.getByTestId("conversation-activity")).toBeVisible();
-		const { dialog, target } = await openCharacterSwitch(page, testCharacters[0].name);
-		await target.click();
-		const warning = page.getByRole("dialog", {
-			name: zhCN.backstage.roleSwitchBusyTitle,
-		});
-		await expect(warning).toBeVisible();
-		await expect(warning).toContainText(testCharacters[0].name);
-		expect(await activeConversationId(page)).toBe(conversationIds.get(testCharacters[1].id));
-
-		await warning
-			.getByRole("button", { name: zhCN.backstage.roleSwitchBusyCancel, exact: true })
-			.click();
-		await expect(warning).toBeHidden();
-		await expect(page.getByTestId("conversation-activity")).toBeVisible();
-
-		await target.click();
-		await expect(warning).toBeVisible();
-		const activated = page.waitForResponse(
-			(response) =>
-				response.request().method() === "POST" &&
-				response.url().includes("/rpc/character.activate"),
+		await switchCharacter(page, testCharacters[0].name);
+		expect(await activeConversationId(page)).toBe(conversationIds.get(testCharacters[0].id));
+		const background = await rpc<{ live: { isStreaming: boolean } }>(
+			page,
+			token,
+			"conversation.open",
+			{
+				characterId: testCharacters[1].id,
+				conversationId: conversationIds.get(testCharacters[1].id),
+			},
 		);
-		await warning
-			.getByRole("button", { name: zhCN.backstage.roleSwitchBusyConfirm, exact: true })
-			.click();
-		expect((await activated).ok()).toBe(true);
-		await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
-		await expect(
-			page
-				.getByRole("complementary")
-				.getByRole("strong")
-				.getByText(testCharacters[0].name, { exact: true }),
-		).toBeVisible({ timeout: 15_000 });
-		await hold.cancelled();
-
+		expect(background.live.isStreaming).toBe(true);
+		const otherWindow = await page.context().newPage();
+		try {
+			await otherWindow.goto("/");
+			await expect(
+				otherWindow
+					.getByRole("complementary")
+					.getByRole("strong")
+					.getByText("极昼", { exact: true }),
+			).toBeVisible();
+			await switchCharacter(otherWindow, testCharacters[1].name);
+			expect(await activeConversationId(otherWindow)).toBe(
+				conversationIds.get(testCharacters[1].id),
+			);
+			expect(await activeConversationId(page)).toBe(conversationIds.get(testCharacters[0].id));
+			await hold.release();
+			await expect(
+				otherWindow.getByText(`E2E_WAIT_DONE_${hold.id}`, { exact: true }),
+			).toBeVisible();
+		} finally {
+			await otherWindow.close();
+		}
 		await switchCharacter(page, testCharacters[1].name);
-		await expect(page.getByText(`E2E_WAIT_TEXT_${hold.id}`, { exact: true })).toBeVisible();
-		await expect(
-			page.getByRole("alert").filter({ hasText: zhCN.messages.responseStopped }),
-		).toBeVisible();
+		await expect(page.getByText(`E2E_WAIT_DONE_${hold.id}`, { exact: true })).toBeVisible();
+		await expect(page.getByTestId("conversation-activity")).toBeHidden();
 	} finally {
 		await hold.release();
 	}
@@ -298,6 +280,7 @@ test("a fresh character can select and confirm a re-added provider model", async
 		vision: { mode: "auto" },
 	});
 	await rpc(page, token, "model.defaults.setReply", {
+		characterId: "jizhou",
 		reply: { providerId: "e2e-rule", modelId: "rule-model" },
 	});
 	const character = testCharacters[0];

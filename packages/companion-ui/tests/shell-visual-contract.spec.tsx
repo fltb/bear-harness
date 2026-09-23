@@ -1,6 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { waitFor as waitForBootstrap } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -74,10 +75,10 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
 	);
-	client.conversation.activeGet = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: { activeConversation: activeProjection ?? null } }),
+	client.conversation.open = vi.fn(() =>
+		Promise.resolve({ ok: true as const, data: activeProjection ?? null }),
 	);
-	client.conversation.select = vi.fn(() => client.conversation.activeGet({}));
+
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -270,6 +271,9 @@ describe("portrait layout contracts", () => {
 	it("rests only when there is no active conversation", async () => {
 		const { client } = configurePortraitClient({ active: false });
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const presence = await screen.findByRole("img", {
 			name: THEMED_CHARACTER.visual.expressionLabels.default,
@@ -280,6 +284,9 @@ describe("portrait layout contracts", () => {
 	it("expands an ordinary active idle conversation", async () => {
 		const { client } = configurePortraitClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitForBootstrap(() =>
+			expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+		);
 
 		const presence = await screen.findByRole("img", {
 			name: THEMED_CHARACTER.visual.expressionLabels.default,
@@ -309,11 +316,14 @@ describe("portrait layout contracts", () => {
 						followUp: [],
 					},
 				};
-				client.conversation.activeGet = vi.fn(() =>
-					Promise.resolve({ ok: true as const, data: { activeConversation: projection } }),
+				client.conversation.open = vi.fn(() =>
+					Promise.resolve({ ok: true as const, data: projection }),
 				);
 			}
 			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+			await waitForBootstrap(() =>
+				expect(screen.getByRole("application", { hidden: true })).toBeInTheDocument(),
+			);
 
 			const presence = await screen.findByRole("img", {
 				name: THEMED_CHARACTER.visual.expressionLabels.default,

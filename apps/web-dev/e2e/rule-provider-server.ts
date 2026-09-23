@@ -136,6 +136,16 @@ function reply(payload: {
 	if (current.includes("E2E_MODEL_ID")) {
 		return { content: `E2E_MODEL_ID:${payload.model ?? "missing"}\n` };
 	}
+	const customRunner = current.match(/E2E_CUSTOM_RUNNER_(custom-[a-f0-9-]+)/);
+	if (!externalRun && customRunner) {
+		if (!currentCalls.includes("host_delegate"))
+			return invoke("host_delegate", {
+				runnerId: customRunner[1],
+				instruction: "complete",
+				inputPaths: [],
+			});
+		return { content: "E2E_CUSTOM_DELEGATED\n" };
+	}
 	if (!externalRun && current.includes("E2E_DELEGATE_XLSX")) {
 		if (!currentCalls.includes("host_delegate"))
 			return invoke("host_delegate", { instruction: "E2E_EXTERNAL_WRITE_XLSX", inputPaths: [] });
