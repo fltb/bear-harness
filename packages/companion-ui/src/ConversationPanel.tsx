@@ -1326,13 +1326,15 @@ function PiTimelineRenderer(props: {
 						>
 							<Show when={responseStarts().has(itemId())}>
 								<header class="timeline-response-heading">
-									<img
-										class="agent-message-avatar"
-										src={store.character?.visual.avatarUrl}
-										alt=""
-										aria-hidden="true"
-										draggable={false}
-									/>
+									<Show when={store.character?.visual.avatarUrl}>
+										<img
+											class="agent-message-avatar"
+											src={store.character?.visual.avatarUrl}
+											alt=""
+											aria-hidden="true"
+											draggable={false}
+										/>
+									</Show>
 									<span class="agent-message-name">{store.character?.name}</span>
 									<Show
 										when={(() => {

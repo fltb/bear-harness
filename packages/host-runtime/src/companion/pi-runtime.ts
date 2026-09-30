@@ -58,7 +58,7 @@ export interface PiRuntimeOptions {
 	delegate: HostToolInput["delegate"];
 	runRead: HostToolInput["runRead"];
 	runControl: HostToolInput["runControl"];
-	canon(companionId: string, query: string, limit: number, moduleId?: string): Promise<unknown>;
+	canon(companionId: string, query: string, limit: number): Promise<unknown>;
 	memory: {
 		enabled(companionId: string): boolean;
 		recall(companionId: string, sessionId: string, text: string): Promise<RecallResult>;
@@ -941,7 +941,7 @@ export class PiRuntime {
 			},
 			runRead: this.options.runRead,
 			runControl: this.options.runControl,
-			canon: (query, limit, moduleId) => this.options.canon(companionId, query, limit, moduleId),
+			canon: (query, limit) => this.options.canon(companionId, query, limit),
 			memorySearch: (query, limit) => this.options.memory.search(companionId, query, limit),
 			conversationSearch: (query, limit) =>
 				this.options.memory.searchConversations(companionId, sessionId, query, limit),

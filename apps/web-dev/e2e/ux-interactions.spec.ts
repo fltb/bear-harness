@@ -135,8 +135,8 @@ test("stop, error, edit, correction, tool and choice feedback use the shared mot
 		.getByRole("article", { name: "极昼" })
 		.filter({ hasText: "E2E_OK" });
 	await resetMotionEvents();
-	await assistantMessage.getByRole("button", { name: "这不像极昼" }).click();
-	const correction = page.getByRole("dialog", { name: "这不像极昼" });
+	await assistantMessage.getByRole("button", { name: "纠正回复" }).click();
+	const correction = page.getByRole("dialog", { name: "纠正回复" });
 	await expectMotion(correction, "motion-modal-enter");
 	await page.keyboard.press("Escape");
 
@@ -147,7 +147,7 @@ test("stop, error, edit, correction, tool and choice feedback use the shared mot
 
 	await resetMotionEvents();
 	await sendMessage(page, "E2E_STORY_ENTRY");
-	const choices = page.getByRole("region", { name: "要进入《未送达的回报》吗？" });
+	const choices = page.getByRole("region", { name: "要进入《打烊前的修伞铺》吗？" });
 	await expectMotion(choices, "motion-feedback-enter");
 
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });

@@ -6,7 +6,6 @@ import type { QueryClient } from "@tanstack/solid-query";
 import { type Accessor, createMemo } from "solid-js";
 import type {
 	CanonChunk,
-	CanonModule,
 	CanonSource,
 	CharacterDeletionStatus,
 	CharacterListData,
@@ -248,13 +247,10 @@ interface CanonApiContext {
 	cacheRevision(): number;
 	currentCharacterId(): string | undefined;
 	canonSources: { data?: { sources: CanonSource[] } };
-	canonModules: { data?: { modules: CanonModule[] } };
 	refreshSources(): Promise<unknown>;
-	refreshModules(): Promise<unknown>;
 }
 export function createCanonApi(c: CanonApiContext): CanonApi {
 	const sources = createMemo(() => c.canonSources.data?.sources ?? []);
-	const modules = createMemo(() => c.canonModules.data?.modules ?? []);
 	return {
 		searchResults: (query) => {
 			c.cacheRevision();
@@ -268,7 +264,6 @@ export function createCanonApi(c: CanonApiContext): CanonApi {
 			);
 		},
 		sources,
-		modules,
 		listSources: async () => {
 			await c.refreshSources();
 		},
@@ -287,17 +282,6 @@ export function createCanonApi(c: CanonApiContext): CanonApi {
 		removeSource: async (sourceId) => {
 			await invoke(c.client, () => c.client.canon.removeSource({ sourceId }));
 			await c.refreshSources();
-		},
-		listModules: async () => {
-			await c.refreshModules();
-		},
-		upsertModule: async (params) => {
-			await invoke(c.client, () => c.client.canon.upsertModule(params));
-			await c.refreshModules();
-		},
-		deleteModule: async (id) => {
-			await invoke(c.client, () => c.client.canon.deleteModule({ id }));
-			await c.refreshModules();
 		},
 	};
 }

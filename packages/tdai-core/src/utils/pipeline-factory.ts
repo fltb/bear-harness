@@ -156,11 +156,12 @@ export function initStores(
 	cfg: MemoryTdaiConfig,
 	pluginDataDir: string,
 	logger: PipelineLogger,
+	embeddingProvider?: () => Promise<EmbeddingService | undefined>,
 ): Promise<StoreInitResult> {
 	const canonicalDir = canonicalDataDir(pluginDataDir);
 	const cached = _storeInitCache.get(canonicalDir);
 	if (cached) return cached;
-	const pending = _doInitStores(cfg, canonicalDir, logger).catch((error) => {
+	const pending = _doInitStores(cfg, canonicalDir, logger, embeddingProvider).catch((error) => {
 		if (_storeInitCache.get(canonicalDir) === pending) {
 			_storeInitCache.delete(canonicalDir);
 		}
@@ -210,6 +211,7 @@ async function _doInitStores(
 	cfg: MemoryTdaiConfig,
 	pluginDataDir: string,
 	logger: PipelineLogger,
+	embeddingProvider?: () => Promise<EmbeddingService | undefined>,
 ): Promise<StoreInitResult> {
 	let vectorStore: IMemoryStore | undefined;
 	let embeddingService: EmbeddingService | undefined;
@@ -217,7 +219,9 @@ async function _doInitStores(
 	let reindexReason: string | undefined;
 
 	try {
+		const shared = embeddingProvider ? await embeddingProvider() : undefined;
 		const bundle = createStoreBundle(cfg, {
+			embeddingService: embeddingProvider ? shared ?? null : undefined,
 			dataDir: pluginDataDir,
 			logger,
 		});

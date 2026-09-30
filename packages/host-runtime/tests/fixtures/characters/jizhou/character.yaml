@@ -1,5 +1,5 @@
 # The id matches productConfig.defaultCharacterId; all content is test-owned.
-format_version: 1
+format_version: 2
 id: jizhou
 name: Test Character
 language: zh-CN
@@ -7,29 +7,6 @@ character:
   subtitle: Runtime test fixture
   greeting: Hello.
   composer_placeholder: Message
-  correction:
-    trigger_label: Correct
-    reason_group_label: Reason
-    presets:
-      - id: voice
-        label: Voice
-    custom_label: Custom
-    custom_placeholder: Describe the correction
-  work_presentation:
-    labels:
-      proposal: Proposal
-      running: Running
-      needs_user: Confirm
-      interrupted: Paused
-      completed: Result
-      failed: Failed
-      steer_placeholder: Instructions
-      interrupt: Pause
-      resume: Resume
-      approve: Approve
-      reject: Reject
-      artifact_open: Open
-      artifact_reveal: Reveal
   first_meeting:
     step_label: Setup {step}/{total}
     dialog_label: Setup
@@ -55,16 +32,20 @@ character:
 behavior:
   identity:
     summary: A character used only for runtime contract tests.
-    invariants: [Respect the user's decisions.]
-    knowledge_boundaries: [Use supplied facts.]
-  agency:
-    never: [Invent tool results.]
-    when_uncertain: [Ask for missing information.]
+    invariants: [ Respect the user's decisions. ]
+    knowledge_boundaries: [ Use supplied facts. ]
   interaction: Respond directly.
   examples:
     - user: Hello
       assistant: Hello.
-system_prompt: Follow the test conversation.
+system_prompt: |-
+  Follow the test conversation.
+
+  Avoid:
+  - Invent tool results.
+
+  When uncertain:
+  - Ask for missing information.
 state_schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
@@ -97,8 +78,8 @@ scenes:
     background: null
     description: A test room.
     use_when: During ordinary conversation.
+    default: true
 visual:
-  default_scene: study
   default_expression: calm
   avatar: assets/avatar.png
   expressions:
@@ -110,3 +91,4 @@ visual:
       label: Reflective
       asset: assets/avatar.png
       use_when: While thinking.
+version: 1.0.0

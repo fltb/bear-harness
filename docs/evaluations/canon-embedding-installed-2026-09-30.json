@@ -1,0 +1,13 @@
+{
+	"status": "blocked_by_legacy_database",
+	"schemaUserVersion": 0,
+	"failure": "no such function: bear_sync_changed",
+	"chunks": 10,
+	"embedded": 0,
+	"vectorRowIds": 0,
+	"embeddingSettingsChanged": false,
+	"canonTextChanged": false,
+	"legacySchemaChanged": false,
+	"modelCopiedFromExistingLocalCache": true,
+	"note": "No compatibility shim or legacy schema patch added; current-format Host verification is separate."
+}

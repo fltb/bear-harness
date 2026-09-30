@@ -665,7 +665,7 @@ test("configured live model answers through the native conversation journey", as
 	});
 });
 
-test("configured live model answers a natural story with scene expression media and choices", async ({
+test("configured live model answers an independent story and separately requested media", async ({
 	page,
 }) => {
 	test.skip(
@@ -717,176 +717,84 @@ test("configured live model answers a natural story with scene expression media 
 		conversationId: conversation.conversationId,
 		selected: { providerId: configuredProviderId, modelId },
 	});
-	type StoryOpen = {
-		branch: { entries: unknown[] };
-		live: { isStreaming: boolean };
-	};
-	type StoryState = {
-		state: {
-			character: { document: { story: { active: boolean; chapter: number } } };
-			display: { sceneId: string; expressionId: string };
-		};
-	};
 	const open = () =>
-		rpc<StoryOpen>("conversation.open", { conversationId: conversation.conversationId });
-	const state = () =>
-		rpc<StoryState>("companionState.get", { conversationId: conversation.conversationId });
-	const assertExpression = async () => {
-		const selected = (await state()).state.display.expressionId;
-		const snapshot = await rpc<{
-			character: { visual: { expressionLabels: Record<string, string> } };
-		}>("snapshot.get", {});
-		const label = snapshot.character.visual.expressionLabels[selected];
-		if (!label) throw new Error(`Selected expression is not declared: ${selected}`);
-		await expect(page.getByRole("img", { name: label, exact: true })).toBeVisible();
-	};
+		rpc<{ branch: { entries: unknown[] }; live: { isStreaming: boolean } }>("conversation.open", {
+			conversationId: conversation.conversationId,
+		});
 	const send = async (text: string) => {
-		const startIndex = (await open()).branch.entries.length;
+		const start = (await open()).branch.entries.length;
 		await rpc("message.send", {
 			conversationId: conversation.conversationId,
 			text,
 			clientMessageId: crypto.randomUUID(),
 		});
-		return startIndex;
-	};
-	const waitForTool = async (startIndex: number, toolName: string, payloadMarker: string) => {
 		await expect
 			.poll(
 				async () => {
-					const snapshot = await open();
-					const turnEntries = snapshot.branch.entries.slice(startIndex);
-					const entries = JSON.stringify(turnEntries);
-					const hasExpectedTool =
-						entries.includes(`"toolName":"${toolName}"`) && entries.includes(payloadMarker);
-					if (hasExpectedTool) return true;
-					const lastEntry = JSON.stringify(turnEntries.at(-1));
-					if (!snapshot.live.isStreaming && lastEntry.includes('"stopReason":')) {
-						throw new Error(
-							`Live model settled without ${toolName} (${payloadMarker}): ${lastEntry}`,
-						);
-					}
-					return false;
+					const current = await open();
+					return (
+						!current.live.isStreaming &&
+						projectPiEntries(current.branch.entries.slice(start)).some(
+							(entry) => entry.role === "assistant" && (entry.text?.trim().length ?? 0) > 0,
+						)
+					);
 				},
-				{
-					timeout: liveReplyTimeout,
-				},
+				{ timeout: liveReplyTimeout },
 			)
 			.toBe(true);
-		await expect
-			.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
-			.toBe(false);
+		return (await open()).branch.entries.slice(start);
 	};
-
-	// Package CGs illustrate atmosphere; asking for an original document does not request a CG.
-	const firstTurnStart = await send(
-		"带我去交接档案室查那条没归档的回报。先播放信号室的动态场景图让我看看氛围，再把回报原文读给我；场景图不是档案原件，要分清。",
-	);
-	await waitForTool(firstTurnStart, "host_media", "damaged_signal");
-	const firstChapterText = projectPiEntries((await open()).branch.entries)
-		.filter((entry) => entry.type === "message" && entry.role === "assistant")
-		.map((entry) => entry.text ?? "")
-		.join("\n");
-	expect(firstChapterText).toContain("人找到了");
-	expect(firstChapterText).toContain("不用再");
-	expect(firstChapterText).not.toContain("06:40");
-	expect(firstChapterText).not.toContain("风向");
-	await expect.poll(async () => (await state()).state.character.document.story.active).toBe(true);
-	await expect.poll(async () => (await state()).state.display.sceneId).toBe("archive_gallery");
-
+	const opening = await send("开始《打烊前的修伞铺》，给我几个可以点的行动选择。");
+	expect(JSON.stringify(opening)).toContain('"toolName":"role_skill"');
+	expect(JSON.stringify(opening)).toContain("umbrella-shop");
+	expect(JSON.stringify(opening)).toContain('"toolName":"host_choices"');
 	await page.goto("/");
-	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 	await page
 		.getByRole("navigation", { name: zhCN.sidebar.conversations })
 		.locator(`[data-conversation-id="${conversation.conversationId}"]`)
 		.click();
-	await expect(page.getByRole("img", { name: "交接档案室" })).toBeVisible();
-	await assertExpression();
-	const damagedSignal = thread.getByRole("region", { name: "残缺报码" });
-	await expect(damagedSignal).toBeVisible();
-	await damagedSignal.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	const damagedSignalPreview = page.getByRole("dialog", { name: "残缺报码" });
-	await expect(damagedSignalPreview).toBeVisible();
-	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
-
-	const findRelayChoice = async () => {
-		const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
-		if (await jumpToLatest.isVisible()) await jumpToLatest.click();
-		const entries = (await open()).branch.entries;
-		for (let index = entries.length - 1; index >= firstTurnStart; index -= 1) {
-			const entry = entries[index];
-			if (!entry || typeof entry !== "object" || !("message" in entry)) continue;
-			const message = entry.message;
-			if (!message || typeof message !== "object") continue;
-			if (!("role" in message) || message.role !== "toolResult") continue;
-			if (!("toolName" in message) || message.toolName !== "host_choices") continue;
-			if (!("details" in message) || !message.details || typeof message.details !== "object")
-				continue;
-			if (!("data" in message.details) || !message.details.data) continue;
-			const data = message.details.data;
-			if (typeof data !== "object" || !("items" in data) || !Array.isArray(data.items)) continue;
-			const matching = data.items.filter((item): item is { label: string; message: string } =>
-				Boolean(
-					item &&
-						typeof item === "object" &&
-						"label" in item &&
-						typeof item.label === "string" &&
-						"message" in item &&
-						typeof item.message === "string" &&
-						item.message.includes("转发台"),
-				),
-			);
-			const choice = matching.find((item) => !item.message.includes("两条")) ?? matching[0];
-			if (!choice) continue;
-			const candidate = thread.getByRole("button", { name: choice.label, exact: true });
-			const count = await candidate.count();
-			if (count > 1) throw new Error(`The live model rendered ${count} copies of ${choice.label}`);
-			if (count === 1) return candidate;
-		}
-		return undefined;
-	};
-	let relayChoice = await findRelayChoice();
-	if (!relayChoice) {
-		const choiceTurnStart = await send(
-			"把现在能继续调查的两条路做成可点击选项，我自己选。去转发台那条请写清楚：先看地图桌场景图，再查转发记录。",
-		);
-		await waitForTool(choiceTurnStart, "host_choices", "转发台");
-	} else {
-		await waitForTool(firstTurnStart, "host_choices", "转发台");
-	}
-	relayChoice = await findRelayChoice();
-	if (!relayChoice) throw new Error("The live model did not offer the relay-register choice");
-	const relayTurnStart = (await open()).branch.entries.length;
-	await relayChoice.click();
-	// Choosing a route is ordinary input, not a privileged command to emit media.
+	const before = (await open()).branch.entries.length;
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	// Select an actual native tool result choice, not a preordained story branch.
+	const nativeChoice = opening.findLast((entry) => {
+		const row = entry as { message?: { toolName?: string } };
+		return row.message?.toolName === "host_choices";
+	}) as
+		| { message?: { details?: { data?: { items?: Array<{ label: string; message: string }> } } } }
+		| undefined;
+	const option = nativeChoice?.message?.details?.data?.items?.[0];
+	if (!option) throw new Error("Story did not return a usable choice");
+	await thread.getByRole("button", { name: option.label, exact: true }).click();
 	await expect
 		.poll(
 			async () => {
-				const snapshot = await open();
+				const current = await open();
 				return (
-					!snapshot.live.isStreaming &&
-					projectPiEntries(snapshot.branch.entries.slice(relayTurnStart)).some(
-						(entry) => entry.type === "message" && entry.role === "assistant",
+					!current.live.isStreaming &&
+					projectPiEntries(current.branch.entries.slice(before)).some(
+						(entry) => entry.role === "assistant" && (entry.text?.length ?? 0) > 0,
 					)
 				);
 			},
 			{ timeout: liveReplyTimeout },
 		)
 		.toBe(true);
-	const relayMediaStart = await send("给我看看转发台灯下的地图桌场景图，再接着查这里的记录。");
-
-	await waitForTool(relayMediaStart, "host_media", "storm_relay_map");
-	const relayText = projectPiEntries((await open()).branch.entries)
-		.filter((entry) => entry.type === "message" && entry.role === "assistant")
-		.map((entry) => entry.text ?? "")
-		.join("\n");
-	expect(relayText).toContain("K-4");
-	expect(relayText).toContain("未获复述");
-	await expect.poll(async () => (await state()).state.display.sceneId).toBe("relay_room");
-	await expect(page.getByRole("img", { name: "转发台资料室" })).toBeVisible();
-	await assertExpression();
-	await expect
-		.poll(() => thread.getByRole("region", { name: "转发台灯下", exact: true }).count())
-		.toBeGreaterThan(0);
+	expect(
+		projectPiEntries((await open()).branch.entries)
+			.filter((entry) => entry.role === "user")
+			.at(-1)?.text,
+	).toBe(option.message);
+	await send("先暂停故事。");
+	const media = await send("给我看看角色包里的极光书桌插画，并把背景切回极光书房。");
+	expect(JSON.stringify(media)).toContain('"toolName":"host_media"');
+	expect(JSON.stringify(media)).toContain("continuity_light");
+	await expect(page.getByRole("img", { name: "极光书房", exact: true })).toBeVisible();
+	const card = thread.getByRole("region", { name: "极光书桌" });
+	await card.getByRole("button", { name: zhCN.messages.openMedia }).click();
+	const viewer = page.getByRole("dialog", { name: "极光书桌" });
+	await expect(viewer).toBeVisible();
+	await viewer.getByRole("button", { name: zhCN.messages.closeMedia }).click();
+	await expect(viewer).toBeHidden();
 });
 
 test("configured live model answers naturally with rendered structured content", async ({

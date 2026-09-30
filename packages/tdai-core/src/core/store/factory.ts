@@ -38,7 +38,7 @@ export interface StoreBundle {
  */
 export function createStoreBundle(
 	config: MemoryTdaiConfig,
-	options: { dataDir: string; logger?: StoreLogger },
+	options: { dataDir: string; logger?: StoreLogger; embeddingService?: EmbeddingService | null },
 ): StoreBundle {
 	const { logger } = options;
 
@@ -56,7 +56,18 @@ export function createStoreBundle(
 			// endpoint such as Ollama counts as a remote too).
 			let embeddingService: EmbeddingService | undefined;
 			if (config.embedding.enabled) {
-				if (config.embedding.provider === "local") {
+				if (options.embeddingService !== undefined) {
+					const shared = options.embeddingService;
+					// The caller owns this provider, including on initialization failure.
+					embeddingService = shared ? {
+						embed: (text, opts) => shared.embed(text, opts),
+						embedBatch: (texts, opts) => shared.embedBatch(texts, opts),
+						getDimensions: () => shared.getDimensions(),
+						getProviderInfo: () => shared.getProviderInfo(),
+						isReady: () => shared.isReady(),
+						startWarmup: () => shared.startWarmup(),
+					} : undefined;
+				} else if (config.embedding.provider === "local") {
 					embeddingService = createEmbeddingService(
 						{
 							provider: "local",

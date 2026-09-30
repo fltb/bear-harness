@@ -114,15 +114,15 @@ describe("character package display validation", () => {
 		const manifest = parse(readFileSync(manifestPath, "utf8"));
 		manifest.id = "translated-role";
 		writeFileSync(manifestPath, stringify(manifest));
-		const canonPath = join(packageDir, "canon", "manifest.yaml");
-		const canon = parse(readFileSync(canonPath, "utf8"));
-		canon.language = "en-US";
-		writeFileSync(canonPath, stringify(canon));
+		writeFileSync(
+			join(packageDir, "canon", "reference.txt"),
+			"# English reference\n\nOriginal English text.",
+		);
 		const loader = new CharacterLoader(characterRoot, installedRoot);
 		const character = loader.load("translated-role");
 		if (!character) throw new Error("Imported character must load");
 		expect(loader.display(character).language).toBe("zh-CN");
-		expect(character.canon.manifest.language).toBe("en-US");
+		expect(character.canon.sources[0]?.content).toContain("Original English text");
 	});
 
 	it("projects and parses an imported package display", () => {
@@ -244,52 +244,15 @@ describe("character package media", () => {
 });
 
 describe("character package work presentation", () => {
-	it("keeps work presentation optional for packages that do not declare it", () => {
-		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-no-work-"));
-		temporaryDirectories.push(configRoot);
-		const packageDir = join(configRoot, "jizhou");
-		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
-		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = parse(readFileSync(manifestPath, "utf8"));
-		delete manifest.character.work_presentation;
-		writeFileSync(manifestPath, stringify(manifest));
-
-		const loader = new CharacterLoader(configRoot);
-		const character = loader.load("jizhou");
-		expect(character).not.toBeNull();
-		if (!character) throw new Error("test package failed to load");
-		expect(loader.display(character).character.work_presentation).toBeUndefined();
-	});
-
-	it("rejects blank and unknown work presentation labels", () => {
-		for (const [name, mutate] of [
-			[
-				"blank",
-				(manifest: { character: { work_presentation: { labels: Record<string, string> } } }) => {
-					manifest.character.work_presentation.labels.proposal = " ";
-				},
-			],
-			[
-				"unknown",
-				(manifest: { character: { work_presentation: { labels: Record<string, string> } } }) => {
-					manifest.character.work_presentation.labels.unknown = "未知";
-				},
-			],
-		] as const) {
-			const configRoot = mkdtempSync(join(tmpdir(), `bear-character-package-${name}-`));
-			temporaryDirectories.push(configRoot);
-			const packageDir = join(configRoot, "jizhou");
-			cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
-			const manifestPath = join(packageDir, "character.yaml");
-			const manifest = parse(readFileSync(manifestPath, "utf8"));
-			mutate(manifest);
-			writeFileSync(manifestPath, stringify(manifest));
-
-			const loader = new CharacterLoader(configRoot);
-			expect(() => loader.load("jizhou")).toThrow(
-				/character package jizhou: manifest character\.work_presentation\.labels/,
-			);
-		}
+	it("rejects product UI settings in a character package", () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-obsolete-labels-"));
+		temporaryDirectories.push(root);
+		copyCharacterPackage(join(root, "jizhou"), "jizhou", "obsolete");
+		const path = join(root, "jizhou", "character.yaml");
+		const manifest = parse(readFileSync(path, "utf8"));
+		manifest.character.work_presentation = { labels: { proposal: "Wrong owner" } };
+		writeFileSync(path, stringify(manifest));
+		expect(() => new CharacterLoader(root).load("jizhou")).toThrow(/character/);
 	});
 });
 
@@ -298,7 +261,7 @@ describe("character package Pi resources", () => {
 		const loader = new CharacterLoader(officialCharacterRoot);
 		const character = loader.load("jizhou");
 		if (!character) throw new Error("jizhou package is required for the official build");
-		expect(character.skills.map((skill) => skill.name)).toEqual(["undelivered-report"]);
+		expect(character.skills.map((skill) => skill.name)).toEqual(["read-together", "umbrella-shop"]);
 		const resources = loader.piResources(character);
 		expect(resources.skillPaths).toEqual([
 			realpathSync(resolve(officialCharacterRoot, "jizhou", "skills")),
@@ -355,7 +318,7 @@ describe("character package durable replacement", () => {
 		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-invalid-library-"));
 		temporaryDirectories.push(seedRoot, libraryRoot);
 		copyCharacterPackage(join(seedRoot, "jizhou"), "jizhou", "invalid-seed");
-		rmSync(join(seedRoot, "jizhou", "canon", "manifest.yaml"));
+		rmSync(join(seedRoot, "jizhou", "assets", "avatar.png"));
 		const loader = new CharacterLoader(seedRoot, libraryRoot);
 
 		try {
@@ -364,9 +327,9 @@ describe("character package durable replacement", () => {
 		} catch (error) {
 			expect(error).toMatchObject({
 				code: "verification-failed",
-				message: expect.stringContaining("package content missing: canon/manifest.yaml"),
+				message: expect.stringContaining("package content missing: assets/avatar.png"),
 				cause: expect.objectContaining({
-					message: expect.stringContaining("package content missing: canon/manifest.yaml"),
+					message: expect.stringContaining("package content missing: assets/avatar.png"),
 				}),
 			});
 		}

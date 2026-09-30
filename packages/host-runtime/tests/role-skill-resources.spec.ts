@@ -2,7 +2,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	eligibleRoleSkillResources,
@@ -17,13 +17,32 @@ afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true });
 });
 
-const skills = loadRoleSkills([
-	resolve(import.meta.dirname, "../../../config/characters/jizhou/skills"),
-]);
-const story = skills.find((skill) => skill.name === "undelivered-report");
-if (!story) throw new Error("missing undelivered-report Skill");
-
-const state = (active: boolean, chapter: number) => ({ story: { active, chapter } });
+function gatedSkill() {
+	const directory = mkdtempSync(join(tmpdir(), "bear-gated-resource-"));
+	temporaryDirectories.push(directory);
+	writeFileSync(
+		join(directory, "SKILL.md"),
+		`---
+name: test-resource
+description: Read one test section.
+triggers: { include: [Read test], exclude: [Other request] }
+requires: { state: { /available: [true] } }
+active-when: { state: { /reading: [true] } }
+completion: { state: { /done: true } }
+resources:
+  - { id: first, path: text.md, headings: [First], when: { state: { /position: [0] } } }
+  - { id: second, path: text.md, headings: [Second], when: { state: { /position: [1] } } }
+allowed-tools: [host_choices]
+priority: 0
+---
+Read a section.
+`,
+	);
+	writeFileSync(join(directory, "text.md"), "# Text\n\n## First\nOne\n\n## Second\nTwo\n");
+	const skill = loadRoleSkills([directory])[0];
+	if (!skill) throw new Error("missing test Skill");
+	return skill;
+}
 
 describe("state-gated role Skill resources", () => {
 	it("loads numeric metadata from Windows CRLF frontmatter", () => {
@@ -60,34 +79,29 @@ describe("state-gated role Skill resources", () => {
 		expect(loadRoleSkills([directory])).toMatchObject([{ name: "nested-skill" }]);
 	});
 
-	it("derives Skill activity from package metadata without role-name branches", () => {
-		expect(roleSkillStatus(story, state(false, 0))).toBe("eligible");
-		expect(roleSkillStatus(story, state(true, 1))).toBe("active");
+	it("derives eligibility, activity and completion from independent metadata", () => {
+		const skill = gatedSkill();
+		expect(roleSkillStatus(skill, {})).toBe("blocked");
+		expect(roleSkillStatus(skill, { available: true })).toBe("eligible");
+		expect(roleSkillStatus(skill, { available: true, reading: true })).toBe("active");
+		expect(roleSkillStatus(skill, { available: true, done: true })).toBe("completed");
 	});
 
-	it("exposes only resources allowed by the authoritative story position", () => {
-		const entryResources = eligibleRoleSkillResources(story, state(false, 0));
-		expect(entryResources.map((resource) => resource.id)).toEqual(["entry"]);
-		const entry = entryResources[0];
-		if (!entry) throw new Error("entry resource is required");
-		const entryText = readRoleSkillResource(story, entry);
-		expect(entryText).toContain("## 序章：目录里的冲突");
-		expect(entryText).not.toContain("## 第四章：关站清点");
-
-		const lastShiftResources = eligibleRoleSkillResources(story, state(true, 4));
-		expect(lastShiftResources.map((resource) => resource.id)).toEqual(["last-shift"]);
-		const lastShift = lastShiftResources[0];
-		if (!lastShift) throw new Error("last-shift resource is required");
-		expect(readRoleSkillResource(story, lastShift)).toContain("## 第四章：关站清点");
-	});
-
-	it("returns every heading declared by each chapter resource", () => {
-		for (const resource of story.resources) {
-			const text = readRoleSkillResource(story, resource);
-			for (const heading of resource.headings ?? []) {
-				expect(text).toContain(`## ${heading}`);
-			}
+	it("selects and reads only the section allowed by metadata", () => {
+		const skill = gatedSkill();
+		for (const [position, id, included, excluded] of [
+			[0, "first", "One", "Two"],
+			[1, "second", "Two", "One"],
+		] as const) {
+			const resources = eligibleRoleSkillResources(skill, { position });
+			expect(resources.map((resource) => resource.id)).toEqual([id]);
+			const resource = resources[0];
+			if (!resource) throw new Error("missing resource");
+			const text = readRoleSkillResource(skill, resource);
+			expect(text).toContain(included);
+			expect(text).not.toContain(excluded);
 		}
+		expect(eligibleRoleSkillResources(skill, { position: 2 })).toEqual([]);
 	});
 });
 

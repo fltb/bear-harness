@@ -35,13 +35,9 @@ import {
 import { dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import type { CharacterTheme } from "@bear-harness/protocol/schema";
 import { toJsonSchema, z } from "@bear-harness/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { parse } from "yaml";
-import {
-	CanonPackageManifestSchema,
-	type LoadedCanonPackage,
-	validateCanonManifest,
-} from "../canon/package-schema.js";
+import { type LoadedCanonPackage, loadCanonDocuments } from "../canon/package-schema.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	type DurableFileRecoveryResult,
@@ -61,7 +57,12 @@ import {
 	CharacterOnboardingFlowSchema,
 	validateCharacterOnboardingFlow,
 } from "./onboarding-schema.js";
-import { loadRoleSkills, type RoleSkill, roleSkillPrompt } from "./role-resources.js";
+import {
+	loadRoleSkills,
+	type RoleSkill,
+	readRoleSkillResource,
+	roleSkillPrompt,
+} from "./role-resources.js";
 import {
 	type CharacterStateDefinition,
 	CharacterStateSchema,
@@ -76,26 +77,6 @@ import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js
 
 export type ThemeTokens = CharacterTheme;
 
-export interface CharacterWorkPresentationLabels {
-	proposal: string;
-	running: string;
-	needs_user: string;
-	interrupted: string;
-	completed: string;
-	failed: string;
-	steer_placeholder: string;
-	interrupt: string;
-	resume: string;
-	approve: string;
-	reject: string;
-	artifact_open: string;
-	artifact_reveal: string;
-}
-
-export interface CharacterWorkPresentation {
-	labels: CharacterWorkPresentationLabels;
-}
-
 export interface CharacterStrings {
 	subtitle: string;
 	greeting: string;
@@ -107,10 +88,10 @@ export interface CharacterStrings {
 		custom_label: string;
 		custom_placeholder: string;
 	};
-	work_presentation?: CharacterWorkPresentation;
-	first_meeting: CharacterOnboardingFlow;
+	first_meeting?: CharacterOnboardingFlow;
 }
 export interface ScenePreset {
+	default?: boolean;
 	id: string;
 	label: string;
 	background: string | null;
@@ -126,9 +107,8 @@ export interface CharacterExpression {
 }
 
 export interface CharacterVisuals {
-	default_scene: string;
-	default_expression: string;
-	avatar: string;
+	default_expression: string | null;
+	avatar?: string;
 	expressions: CharacterExpression[];
 }
 
@@ -142,7 +122,8 @@ export interface CharacterVisuals {
  * input records.
  */
 export interface CharacterPackage {
-	format_version: 1;
+	format_version: 2;
+	version: string;
 	id: string;
 	name: string;
 	language: string;
@@ -198,9 +179,9 @@ export interface CharacterDisplay {
 		backgroundUrl?: string;
 	}>;
 	visual: {
-		defaultSceneId: string;
-		defaultExpressionId: string;
-		avatarUrl: string;
+		defaultSceneId: string | null;
+		defaultExpressionId: string | null;
+		avatarUrl?: string;
 		expressions: Record<string, string>;
 		expressionLabels: Record<string, string>;
 	};
@@ -262,29 +243,6 @@ const LanguageTagSchema = z
 		}
 	}, "must be a valid BCP-47 language tag");
 
-const WorkPresentationLabelSchema = z
-	.string()
-	.min(1)
-	.max(4096)
-	.refine((value) => value.trim().length > 0, "must not be blank");
-const WorkPresentationSchema = z.strictObject({
-	labels: z.strictObject({
-		proposal: WorkPresentationLabelSchema,
-		running: WorkPresentationLabelSchema,
-		needs_user: WorkPresentationLabelSchema,
-		interrupted: WorkPresentationLabelSchema,
-		completed: WorkPresentationLabelSchema,
-		failed: WorkPresentationLabelSchema,
-		steer_placeholder: WorkPresentationLabelSchema,
-		interrupt: WorkPresentationLabelSchema,
-		resume: WorkPresentationLabelSchema,
-		approve: WorkPresentationLabelSchema,
-		reject: WorkPresentationLabelSchema,
-		artifact_open: WorkPresentationLabelSchema,
-		artifact_reveal: WorkPresentationLabelSchema,
-	}),
-});
-
 const PromptStringSchema = z.string().max(65536);
 
 const ThemeTokensSchema = CharacterThemeOverridesSchema;
@@ -297,26 +255,16 @@ const CharacterIdentifierSchema = z
 const CharacterPackageIdSchema = z
 	.string()
 	.min(1)
-	.max(128)
-	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+	.max(64)
+	.regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const CharacterCardSchema = z.strictObject({
-	subtitle: z.string().max(4096),
-	greeting: z.string().max(16_384),
-	composer_placeholder: z.string().max(4096),
-	correction: z.strictObject({
-		trigger_label: z.string().min(1).max(4096),
-		reason_group_label: z.string().min(1).max(4096),
-		presets: z
-			.array(z.strictObject({ id: CharacterIdentifierSchema, label: z.string().min(1).max(4096) }))
-			.min(1)
-			.max(20),
-		custom_label: z.string().min(1).max(4096),
-		custom_placeholder: z.string().min(1).max(4096),
-	}),
-	work_presentation: WorkPresentationSchema.optional(),
-	first_meeting: CharacterOnboardingFlowSchema,
+	subtitle: z.string().max(4096).default(""),
+	greeting: z.string().max(16_384).default(""),
+	composer_placeholder: z.string().max(4096).default(""),
+	first_meeting: CharacterOnboardingFlowSchema.optional(),
 });
 const ScenePresetSchema = z.strictObject({
+	default: z.boolean().optional(),
 	id: CharacterIdentifierSchema,
 	label: z.string().min(1).max(4096),
 	background: z.string().min(1).max(512).nullable(),
@@ -333,23 +281,34 @@ const CharacterExpressionSchema = z.strictObject({
 /** The single runtime contract for character.yaml; UI and Host consume this schema. */
 export const CharacterManifestSchema = z
 	.strictObject({
-		format_version: z.literal(1),
+		format_version: z.literal(2),
+		version: z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/),
 		id: CharacterPackageIdSchema,
 		name: z.string().min(1).max(4096),
 		language: LanguageTagSchema,
 		theme: ThemeTokensSchema.optional(),
-		character: CharacterCardSchema,
-		behavior: CharacterBehaviorSchema,
-		system_prompt: PromptStringSchema,
-		scenes: z.array(ScenePresetSchema).min(1).max(100),
-		visual: z.strictObject({
-			default_scene: CharacterIdentifierSchema,
-			default_expression: CharacterIdentifierSchema,
-			avatar: z.string().min(1).max(512),
-			expressions: z.array(CharacterExpressionSchema).min(1).max(100),
+		character: CharacterCardSchema.default({
+			subtitle: "",
+			greeting: "",
+			composer_placeholder: "",
 		}),
-		state_schema: z.record(z.string(), z.unknown()).default({}),
-		media: CharacterMediaSchema,
+		behavior: CharacterBehaviorSchema,
+		system_prompt: PromptStringSchema.default(""),
+		scenes: z.array(ScenePresetSchema).max(100).default([]),
+		visual: z
+			.strictObject({
+				default_expression: CharacterIdentifierSchema.nullable().default(null),
+				avatar: z.string().min(1).max(512).optional(),
+				expressions: z.array(CharacterExpressionSchema).max(100).default([]),
+			})
+			.default({ default_expression: null, expressions: [] }),
+		state_schema: z.record(z.string(), z.unknown()).default({
+			$schema: "https://json-schema.org/draft/2020-12/schema",
+			type: "object",
+			additionalProperties: false,
+			properties: {},
+		}),
+		media: CharacterMediaSchema.default([]),
 	})
 	.superRefine((manifest, context) => {
 		const unique = (values: string[]) => new Set(values).size === values.length;
@@ -361,13 +320,14 @@ export const CharacterManifestSchema = z
 				path: ["visual", "expressions"],
 				message: "expression ids must be unique",
 			});
-		if (!manifest.scenes.some((scene) => scene.id === manifest.visual.default_scene))
+		if (manifest.scenes.filter((scene) => scene.default).length > 1)
 			context.addIssue({
 				code: "custom",
-				path: ["visual", "default_scene"],
-				message: "default scene must reference a declared scene",
+				path: ["scenes"],
+				message: "only one default scene is allowed",
 			});
 		if (
+			manifest.visual.default_expression !== null &&
 			!manifest.visual.expressions.some(
 				(expression) => expression.id === manifest.visual.default_expression,
 			)
@@ -380,16 +340,6 @@ export const CharacterManifestSchema = z
 	});
 export type CharacterManifest = z.infer<typeof CharacterManifestSchema>;
 type CharacterManifestJson = z.infer<ReturnType<typeof z.json>>;
-
-function validateWorkPresentation(
-	value: unknown,
-	characterId: string,
-): asserts value is CharacterWorkPresentation | undefined {
-	if (value === undefined) return;
-	if (!WorkPresentationSchema.safeParse(value).success) {
-		throw new Error(`character package ${characterId}: work presentation labels are invalid`);
-	}
-}
 
 function resolveTheme(value: unknown, characterId: string): ThemeTokens {
 	const result = ThemeTokensSchema.safeParse(value);
@@ -411,7 +361,7 @@ export class CharacterLoader {
 	private readonly packageRecoveryFailures = new Map<string, unknown>();
 	private readonly loadedPackages = new Map<
 		string,
-		{ sourceManifest: string; character: CharacterPackage }
+		{ fingerprint: string; character: CharacterPackage }
 	>();
 	constructor(
 		private readonly seedRoot: string,
@@ -590,6 +540,32 @@ export class CharacterLoader {
 		return resolvedPath;
 	}
 
+	private packageFingerprint(characterId: string): string {
+		const hash = createHash("sha256");
+		const pending = [{ path: "", depth: 0 }];
+		let files = 0;
+		while (pending.length) {
+			const current = pending.pop();
+			if (!current) break;
+			if (current.depth > 128) throw new Error("character package exceeds maximum depth");
+			const directory = current.path
+				? this.characterPackagePath(characterId, current.path)
+				: this.packageDirectory(characterId);
+			if (lstatSync(directory).isSymbolicLink())
+				throw new Error("character package symlinks are not allowed");
+			for (const name of readdirSync(directory).sort()) {
+				const path = current.path ? `${current.path}/${name}` : name;
+				const physical = this.characterPackagePath(characterId, path);
+				const stat = lstatSync(physical, { bigint: true });
+				if (++files > 10000) throw new Error("character package has too many files");
+				hash.update(`${path}\0${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}\0`);
+				if (stat.isDirectory()) pending.push({ path, depth: current.depth + 1 });
+				else if (!stat.isFile()) throw new Error("unsupported character package file");
+			}
+		}
+		return hash.digest("hex");
+	}
+
 	private ensureImageAsset(characterId: string, assetPath: string): void {
 		if (!IMAGE_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()]) {
 			throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
@@ -641,8 +617,9 @@ export class CharacterLoader {
 
 	private characterSummaryAvatarDataUrl(
 		characterId: string,
-		assetPath: string,
+		assetPath: string | undefined,
 	): string | undefined {
+		if (!assetPath) return undefined;
 		const path = this.characterPackagePath(characterId, assetPath);
 		if (statSync(path).size > 64 * 1024) return undefined;
 		return this.characterAssetDataUrl(characterId, assetPath);
@@ -663,9 +640,10 @@ export class CharacterLoader {
 		}
 		const path = join(this.packageDirectory(id), "character.yaml");
 		if (!existsSync(path)) return null;
+		const fingerprint = this.packageFingerprint(id);
 		const sourceManifest = readFileSync(path, "utf8");
 		const cached = this.loadedPackages.get(id);
-		if (cached?.sourceManifest === sourceManifest) return cached.character;
+		if (cached?.fingerprint === fingerprint) return cached.character;
 		const manifestResult = CharacterManifestSchema.safeParse(parse(sourceManifest));
 		if (!manifestResult.success) {
 			const issue = manifestResult.error.issues[0];
@@ -681,80 +659,20 @@ export class CharacterLoader {
 			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
 		}
 		const theme = resolveTheme(parsed.theme, id);
-		if (!Array.isArray(parsed.scenes)) {
-			throw new Error(`character package ${id}: scenes is required array`);
-		}
-		if (
-			!parsed.visual ||
-			typeof parsed.visual.default_scene !== "string" ||
-			typeof parsed.visual.default_expression !== "string" ||
-			typeof parsed.visual.avatar !== "string" ||
-			!Array.isArray(parsed.visual.expressions) ||
-			parsed.visual.expressions.length === 0
-		) {
-			throw new Error(
-				`character package ${id}: visual.default_scene, visual.default_expression, visual.avatar and visual.expressions are required`,
-			);
-		}
-		if (!parsed.scenes.some((scene) => scene.id === parsed.visual.default_scene)) {
-			throw new Error(`character package ${id}: visual.default_scene is not a declared scene`);
-		}
-		this.ensureImageAsset(id, parsed.visual.avatar);
-		const expressionIds = new Set<string>();
-		for (const expression of parsed.visual.expressions) {
-			if (
-				!expression ||
-				typeof expression.id !== "string" ||
-				!/^[a-z][a-z0-9_]*$/.test(expression.id) ||
-				typeof expression.label !== "string" ||
-				typeof expression.asset !== "string" ||
-				typeof expression.use_when !== "string" ||
-				!expression.use_when.trim() ||
-				expressionIds.has(expression.id)
-			) {
-				throw new Error(`character package ${id}: invalid or duplicate visual expression`);
-			}
-			expressionIds.add(expression.id);
-			this.ensureImageAsset(id, expression.asset);
-		}
-		if (!expressionIds.has(parsed.visual.default_expression))
-			throw new Error(`character package ${id}: visual.default_expression is not declared`);
-		for (const scene of parsed.scenes) {
-			if (
-				!scene ||
-				typeof scene.id !== "string" ||
-				typeof scene.label !== "string" ||
-				typeof scene.description !== "string" ||
-				typeof scene.use_when !== "string" ||
-				!scene.use_when.trim()
-			) {
-				throw new Error(`character package ${id}: invalid scene`);
-			}
-			if (scene.background !== null) {
-				if (typeof scene.background !== "string") {
-					throw new Error(`character package ${id}: scene ${scene.id} background is invalid`);
-				}
-				this.ensureImageAsset(id, scene.background);
-			}
-		}
+		if (parsed.visual.avatar) this.ensureImageAsset(id, parsed.visual.avatar);
+		for (const expression of parsed.visual.expressions) this.ensureImageAsset(id, expression.asset);
+		for (const scene of parsed.scenes)
+			if (scene.background) this.ensureImageAsset(id, scene.background);
 		const behavior = parsed.behavior;
 		const state = CharacterStateSchema.parse(parsed.state_schema);
 		if ("roleplay" in parsed || "choice_sets" in parsed)
 			throw new Error(`character package ${id}: deleted roleplay fields are not supported`);
 		const media = parsed.media;
-		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
-		validateWorkPresentation(parsed.character?.work_presentation, id);
-		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
-		const canonManifest = CanonPackageManifestSchema.parse(
-			parse(readFileSync(canonManifestPath, "utf8")),
+		if (parsed.character.first_meeting)
+			validateCharacterOnboardingFlow(parsed.character.first_meeting, id);
+		const canon = loadCanonDocuments(this.packageDirectory(id), (path) =>
+			this.characterPackagePath(id, path),
 		);
-		validateCanonManifest(canonManifest, id);
-		// Canon describes source text, while the character language controls its
-		// presentation. A Chinese-speaking character may cite English originals.
-		const canonSources = canonManifest.sources.map((source) => ({
-			...source,
-			content: readFileSync(this.characterPackagePath(id, `canon/${source.path}`), "utf8"),
-		}));
 		const skillsDir = join(resolve(this.packageDirectory(id)), "skills");
 		const skills = existsSync(skillsDir)
 			? loadRoleSkills([this.characterPackagePath(id, "skills")])
@@ -771,7 +689,18 @@ export class CharacterLoader {
 			"host_run_read",
 			"host_run_control",
 		]);
+		if (new Set(skills.map((skill) => skill.name)).size !== skills.length)
+			throw new Error("duplicate Skill name");
 		for (const skill of skills) {
+			if (new Set(skill.resources.map((resource) => resource.id)).size !== skill.resources.length)
+				throw new Error("duplicate Skill resource id");
+			for (const resource of skill.resources) {
+				this.characterPackagePath(
+					id,
+					relative(this.packageDirectory(id), resolve(dirname(skill.filePath), resource.path)),
+				);
+				readRoleSkillResource(skill, resource);
+			}
 			for (const tool of skill.allowedTools)
 				if (!allowedHostTools.has(tool))
 					throw new Error(
@@ -779,6 +708,8 @@ export class CharacterLoader {
 					);
 			for (const path of [
 				...Object.keys(skill.requires.state),
+				...Object.keys(skill.activeWhen.state),
+				...skill.resources.flatMap((resource) => Object.keys(resource.when.state)),
 				...Object.keys(skill.completion.state),
 			])
 				if (!Object.hasOwn(state.fields, path))
@@ -809,11 +740,12 @@ export class CharacterLoader {
 		}
 		const character = {
 			format_version: parsed.format_version,
+			version: parsed.version,
 			id: parsed.id,
 			name: parsed.name,
 			language: parsed.language,
 			theme,
-			character: parsed.character,
+			character: { ...parsed.character, correction: productCorrection(parsed.language) },
 			behavior,
 			system_prompt: parsed.system_prompt,
 			scenes: parsed.scenes,
@@ -821,9 +753,9 @@ export class CharacterLoader {
 			state,
 			media,
 			skills,
-			canon: { manifest: canonManifest, sources: canonSources },
+			canon,
 		};
-		this.loadedPackages.set(id, { sourceManifest, character });
+		this.loadedPackages.set(id, { fingerprint, character });
 		return character;
 	}
 
@@ -907,12 +839,14 @@ export class CharacterLoader {
 		)}\n</character_behavior_contract>`;
 		const hostContract = `<host_product_contract>
 Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
+For questions about established characters, places, events or reference text, use supplied Canon excerpts or search host_canon with the relevant names and keywords before answering from guesswork or saying the information is unknown. Read the returned material as reference, and keep interpretations distinct from its stated facts.
 Use host_state for Character or Display changes. Character fields record the relationship or story facts described by their schema; Display controls the visible expression and scene in this conversation.
 Let the visible expression follow the character's feelings and the tone of ordinary conversation, without waiting for an explicit request. Select a fitting expression from the display catalog and update Display before replying when it differs from the current host_context snapshot; keep it when the feeling continues. Honor explicit expression requests as well. Narrating an action alone does not change the visible character.
 Use host_media with a declared media id when media would materially help the conversation. Use host_choices only for choices created for the current response; every choice is ordinary user input.
 Use host_delegate to ask the built-in Pi Worker to do separate work. Supply the instruction and optional absolute user-supplied inputPaths, never an executor or agent selector. An accepted receipt identifies a Run; it is not proof of startup, progress, or completion. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
 Use host_run_read to list this conversation's Runs or inspect one exact runId. Use host_run_control only for that exact Run and its reported available actions. Steer sends instructions without promising they were fulfilled; resume continues a paused Run; retryDelivery only retries delivery of an existing result and never re-executes work. User permission approvals must remain in the task UI. Do not claim progress, success, artifacts, or delivery without Host evidence.
 Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle state from Host data. Use Pi's own values and events for those concerns.
+When the user requests a written deliverable such as notes, a summary or a draft, include the actual deliverable in the visible reply. If they also ask to save it, perform the requested save and report its result alongside the text.
 Use Markdown only when it makes the answer easier to read: natural paragraphs for short conversation, lists for genuinely parallel points, tables for matrix data, and fenced code blocks with a language tag for code. Write mathematical expressions with $...$ for inline math or $$ on separate lines for display math; do not put arithmetic or formulas in inline-code backticks. Never emit raw HTML, Markdown images, or text that imitates product buttons; media and choices must use their Host tools.
 When relationship memory is enabled, completed natural conversation is captured by TDAI and may be selectively distilled; the user does not need to use a fixed command. Use explicit_memory only when the user clearly asks to remember, change, or forget exact information.
 Do not claim that missing an explicit request prevents TDAI capture, and do not promise that every natural message becomes durable structured memory. Keep automatic relationship memory and explicit MEMORY.md edits distinct.
@@ -925,8 +859,8 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		)}\n</host_display_catalog>`;
 		const appendSystemPrompt = [
 			hostContract,
-			behaviorContract,
 			character.system_prompt.trim(),
+			behaviorContract,
 			characterStatePrompt(character.state),
 			displayCatalog,
 			roleSkillPrompt(character.skills),
@@ -964,9 +898,11 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 					: {}),
 			})),
 			visual: {
-				defaultSceneId: character.visual.default_scene,
+				defaultSceneId: defaultSceneId(character),
 				defaultExpressionId: character.visual.default_expression,
-				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
+				...(character.visual.avatar
+					? { avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar) }
+					: {}),
 				expressions: Object.fromEntries(
 					character.visual.expressions.map((expression) => {
 						return [expression.id, this.characterAssetDataUrl(character.id, expression.asset)];
@@ -1098,6 +1034,17 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 			parsed.id !== params.characterId
 		)
 			throw { kind: "invalid_request", reason: "character_id_immutable" };
+		const next = CharacterManifestSchema.parse(parsed);
+		const currentManifest = CharacterManifestSchema.parse(parse(current.yaml));
+		if (JSON.stringify(next.state_schema) !== JSON.stringify(currentManifest.state_schema))
+			throw { kind: "conflict", reason: "character_state_schema_change_requires_migration" };
+		if (
+			currentManifest.scenes.some((scene) => !next.scenes.some((item) => item.id === scene.id)) ||
+			currentManifest.visual.expressions.some(
+				(expression) => !next.visual.expressions.some((item) => item.id === expression.id),
+			)
+		)
+			throw { kind: "conflict", reason: "character_display_removal_requires_migration" };
 		const target = join(this.libraryRoot, params.characterId);
 		try {
 			replaceDurableFileSync({
@@ -1315,5 +1262,23 @@ export function modelDisplayCatalog(character: CharacterPackage) {
 			description,
 			useWhen: use_when,
 		})),
+	};
+}
+
+export function defaultSceneId(character: Pick<CharacterPackage, "scenes">): string | null {
+	return (character.scenes.find((scene) => scene.default) ?? character.scenes[0])?.id ?? null;
+}
+function productCorrection(language: string): CharacterStrings["correction"] {
+	const chinese = language.startsWith("zh");
+	return {
+		trigger_label: chinese ? "纠正回复" : "Correct response",
+		reason_group_label: chinese ? "纠正原因" : "Reason",
+		presets: [
+			{ id: "voice", label: chinese ? "语气不合适" : "Voice" },
+			{ id: "identity", label: chinese ? "角色设定不一致" : "Character identity" },
+			{ id: "continuity", label: chinese ? "没有承接上下文" : "Continuity" },
+		],
+		custom_label: chinese ? "其他" : "Other",
+		custom_placeholder: chinese ? "说明需要调整的地方" : "Describe the correction",
 	};
 }

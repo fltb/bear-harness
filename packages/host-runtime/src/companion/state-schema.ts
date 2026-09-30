@@ -54,12 +54,12 @@ export function compileCharacterStateSchema(definition: CharacterStateDefinition
 		const scope = child["x-scope"];
 		if (scope !== "global" && scope !== "conversation")
 			throw new Error(`state partition ${pointer} x-scope must be global or conversation`);
-		if (child.type !== "object" && !child.properties)
-			throw new Error(`state partition ${pointer} must be an object`);
 		partitions.set(name, scope);
 		defaults[name] = visit(fields, child, pointer);
 	}
 	const compiled = { partitions, fields, defaults, validate: ajv.compile(definition) };
+	if (!compiled.validate(defaults))
+		throw new Error("state_schema defaults must satisfy the schema");
 	cache.set(definition, compiled);
 	return compiled;
 }

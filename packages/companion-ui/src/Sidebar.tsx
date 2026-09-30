@@ -138,13 +138,16 @@ export function Sidebar(props: {
 				<Show when={props.character}>
 					{(character) => (
 						<>
-							<img
-								class="identity-avatar"
-								src={character().visual.avatarUrl}
-								alt=""
-								aria-hidden="true"
-								draggable={false}
-							/>
+							<Show when={character().visual.avatarUrl}>
+								<img
+									class="identity-avatar"
+									data-testid="character-avatar"
+									src={character().visual.avatarUrl}
+									alt=""
+									aria-hidden="true"
+									draggable={false}
+								/>
+							</Show>
 							<div>
 								<strong>{character().name}</strong>
 								<span>{character().character.subtitle}</span>

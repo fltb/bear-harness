@@ -13,38 +13,17 @@ import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database
 import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 
 const fixture: LoadedCanonPackage = {
-	manifest: {
-		language: "en-US",
-		sources: [
-			{ id: "archive", title: "Historical notes", path: "archive.md", kind: "reference" },
-			{ id: "current", title: "Current account", path: "current.md", kind: "reference" },
-		],
-		entities: [{ id: "bear", kind: "character", name: "Bear", aliases: ["巨熊"], description: "" }],
-		modules: [
-			{
-				id: "current",
-				kind: "root",
-				title: "Current",
-				summary: "",
-				triggers: [],
-				bindings: [{ source: "current", headings: ["Identity"] }],
-			},
-			{ id: "empty", kind: "root", title: "Empty", summary: "", triggers: [], bindings: [] },
-		],
-	},
 	sources: [
 		{
 			id: "archive",
 			title: "Historical notes",
 			path: "archive.md",
-			kind: "reference",
 			content: Array.from({ length: 40 }, (_, index) => `## Old ${index}\n\nBear`).join("\n\n"),
 		},
 		{
 			id: "current",
 			title: "Current account",
 			path: "current.md",
-			kind: "reference",
 			content: `## Identity\n\nBear lives near a river. ${"The river flows north. ".repeat(100)}\n\n## Unrelated\n\nBear alternate costume.`,
 		},
 	],
@@ -71,40 +50,33 @@ describe("scoped Canon tool search", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("scopes before ranking limits so a rare current account is not crowded out by historical hits", () => {
-		const rows = canon.retrieve("jizhou", "巨熊", {
-			moduleId: "current",
-			limit: 1,
-			includeAdjacent: false,
-		});
+	it("searches reference text and isolates character ownership", () => {
+		const rows = canon.retrieve("jizhou", "river", { limit: 1, includeAdjacent: false });
 		expect(rows).toEqual([
 			expect.objectContaining({ sourceName: "Current account", heading: "Identity" }),
 		]);
-		expect(canon.retrieve("jizhou", "Bear", { moduleId: "missing" })).toEqual([]);
-		expect(canon.retrieve("jizhou", "Bear", { moduleId: "empty" })).toEqual([]);
-		expect(canon.retrieve("other", "Bear", { moduleId: "current" })).toEqual([]);
+		expect(canon.retrieve("other", "river")).toEqual([]);
 	});
-
-	it("routes a package module through the actual Host tool and rejects misspellings", async () => {
+	it("returns document excerpts through the native Host tool", async () => {
 		const loaded = new CharacterLoader(resolve(import.meta.dirname, "./fixtures/characters")).load(
 			"jizhou",
 		);
 		if (!loaded) throw new Error("Shipped package required");
 		const tools = registerHostTools({
-			character: () => ({ ...loaded, canon: fixture }),
-			canon: async (query, limit, moduleId) =>
-				canon.retrieve("jizhou", query, { limit, moduleId, includeAdjacent: false }),
+			character: () => loaded,
+			canon: async (query, limit) =>
+				canon.retrieve("jizhou", query, { limit, includeAdjacent: false }),
 		} as Parameters<typeof registerHostTools>[0]);
 		expect(
-			(await tools.host_canon?.execute("query", { query: "巨熊", moduleId: "current", limit: 1 }))
-				?.details,
+			(await tools.host_canon?.execute("query", { query: "river", limit: 1 }))?.details,
 		).toMatchObject({
 			ok: true,
 			data: [expect.objectContaining({ sourceName: "Current account" })],
 		});
 		expect(
-			(await tools.host_canon?.execute("invalid", { query: "Bear", moduleId: "curent" }))?.details,
-		).toMatchObject({ ok: false, code: "canon_module_not_found" });
+			(await tools.host_canon?.execute("obsolete", { query: "river", moduleId: "current" }))
+				?.details,
+		).toMatchObject({ ok: false });
 	});
 
 	it("distinguishes an empty search from a failed search in native tool details", async () => {

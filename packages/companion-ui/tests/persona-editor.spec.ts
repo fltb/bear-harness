@@ -8,9 +8,6 @@ behavior:
     summary: Original identity
     invariants: [Be honest]
     knowledge_boundaries: [Do not invent]
-  agency:
-    never: [Speak for the user]
-    when_uncertain: [Ask]
   interaction: Direct
   examples:
     - user: Hello
@@ -25,13 +22,13 @@ describe("persona package editing", () => {
 		const draft = readPersona(source);
 		expect(draft.fields.summary).toBe("Original identity");
 		draft.fields.summary = "Edited identity";
-		draft.fields.never = "Do not impersonate\nDo not invent";
+		draft.fields.invariants = "Do not impersonate\nDo not invent";
 		draft.examples = [{ user: "Question", assistant: "Answer" }];
 		const output = writePersona(source, draft);
 		const original = parse(source);
 		const next = parse(output);
 		expect(next.behavior.identity.summary).toBe("Edited identity");
-		expect(next.behavior.agency.never).toEqual(["Do not impersonate", "Do not invent"]);
+		expect(next.behavior.identity.invariants).toEqual(["Do not impersonate", "Do not invent"]);
 		expect(next.behavior.examples).toEqual(draft.examples);
 		expect(next.system_prompt).toEqual(original.system_prompt);
 		expect(next.scenes).toEqual(original.scenes);

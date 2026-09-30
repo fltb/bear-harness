@@ -1,0 +1,136 @@
+{
+	"capturedAt": "2026-09-30T10:04:11.163Z",
+	"provider": "local",
+	"model": "EmbeddingGemma 300M Q8_0",
+	"dimensions": 768,
+	"modelSha256": "6fa0c02a9c302be6f977521d399b4de3a46310a4f2621ee0063747881b673f67",
+	"relationshipMemoryEnabled": false,
+	"tdaiStarted": false,
+	"counts": {
+		"chunks": 9,
+		"embedded": 9
+	},
+	"vectors": {
+		"count": 9
+	},
+	"results": [
+		{
+			"query": "准备晚饭的屋子和供客人翻阅书籍的地方隔着什么",
+			"expected": "白熊客栈",
+			"lexicalHits": 0,
+			"toolResult": {
+				"content": [
+					{
+						"type": "text",
+						"text": "[{\"id\":\"7c1f2ee51971acaa70dabd774f6392f318bbd13e0f12f6ff8a74884bcd2ebd4c\",\"sourceId\":\"649ef6afb0738a2916873df1da02f3addba0445c13a17721863c1bda438294ab\",\"sourceName\":\"白熊客栈\",\"ordinal\":1,\"content\":\"## 一楼的格局\\n\\n前门内侧铺着吸水垫，旁边有伞架。值班桌靠楼梯，桌后的小柜存放钥匙、空白便条和常用杂物；失物箱放在柜子下层。\\n\\n从值班桌往西走是书房。书房有一张长桌、两把扶手椅和临窗的小桌，灯可以分别开关。旧书多半由住客留下，书页里偶尔夹着车票或购物单。壁炉旁的那把椅子左扶手有一道浅凹，坐着并不晃。\\n\\n厨房在一楼后侧，与书房隔着短走廊。水壶、杯子和洗好的餐具放在靠门的一边，烤箱在里侧。厨房后门通往有顶棚的小院；晾布、空木箱和送货用的手推车都放在那里。\\n\\n东边原先用作失物储存的房间还没有开放。门口留有通道，屋内堆着纸盒和旧架子。水管已经修好，墙脚的补漆比旁边浅一块。\",\"heading\":\"一楼的格局\",\"startOffset\":183,\"endOffset\":469,\"origin\":\"package\",\"score\":0.6244447529315948}]"
+					}
+				],
+				"details": {
+					"ok": true,
+					"message": "[{\"id\":\"7c1f2ee51971acaa70dabd774f6392f318bbd13e0f12f6ff8a74884bcd2ebd4c\",\"sourceId\":\"649ef6afb0738a2916873df1da02f3addba0445c13a17721863c1bda438294ab\",\"sourceName\":\"白熊客栈\",\"ordinal\":1,\"content\":\"## 一楼的格局\\n\\n前门内侧铺着吸水垫，旁边有伞架。值班桌靠楼梯，桌后的小柜存放钥匙、空白便条和常用杂物；失物箱放在柜子下层。\\n\\n从值班桌往西走是书房。书房有一张长桌、两把扶手椅和临窗的小桌，灯可以分别开关。旧书多半由住客留下，书页里偶尔夹着车票或购物单。壁炉旁的那把椅子左扶手有一道浅凹，坐着并不晃。\\n\\n厨房在一楼后侧，与书房隔着短走廊。水壶、杯子和洗好的餐具放在靠门的一边，烤箱在里侧。厨房后门通往有顶棚的小院；晾布、空木箱和送货用的手推车都放在那里。\\n\\n东边原先用作失物储存的房间还没有开放。门口留有通道，屋内堆着纸盒和旧架子。水管已经修好，墙脚的补漆比旁边浅一块。\",\"heading\":\"一楼的格局\",\"startOffset\":183,\"endOffset\":469,\"origin\":\"package\",\"score\":0.6244447529315948}]",
+					"data": [
+						{
+							"id": "7c1f2ee51971acaa70dabd774f6392f318bbd13e0f12f6ff8a74884bcd2ebd4c",
+							"sourceId": "649ef6afb0738a2916873df1da02f3addba0445c13a17721863c1bda438294ab",
+							"sourceName": "白熊客栈",
+							"ordinal": 1,
+							"content": "## 一楼的格局\n\n前门内侧铺着吸水垫，旁边有伞架。值班桌靠楼梯，桌后的小柜存放钥匙、空白便条和常用杂物；失物箱放在柜子下层。\n\n从值班桌往西走是书房。书房有一张长桌、两把扶手椅和临窗的小桌，灯可以分别开关。旧书多半由住客留下，书页里偶尔夹着车票或购物单。壁炉旁的那把椅子左扶手有一道浅凹，坐着并不晃。\n\n厨房在一楼后侧，与书房隔着短走廊。水壶、杯子和洗好的餐具放在靠门的一边，烤箱在里侧。厨房后门通往有顶棚的小院；晾布、空木箱和送货用的手推车都放在那里。\n\n东边原先用作失物储存的房间还没有开放。门口留有通道，屋内堆着纸盒和旧架子。水管已经修好，墙脚的补漆比旁边浅一块。",
+							"heading": "一楼的格局",
+							"startOffset": 183,
+							"endOffset": 469,
+							"origin": "package",
+							"score": 0.6244447529315948
+						}
+					]
+				}
+			}
+		},
+		{
+			"query": "准备开摊卖面包的快递员需要攒钱买什么",
+			"expected": "客栈周边的人",
+			"lexicalHits": 0,
+			"toolResult": {
+				"content": [
+					{
+						"type": "text",
+						"text": "[{\"id\":\"7aa542b7e87fb2b21f65c17ec15c10c7e5592fcb076e6041c89d64c8beb012e6\",\"sourceId\":\"8c41b26757e6e73e4c148951da7e1ac8a63180409aafb447a001ed35f5941bcd\",\"sourceName\":\"客栈周边的人\",\"ordinal\":2,\"content\":\"## 阿岑：面包房送货员\\n\\n阿岑清晨给客栈送面包，下午在面包房学做整形和发酵。她试做的新面包会单独包起来，在纸袋上写日期和配料；第一批撒了过量的盐，第二批终于有人愿意买。\\n\\n她想在夏天的街边集市摆自己的小摊，现在用送货的零钱攒一只折叠桌。客栈后院暂放着她借来的木托盘，她会在下一次送货时取走。\\n\\n她与极昼在早班交接前见面。两人谈过烤箱温度，也争过焦边算不算好吃；她认为一整盘都焦了就是烤坏，不能全靠“有人喜欢”挽救。\",\"heading\":\"阿岑：面包房送货员\",\"startOffset\":470,\"endOffset\":678,\"origin\":\"package\",\"score\":0.6251536905765533}]"
+					}
+				],
+				"details": {
+					"ok": true,
+					"message": "[{\"id\":\"7aa542b7e87fb2b21f65c17ec15c10c7e5592fcb076e6041c89d64c8beb012e6\",\"sourceId\":\"8c41b26757e6e73e4c148951da7e1ac8a63180409aafb447a001ed35f5941bcd\",\"sourceName\":\"客栈周边的人\",\"ordinal\":2,\"content\":\"## 阿岑：面包房送货员\\n\\n阿岑清晨给客栈送面包，下午在面包房学做整形和发酵。她试做的新面包会单独包起来，在纸袋上写日期和配料；第一批撒了过量的盐，第二批终于有人愿意买。\\n\\n她想在夏天的街边集市摆自己的小摊，现在用送货的零钱攒一只折叠桌。客栈后院暂放着她借来的木托盘，她会在下一次送货时取走。\\n\\n她与极昼在早班交接前见面。两人谈过烤箱温度，也争过焦边算不算好吃；她认为一整盘都焦了就是烤坏，不能全靠“有人喜欢”挽救。\",\"heading\":\"阿岑：面包房送货员\",\"startOffset\":470,\"endOffset\":678,\"origin\":\"package\",\"score\":0.6251536905765533}]",
+					"data": [
+						{
+							"id": "7aa542b7e87fb2b21f65c17ec15c10c7e5592fcb076e6041c89d64c8beb012e6",
+							"sourceId": "8c41b26757e6e73e4c148951da7e1ac8a63180409aafb447a001ed35f5941bcd",
+							"sourceName": "客栈周边的人",
+							"ordinal": 2,
+							"content": "## 阿岑：面包房送货员\n\n阿岑清晨给客栈送面包，下午在面包房学做整形和发酵。她试做的新面包会单独包起来，在纸袋上写日期和配料；第一批撒了过量的盐，第二批终于有人愿意买。\n\n她想在夏天的街边集市摆自己的小摊，现在用送货的零钱攒一只折叠桌。客栈后院暂放着她借来的木托盘，她会在下一次送货时取走。\n\n她与极昼在早班交接前见面。两人谈过烤箱温度，也争过焦边算不算好吃；她认为一整盘都焦了就是烤坏，不能全靠“有人喜欢”挽救。",
+							"heading": "阿岑：面包房送货员",
+							"startOffset": 470,
+							"endOffset": 678,
+							"origin": "package",
+							"score": 0.6251536905765533
+						}
+					]
+				}
+			}
+		},
+		{
+			"query": "站点最后为什么不再有人轮班",
+			"expected": "旧极光站",
+			"lexicalHits": 0,
+			"toolResult": {
+				"content": [
+					{
+						"type": "text",
+						"text": "[{\"id\":\"45e97b4b0c3a90dd0ce9200ee6cc23e8f558552758a693842b55ad833b596265\",\"sourceId\":\"629342421b7b7586c8e03917913b30e32d7df0e129bcb6b4e8d02d05b35ece92\",\"sourceName\":\"旧极光站沿革\",\"ordinal\":1,\"content\":\"## 停用以后\\n\\n小镇的通信与天气观测迁到新设施后，旧站逐步停用。设备分批搬走，纸质资料交给镇资料室保存。旧屋外墙和门窗做过维护，仍能从坡下看见站房。\\n\\n白熊客栈留有一小批获准复制的公开资料，包括值班簿摘页、天气记录和器材目录。它们提供旧站生活的片段，并不是一部完整的地方史。\",\"heading\":\"停用以后\",\"startOffset\":162,\"endOffset\":300,\"origin\":\"package\",\"score\":0.5312728881835938}]"
+					}
+				],
+				"details": {
+					"ok": true,
+					"message": "[{\"id\":\"45e97b4b0c3a90dd0ce9200ee6cc23e8f558552758a693842b55ad833b596265\",\"sourceId\":\"629342421b7b7586c8e03917913b30e32d7df0e129bcb6b4e8d02d05b35ece92\",\"sourceName\":\"旧极光站沿革\",\"ordinal\":1,\"content\":\"## 停用以后\\n\\n小镇的通信与天气观测迁到新设施后，旧站逐步停用。设备分批搬走，纸质资料交给镇资料室保存。旧屋外墙和门窗做过维护，仍能从坡下看见站房。\\n\\n白熊客栈留有一小批获准复制的公开资料，包括值班簿摘页、天气记录和器材目录。它们提供旧站生活的片段，并不是一部完整的地方史。\",\"heading\":\"停用以后\",\"startOffset\":162,\"endOffset\":300,\"origin\":\"package\",\"score\":0.5312728881835938}]",
+					"data": [
+						{
+							"id": "45e97b4b0c3a90dd0ce9200ee6cc23e8f558552758a693842b55ad833b596265",
+							"sourceId": "629342421b7b7586c8e03917913b30e32d7df0e129bcb6b4e8d02d05b35ece92",
+							"sourceName": "旧极光站沿革",
+							"ordinal": 1,
+							"content": "## 停用以后\n\n小镇的通信与天气观测迁到新设施后，旧站逐步停用。设备分批搬走，纸质资料交给镇资料室保存。旧屋外墙和门窗做过维护，仍能从坡下看见站房。\n\n白熊客栈留有一小批获准复制的公开资料，包括值班簿摘页、天气记录和器材目录。它们提供旧站生活的片段，并不是一部完整的地方史。",
+							"heading": "停用以后",
+							"startOffset": 162,
+							"endOffset": 300,
+							"origin": "package",
+							"score": 0.5312728881835938
+						}
+					]
+				}
+			}
+		}
+	],
+	"sourceSha256": {
+		"packages/host-runtime/src/memory/shared-embedding-runtime.ts": "797215971d87f9d8d6463fb1caad9c4c2c170330a6095974a9652991f8bb4305",
+		"packages/host-runtime/src/canon/service.ts": "59444a53a79ad678e002cca6e48247347ed89693dfe64476a82b99878c7f17d1",
+		"packages/host-runtime/src/character-runtime.ts": "5a65c3400e3367f5252abf44918c3055e31d427e2acb422c0d9fb66e35a2893f",
+		"packages/host-runtime/src/runtime.ts": "dce605ed4c05f1100e241ab69929af477fcf0a6d31c3918137ef502a99a47143",
+		"packages/tdai-core/src/core/store/embedding.ts": "caa5c1018ca802d76922a286b88161a5c13551c1e058c2ff47a91c90420319b0",
+		"packages/host-runtime/src/memory/tencentdb-runtime.ts": "6aec6c263765689cbec96e2ac6bdc47eac00ff7f85d952cee0362c05b0e91851",
+		"packages/tdai-core/src/core/tdai-core.ts": "27cd85cc0e62fdbfcc840384f28a419018787a6115d3e746f02d6cbe3db23289",
+		"packages/tdai-core/src/core/store/factory.ts": "881a069e38940743546e08b53b52dcf2347d64696a413fccb74689e32df88555",
+		"packages/tdai-core/src/utils/pipeline-factory.ts": "63521e3c0ba021dfbd98b4039fef7c932efb3d590612b309b62b381efc45d86d"
+	},
+	"restart": {
+		"counts": {
+			"chunks": 9,
+			"embedded": 9
+		},
+		"semanticHit": "白熊客栈",
+		"canonDidNotStartMemory": true,
+		"sharedModelInstancesInHost": 1,
+		"memoryEmbeddingDimensions": 768,
+		"canonWorksAfterMemoryClose": true,
+		"memoryReopenReusedModel": true
+	},
+	"modelInstances": 2,
+	"modelDisposals": 2
+}

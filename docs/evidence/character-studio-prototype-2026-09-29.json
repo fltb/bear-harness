@@ -1,0 +1,380 @@
+{
+	"date": "2026-09-29",
+	"scope": "Isolated in-memory UI prototype; no Host, filesystem persistence, Pi or Android runtime validation.",
+	"results": [
+		{
+			"name": "initial editor, all sections reachable",
+			"result": "PASS"
+		},
+		{
+			"name": "form → source → form shares content and autosaves",
+			"result": "PASS"
+		},
+		{
+			"name": "invalid source retained; blocks apply; undo repairs",
+			"result": "PASS"
+		},
+		{
+			"name": "empty name is actionable validation error",
+			"result": "PASS"
+		},
+		{
+			"name": "apply requires review, commit clears changes",
+			"result": "PASS"
+		},
+		{
+			"name": "background generation blocks apply without losing draft",
+			"result": "PASS"
+		},
+		{
+			"name": "failed save blocks leaving, retry succeeds",
+			"result": "PASS"
+		},
+		{
+			"name": "conflict requires explicit selection and returns to review",
+			"result": "PASS"
+		},
+		{
+			"name": "referenced asset cannot be deleted without replacement",
+			"result": "PASS"
+		},
+		{
+			"name": "rename updates declared references",
+			"result": "PASS"
+		},
+		{
+			"name": "new file rejects traversal then edits text",
+			"result": "PASS"
+		},
+		{
+			"name": "upload adds real text file; collisions do not overwrite",
+			"result": "PASS"
+		},
+		{
+			"name": "new media validates and can select asset",
+			"result": "PASS"
+		},
+		{
+			"name": "audio changes render captions and require them",
+			"result": "PASS"
+		},
+		{
+			"name": "state schema destructive change is blocked",
+			"result": "PASS"
+		},
+		{
+			"name": "new state can be created",
+			"result": "PASS"
+		},
+		{
+			"name": "new character with unique ID and complete file template",
+			"result": "PASS"
+		},
+		{
+			"name": "copy keeps package files and assigns unique ID",
+			"result": "PASS"
+		},
+		{
+			"name": "history restores a draft without applying",
+			"result": "PASS"
+		},
+		{
+			"name": "discard has confirmation and undoable history",
+			"result": "PASS"
+		},
+		{
+			"name": "static preview and export preflight do not apply",
+			"result": "PASS"
+		},
+		{
+			"name": "add, reorder and remove introduction steps",
+			"result": "PASS"
+		},
+		{
+			"name": "add and remove dialogue example",
+			"result": "PASS"
+		},
+		{
+			"name": "new scene, default selection, delete → validation",
+			"result": "PASS"
+		},
+		{
+			"name": "direct edit returns to conversation entry",
+			"result": "PASS"
+		},
+		{
+			"name": "normal state hides retry; failed state exposes retry",
+			"result": "PASS"
+		},
+		{
+			"name": "dialog focuses control, traps Tab, Escape returns focus",
+			"result": "PASS"
+		},
+		{
+			"name": "invalid examples and onboarding bodies are blocked",
+			"result": "PASS"
+		},
+		{
+			"name": "keyboard save updates revision without applying",
+			"result": "PASS"
+		},
+		{
+			"name": "new character preserves original workspace and independent drafts",
+			"result": "PASS"
+		},
+		{
+			"name": "editing a second role does not switch current chat role",
+			"result": "PASS"
+		},
+		{
+			"name": "applying a new role adds installed card without replacing original",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge shows documents without manifest or paths",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge create checks title and adds content plus catalog atomically",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge edit title and body keeps stable reference",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge delete removes catalog and document; undo restores both",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge import registers multiple documents without overwriting existing content",
+			"result": "PASS"
+		},
+		{
+			"name": "knowledge invalid title returns to document UI rather than manifest",
+			"result": "PASS"
+		}
+	],
+	"layout": [
+		{
+			"width": 1440,
+			"viewport": 1408,
+			"scroll": 1408
+		},
+		{
+			"width": 1024,
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 768,
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 390,
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 320,
+			"viewport": 288,
+			"scroll": 288
+		}
+	],
+	"responsiveFlows": [
+		{
+			"width": 390,
+			"section": "general",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "identity",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "interaction",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "onboarding",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "visual",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "media",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "state",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "story",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "canon",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "skills",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "plugins",
+			"result": "PASS"
+		},
+		{
+			"width": 390,
+			"section": "files",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "general",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "identity",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "interaction",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "onboarding",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "visual",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "media",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "state",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "story",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "canon",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "skills",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "plugins",
+			"result": "PASS"
+		},
+		{
+			"width": 320,
+			"section": "files",
+			"result": "PASS"
+		}
+	],
+	"accessibility": [
+		{
+			"appearance": "light",
+			"section": "identity",
+			"violations": []
+		},
+		{
+			"appearance": "light",
+			"section": "general",
+			"violations": []
+		},
+		{
+			"appearance": "light",
+			"section": "media",
+			"violations": []
+		},
+		{
+			"appearance": "light",
+			"section": "canon",
+			"violations": []
+		},
+		{
+			"appearance": "light",
+			"section": "files",
+			"violations": []
+		},
+		{
+			"appearance": "dark",
+			"section": "identity",
+			"violations": []
+		},
+		{
+			"appearance": "dark",
+			"section": "general",
+			"violations": []
+		},
+		{
+			"appearance": "dark",
+			"section": "media",
+			"violations": []
+		},
+		{
+			"appearance": "dark",
+			"section": "canon",
+			"violations": []
+		},
+		{
+			"appearance": "dark",
+			"section": "files",
+			"violations": []
+		}
+	],
+	"pageErrors": [],
+	"prototype": {
+		"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-design/character-studio.html",
+		"sha256": "4fb9b898b592f7f2ae65a730b49f2532ebc0e6080b74eca5c4fff270cf3c4910",
+		"bytes": 306893
+	},
+	"authoredFiles": [
+		{
+			"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-design/surface.html",
+			"lines": 100
+		},
+		{
+			"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-design/prototype.js",
+			"lines": 188
+		},
+		{
+			"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-design/verify.mjs",
+			"lines": 71
+		}
+	],
+	"productionModulesChanged": 0
+}

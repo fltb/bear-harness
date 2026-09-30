@@ -594,7 +594,6 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 				return null;
 		}
 	};
-	const workLabels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const previewIssue = (): ArtifactIssue | undefined => {
 		if (artifact()?.verification === "failed") return "corrupted";
 		if (!previewSupported()) return "unsupported";
@@ -804,14 +803,14 @@ function ArtifactPreviewPanel(props: { selection: SelectedArtifact }) {
 						disabled={actionBusy() || !artifact()}
 						onClick={() => void runArtifactAction("open")}
 					>
-						{workLabels()?.artifact_open ?? t("work.timeline.viewArtifacts")}
+						{t("work.timeline.viewArtifacts")}
 					</Button>
 					<Button
 						type="button"
 						disabled={actionBusy() || !artifact()}
 						onClick={() => void runArtifactAction("reveal")}
 					>
-						{workLabels()?.artifact_reveal ?? t("work.timeline.revealDetails")}
+						{t("work.timeline.revealDetails")}
 					</Button>
 					<Button
 						type="button"

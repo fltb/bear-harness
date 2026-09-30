@@ -42,7 +42,14 @@ export class FirstMeetingMachine {
 	getState(companionId: string): OnboardingStateRow {
 		const flow = this.flow(companionId);
 		const persisted = this.readPersisted(companionId);
-		const stateData = this.normalizeStateData(persisted?.stateData, flow);
+		if (!flow) {
+			const stateData = OnboardingStateDataSchema.parse(persisted?.stateData ?? { answers: {} });
+			return { status: "complete", stateData };
+		}
+		const stateData =
+			persisted?.state === "complete"
+				? OnboardingStateDataSchema.parse(persisted.stateData)
+				: this.normalizeStateData(persisted?.stateData, flow);
 		if (persisted?.state === "complete") return { status: "complete", stateData };
 		const step = flow.steps.find((step) => step.id === persisted?.state) ?? flow.steps[0];
 		if (!step) throw new Error(`character package ${companionId}: first_meeting has no steps`);
@@ -53,7 +60,15 @@ export class FirstMeetingMachine {
 	initialize(companionId: string): OnboardingStateRow {
 		const flow = this.flow(companionId);
 		const persisted = this.readPersisted(companionId);
-		const stateData = this.normalizeStateData(persisted?.stateData, flow);
+		if (!flow) {
+			const stateData = OnboardingStateDataSchema.parse(persisted?.stateData ?? { answers: {} });
+			if (persisted?.state !== "complete") this.persist(companionId, "complete", stateData);
+			return { status: "complete", stateData };
+		}
+		const stateData =
+			persisted?.state === "complete"
+				? OnboardingStateDataSchema.parse(persisted.stateData)
+				: this.normalizeStateData(persisted?.stateData, flow);
 
 		if (persisted?.state === "complete") {
 			if (JSON.stringify(persisted.stateData) !== JSON.stringify(stateData)) {
@@ -81,6 +96,7 @@ export class FirstMeetingMachine {
 		}
 
 		const flow = this.flow(companionId);
+		if (!flow) throw { kind: "conflict", reason: "stale_onboarding_step" };
 		const index = flow.steps.findIndex((step) => step.id === stepId);
 		const step = flow.steps[index];
 		if (!step) throw { kind: "not_found", reason: "onboarding_step_not_found" };
@@ -90,7 +106,7 @@ export class FirstMeetingMachine {
 		return this.persistTransition(companionId, flow, nextStep?.id ?? "complete", nextData);
 	}
 
-	private flow(companionId: string): CharacterOnboardingFlow {
+	private flow(companionId: string): CharacterOnboardingFlow | undefined {
 		const character = this.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		return character.character.first_meeting;

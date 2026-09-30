@@ -20,6 +20,7 @@ export interface TencentDbRuntimeOptions {
 	readonly userId: string;
 	readonly logger?: Logger;
 	readonly memoryConfig?: DeepPartial<MemoryTdaiConfig>;
+	readonly embeddingProvider?: () => Promise<EmbeddingService | undefined>;
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -147,6 +148,7 @@ export class TencentDbRuntime {
 		this.core = new TdaiCore({
 			hostAdapter: adapter,
 			config,
+			embeddingProvider: options.embeddingProvider,
 			instanceId: `${options.installationId}:${options.userId}:${options.companionId}`,
 		});
 	}

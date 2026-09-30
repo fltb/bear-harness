@@ -940,29 +940,6 @@ export function wireCharacterHandlers(dispatcher: Dispatcher, s: HostComposition
 		s.canon.removeSource(s.characterId, sourceId);
 		return {};
 	});
-	dispatcher.registerHandler(RPC.canon.listModules, async ({ cursor, limit }) => {
-		const result = pageAfter(
-			s.canon.listModules(s.characterId),
-			cursor,
-			limit,
-			(module) => module.id,
-			"canon_module_cursor_not_found",
-		);
-		return {
-			modules: result.items,
-			...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
-		};
-	});
-	dispatcher.registerHandler(RPC.canon.upsertModule, async (_p) => ({
-		module: s.canon.upsertModule({
-			..._p,
-			companionId: s.characterId,
-		}),
-	}));
-	dispatcher.registerHandler(RPC.canon.deleteModule, async ({ id }) => {
-		s.canon.deleteModule(s.characterId, id);
-		return {};
-	});
 	dispatcher.registerHandler(RPC.model.defaultsGet, async () => {
 		const companionId = s.characterId;
 		return modelDefaultsWire(s.models.defaults(companionId, s.providers.modelProjectionFacts()));

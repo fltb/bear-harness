@@ -1,6 +1,5 @@
 import type { CharacterClient as CompanionClient } from "@bear-harness/companion-client";
 import type {
-	CanonListModulesResponse,
 	CanonListSourcesResponse,
 	CharacterListResponse,
 	ModelPoolGetResponse,
@@ -36,22 +35,6 @@ export async function listAllCanonSources(
 		cursor = nextStringCursor(page.nextCursor, seen);
 	} while (cursor);
 	return { sources };
-}
-
-export async function listAllCanonModules(
-	client: CompanionClient,
-): Promise<CanonListModulesResponse> {
-	const modules: CanonListModulesResponse["modules"] = [];
-	const seen = new Set<string>();
-	let cursor: string | undefined;
-	do {
-		const page = await invoke(client, () =>
-			client.canon.listModules({ ...(cursor ? { cursor } : {}), limit: 100 }),
-		);
-		modules.push(...page.modules);
-		cursor = nextStringCursor(page.nextCursor, seen);
-	} while (cursor);
-	return { modules };
 }
 
 export async function listAllProviders(client: CompanionClient): Promise<ProviderListResponse> {

@@ -40,26 +40,13 @@ export interface CanonChunkRecord {
 	origin: "user" | "package";
 }
 
-export interface StoryModuleRecord {
-	id: string;
-	parentId?: string;
-	kind: "root" | "arc" | "event" | "entity" | "relationship" | "location" | "object" | "behavior";
-	title: string;
-	instructions: string;
-	sourceChunkIds: string[];
-	createdAt: string;
-	origin: "user" | "package";
-	stableKey?: string;
-	triggers: string[];
-}
-
 const MAX_CHUNK_CHARS = 1600;
 
 export interface CanonEmbeddingService {
 	isReady(): boolean;
 	getDimensions(): number;
 	getProviderInfo(): { provider: string; model: string };
-	embed(text: string): Promise<Float32Array>;
+	embed(text: string, purpose?: "query" | "document"): Promise<Float32Array>;
 }
 
 interface CanonEmbeddingConfiguration {
@@ -68,12 +55,18 @@ interface CanonEmbeddingConfiguration {
 }
 
 export class CanonHubService {
+	private readonly indexing = new Map<string, Promise<void>>();
+	private closed = false;
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly artifacts: ArtifactStore,
 		private readonly invalidations: InvalidationHub,
-		private readonly embeddingService?: () => CanonEmbeddingService | undefined,
+		private readonly embeddingService?: () =>
+			| CanonEmbeddingService
+			| undefined
+			| Promise<CanonEmbeddingService | undefined>,
 		private readonly vectors?: CanonVectorIndex,
+		private readonly onIndexError?: (error: unknown) => void,
 	) {}
 
 	addSource(companionId: string, logicalName: string, content: string): CanonSourceRecord {
@@ -115,7 +108,7 @@ export class CanonHubService {
 		this.invalidations.invalidate(CacheKey.canonSources(companionId));
 		const source = this.getSource(id);
 		if (!source) throw { kind: "internal", reason: "canon_source_not_persisted" };
-		void this.indexPending(companionId);
+		void this.indexPending(companionId).catch((error: unknown) => this.onIndexError?.(error));
 		return source;
 	}
 
@@ -149,23 +142,23 @@ export class CanonHubService {
 		query: string,
 		options: {
 			limit?: number;
-			moduleId?: string;
 			includeAdjacent?: boolean;
 		} = {},
 	): CanonChunkRecord[] {
 		const normalized = query.trim();
 		if (!normalized) return [];
 		const limit = Math.min(options.limit ?? 8, 30);
-		const aliases = this.matchAliases(companionId, normalized);
-		const routedChunkIds = this.routedChunkIds(companionId, normalized, aliases, options.moduleId);
-		if (options.moduleId && routedChunkIds.size === 0) return [];
-		const queryTerms = normalized.split(/[\s，。！？；、,.!?;:：]+/).filter(Boolean);
-		const terms = [
-			...new Set([...queryTerms, ...aliases].filter((term) => term.length >= 3)),
+		const queryTerms = [
+			...new Set(normalized.split(/[\s，。！？；、,.!?;:：]+/).filter(Boolean)),
 		].slice(0, 8);
-		if (terms.length === 0 && !options.moduleId)
-			return this.exactSearch(companionId, [...new Set([...queryTerms, ...aliases])], limit);
-		if (terms.length === 0) terms.push(...queryTerms);
+		// The trigram index cannot match short CJK names or words. Keep them when
+		// mixed with longer terms, and rank the same canonical rows by term coverage.
+		if (queryTerms.some((term) => term.length < 3 && /\p{Script=Han}/u.test(term))) {
+			const ranked = this.exactSearch(companionId, queryTerms, limit);
+			return options.includeAdjacent === false ? ranked : this.expandAdjacent(ranked, limit);
+		}
+		const terms = [...new Set(queryTerms.filter((term) => term.length >= 3))].slice(0, 8);
+		if (!terms.length) return this.exactSearch(companionId, queryTerms, limit);
 		const ftsQuery = terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 		const rows = this.db.all<{
 			id: string;
@@ -188,75 +181,56 @@ export class CanonHubService {
 			JOIN canon_chunks c ON c.rowid = canon_chunks_fts.rowid
 			JOIN canon_sources s ON s.id = c.source_id
 			WHERE canon_chunks_fts MATCH ${ftsQuery} AND s.companion_id = ${companionId}
-				AND ${routedChunkIds.size ? inArray(sql`c.id`, [...routedChunkIds]) : sql`1 = 1`}
 			ORDER BY bm25(canon_chunks_fts), c.source_id, c.ordinal
 			LIMIT ${Math.max(limit * 3, 12)}
 		`);
-		const ranked = rows
-			.filter((row) => routedChunkIds.size === 0 || routedChunkIds.has(row.id))
-			.slice(0, limit)
-			.map(toChunkRecord);
+		const ranked = rows.slice(0, limit).map(toChunkRecord);
 		if (options.includeAdjacent === false) return ranked;
 		return this.expandAdjacent(ranked, limit);
 	}
 
 	/**
 	 * Retrieves canonical evidence with reciprocal-rank fusion of FTS and cosine
-	 * similarity. A missing or unavailable embedding provider deliberately leaves
-	 * the established lexical path untouched.
+	 * similarity. With embeddings disabled, uses lexical retrieval. A configured provider
+	 * must complete indexing; failures are surfaced instead of disguised as misses.
 	 */
 	async retrieveHybrid(
 		companionId: string,
 		query: string,
 		options: {
 			limit?: number;
-			moduleId?: string;
 			includeAdjacent?: boolean;
 		} = {},
 	): Promise<CanonChunkRecord[]> {
+		if (!query.trim()) return [];
+		await this.indexPending(companionId);
+		this.assertOpen();
 		const limit = Math.min(options.limit ?? 8, 30);
 		const lexical = this.retrieve(companionId, query, {
 			...options,
 			limit: Math.max(limit * 3, 12),
 			includeAdjacent: false,
 		});
-		const service = this.embeddingService?.();
-		if (!service?.isReady()) {
+		const service = await this.embeddingService?.();
+		this.assertOpen();
+		if (!service) {
 			const finalized = this.finalizeHybrid(lexical, limit, options.includeAdjacent);
-			return finalized.length || !options.moduleId
-				? finalized
-				: this.moduleChunks(companionId, options.moduleId, limit);
+			return finalized;
 		}
 		const configuration = canonEmbeddingConfiguration(service);
 		const vectors = this.vectors;
-		if (!configuration || !vectors || !this.ensureVectorIndex(configuration)) {
-			const finalized = this.finalizeHybrid(lexical, limit, options.includeAdjacent);
-			return finalized.length || !options.moduleId
-				? finalized
-				: this.moduleChunks(companionId, options.moduleId, limit);
-		}
-		let queryEmbedding: Float32Array;
-		try {
-			queryEmbedding = await service.embed(query.trim());
-		} catch {
-			const finalized = this.finalizeHybrid(lexical, limit, options.includeAdjacent);
-			return finalized.length || !options.moduleId
-				? finalized
-				: this.moduleChunks(companionId, options.moduleId, limit);
-		}
-		const currentConfiguration = canonEmbeddingConfiguration(this.embeddingService?.());
+		if (!configuration || !vectors || !this.ensureVectorIndex(configuration))
+			throw new Error("Canon vector index is unavailable");
+		const queryEmbedding = await service.embed(query.trim(), "query");
+		this.assertOpen();
+		const currentConfiguration = canonEmbeddingConfiguration(await this.embeddingService?.());
+		this.assertOpen();
 		if (
 			queryEmbedding.length !== configuration.dimensions ||
 			currentConfiguration?.fingerprint !== configuration.fingerprint ||
 			!this.ensureVectorIndex(configuration)
-		) {
-			const finalized = this.finalizeHybrid(lexical, limit, options.includeAdjacent);
-			return finalized.length || !options.moduleId
-				? finalized
-				: this.moduleChunks(companionId, options.moduleId, limit);
-		}
-		const aliases = this.matchAliases(companionId, query);
-		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
+		)
+			throw new Error("Canon embedding configuration changed during retrieval");
 		const vectorRows = vectors.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
 		const candidates = this.db
 			.select({
@@ -273,7 +247,15 @@ export class CanonHubService {
 			})
 			.from(canonChunks)
 			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
-			.where(eq(canonSources.companionId, companionId))
+			.where(
+				and(
+					eq(canonSources.companionId, companionId),
+					inArray(
+						canonChunks.id,
+						vectorRows.map((row) => row.chunkId),
+					),
+				),
+			)
 			.all();
 		const candidateById = new Map(candidates.map((row) => [row.id, toChunkRecord(row)]));
 		const vector = vectorRows
@@ -283,10 +265,7 @@ export class CanonHubService {
 			}))
 			.filter(
 				(candidate): candidate is { row: CanonChunkRecord; score: number } =>
-					candidate.row !== undefined &&
-					Number.isFinite(candidate.score) &&
-					candidate.score > 0 &&
-					(routedChunkIds.size === 0 || routedChunkIds.has(candidate.row.id)),
+					candidate.row !== undefined && Number.isFinite(candidate.score) && candidate.score > 0,
 			);
 		const fused = new Map<string, { row: CanonChunkRecord; score: number }>();
 		for (const [rank, row] of lexical.entries())
@@ -301,9 +280,7 @@ export class CanonHubService {
 			limit,
 			options.includeAdjacent,
 		);
-		return finalized.length || !options.moduleId
-			? finalized
-			: this.moduleChunks(companionId, options.moduleId, limit);
+		return finalized;
 	}
 
 	async searchHybrid(companionId: string, query: string, limit = 12): Promise<CanonChunkRecord[]> {
@@ -312,7 +289,8 @@ export class CanonHubService {
 
 	syncPackage(companionId: string, canon: LoadedCanonPackage): void {
 		const manifestHash = createHash("sha256")
-			.update(JSON.stringify(canon.manifest))
+			.update("canon-body-chunks-v2\0")
+			.update(JSON.stringify(canon.sources))
 			.update("\0")
 			.update(canon.sources.map((source) => source.content).join("\0"))
 			.digest("hex");
@@ -322,7 +300,7 @@ export class CanonHubService {
 			.where(eq(canonPackageState.companionId, companionId))
 			.get();
 		if (state?.hash === manifestHash) {
-			void this.indexPending(companionId);
+			void this.indexPending(companionId).catch((error: unknown) => this.onIndexError?.(error));
 			return;
 		}
 		this.db.transaction((transaction) => {
@@ -338,10 +316,6 @@ export class CanonHubService {
 				.delete(canonSources)
 				.where(and(eq(canonSources.companionId, companionId), eq(canonSources.origin, "package")))
 				.run();
-			const chunksBySource = new Map<
-				string,
-				Array<{ id: string; heading: string | null; start: number; end: number }>
-			>();
 			for (const source of canon.sources) {
 				const sourceId = stableId(companionId, "source", source.id);
 				const normalized = source.content.replaceAll("\r\n", "\n").trim();
@@ -361,8 +335,8 @@ export class CanonHubService {
 						artifactId: artifact.id,
 						origin: "package",
 						stableKey: source.id,
-						language: canon.manifest.language,
-						sourceKind: source.kind,
+						language: null,
+						sourceKind: "reference",
 					})
 					.run();
 				let cursor = 0;
@@ -382,62 +356,6 @@ export class CanonHubService {
 					};
 				});
 				if (indexed.length) transaction.insert(canonChunks).values(indexed).run();
-				chunksBySource.set(
-					source.id,
-					indexed.map((chunk) => ({
-						id: chunk.id,
-						heading: chunk.heading,
-						start: chunk.startOffset,
-						end: chunk.endOffset,
-					})),
-				);
-			}
-			if (canon.manifest.entities.length)
-				transaction
-					.insert(canonEntities)
-					.values(
-						canon.manifest.entities.map((entity) => ({
-							id: stableId(companionId, "entity", entity.id),
-							companionId,
-							kind: entity.kind,
-							name: entity.name,
-							aliasesJson: entity.aliases,
-							description: entity.description,
-							origin: "package" as const,
-							stableKey: entity.id,
-						})),
-					)
-					.run();
-			for (const module of canon.manifest.modules) {
-				const refs = module.bindings.flatMap((binding) =>
-					(chunksBySource.get(binding.source) ?? [])
-						.filter((chunk) => {
-							const headingMatch =
-								!binding.headings?.length ||
-								(chunk.heading !== null && binding.headings.includes(chunk.heading));
-							const rangeMatch =
-								(binding.start_offset === undefined || chunk.end > binding.start_offset) &&
-								(binding.end_offset === undefined || chunk.start < binding.end_offset);
-							return headingMatch && rangeMatch;
-						})
-						.map((chunk) => chunk.id),
-				);
-				transaction
-					.insert(storyModules)
-					.values({
-						id: stableId(companionId, "module", module.id),
-						companionId,
-						parentId: module.parent ? stableId(companionId, "module", module.parent) : null,
-						kind: module.kind,
-						name: module.title,
-						description: module.summary,
-						sourceRefsJson: [...new Set(refs)],
-						dependenciesJson: [],
-						origin: "package",
-						stableKey: module.id,
-						triggersJson: module.triggers,
-					})
-					.run();
 			}
 			transaction
 				.insert(canonPackageState)
@@ -448,11 +366,8 @@ export class CanonHubService {
 				})
 				.run();
 		});
-		this.invalidations.invalidate(
-			CacheKey.canonSources(companionId),
-			CacheKey.canonModules(companionId),
-		);
-		void this.indexPending(companionId);
+		this.invalidations.invalidate(CacheKey.canonSources(companionId));
+		void this.indexPending(companionId).catch((error: unknown) => this.onIndexError?.(error));
 	}
 
 	removeSource(companionId: string, sourceId: string): void {
@@ -469,143 +384,6 @@ export class CanonHubService {
 			.run();
 		if (result.changes === 0) throw { kind: "not_found", reason: "canon_source_not_found" };
 		this.invalidations.invalidate(CacheKey.canonSources(companionId));
-	}
-
-	listModules(companionId: string): StoryModuleRecord[] {
-		return this.db
-			.select()
-			.from(storyModules)
-			.where(eq(storyModules.companionId, companionId))
-			.orderBy(asc(storyModules.createdAt), asc(storyModules.id))
-			.all()
-			.map((row) => ({
-				id: row.id,
-				...(row.parentId ? { parentId: row.parentId } : {}),
-				kind: row.kind,
-				title: row.name,
-				instructions: row.description,
-				sourceChunkIds: row.sourceRefsJson,
-				createdAt: row.createdAt,
-				origin: row.origin,
-				...(row.stableKey ? { stableKey: row.stableKey } : {}),
-				triggers: row.triggersJson,
-			}));
-	}
-
-	upsertModule(params: {
-		companionId: string;
-		id?: string;
-		parentId?: string;
-		kind: StoryModuleRecord["kind"];
-		title: string;
-		instructions: string;
-		sourceChunkIds: string[];
-	}): StoryModuleRecord {
-		const id = params.id ?? randomUUID();
-		const title = params.title.trim();
-		if (!title) throw { kind: "invalid_request", reason: "story_module_title_empty" };
-		const existing = this.db
-			.select({ companionId: storyModules.companionId })
-			.from(storyModules)
-			.where(eq(storyModules.id, id))
-			.get();
-		if (existing && existing.companionId !== params.companionId) {
-			throw { kind: "not_found", reason: "story_module_not_found" };
-		}
-		const existingOwned = this.db
-			.select({ origin: storyModules.origin })
-			.from(storyModules)
-			.where(eq(storyModules.id, id))
-			.get();
-		if (existingOwned?.origin === "package")
-			throw { kind: "invalid_request", reason: "package_canon_is_read_only" };
-		if (params.parentId) this.assertValidParent(params.companionId, id, params.parentId);
-		const validChunks =
-			params.sourceChunkIds.length === 0 ||
-			this.db
-				.select({ count: count() })
-				.from(canonChunks)
-				.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
-				.where(
-					and(
-						eq(canonSources.companionId, params.companionId),
-						inArray(canonChunks.id, params.sourceChunkIds),
-					),
-				)
-				.get()?.count === params.sourceChunkIds.length;
-		if (!validChunks) throw { kind: "invalid_request", reason: "story_module_chunk_not_found" };
-		this.db
-			.insert(storyModules)
-			.values({
-				id,
-				companionId: params.companionId,
-				parentId: params.parentId ?? null,
-				kind: params.kind,
-				name: title,
-				description: params.instructions.trim(),
-				sourceRefsJson: params.sourceChunkIds,
-				dependenciesJson: [],
-				origin: "user",
-				triggersJson: [],
-			})
-			.onConflictDoUpdate({
-				target: storyModules.id,
-				set: {
-					parentId: params.parentId ?? null,
-					kind: params.kind,
-					name: title,
-					description: params.instructions.trim(),
-					sourceRefsJson: params.sourceChunkIds,
-				},
-			})
-			.run();
-		this.invalidations.invalidate(CacheKey.canonModules(params.companionId));
-		const saved = this.listModules(params.companionId).find((module) => module.id === id);
-		if (!saved) throw { kind: "internal", reason: "story_module_not_persisted" };
-		return saved;
-	}
-
-	private assertValidParent(companionId: string, moduleId: string, parentId: string): void {
-		if (parentId === moduleId)
-			throw { kind: "invalid_request", reason: "story_module_cannot_parent_itself" };
-		let currentId: string | null = parentId;
-		const visited = new Set<string>();
-		while (currentId) {
-			if (currentId === moduleId || visited.has(currentId)) {
-				throw { kind: "invalid_request", reason: "story_module_parent_cycle" };
-			}
-			visited.add(currentId);
-			const row = this.db
-				.select({ companionId: storyModules.companionId, parentId: storyModules.parentId })
-				.from(storyModules)
-				.where(eq(storyModules.id, currentId))
-				.get();
-			if (!row || row.companionId !== companionId) {
-				throw { kind: "invalid_request", reason: "story_module_parent_not_found" };
-			}
-			currentId = row.parentId;
-		}
-	}
-
-	deleteModule(companionId: string, id: string): void {
-		const module = this.db
-			.select({ origin: storyModules.origin })
-			.from(storyModules)
-			.where(and(eq(storyModules.id, id), eq(storyModules.companionId, companionId)))
-			.get();
-		if (module?.origin === "package")
-			throw { kind: "invalid_request", reason: "package_canon_is_read_only" };
-		this.db
-			.update(storyModules)
-			.set({ parentId: null })
-			.where(and(eq(storyModules.parentId, id), eq(storyModules.companionId, companionId)))
-			.run();
-		const result = this.db
-			.delete(storyModules)
-			.where(and(eq(storyModules.id, id), eq(storyModules.companionId, companionId)))
-			.run();
-		if (result.changes === 0) throw { kind: "not_found", reason: "story_module_not_found" };
-		this.invalidations.invalidate(CacheKey.canonModules(companionId));
 	}
 
 	private getSource(id: string): CanonSourceRecord | null {
@@ -631,12 +409,39 @@ export class CanonHubService {
 	}
 
 	/** Embed unindexed chunks after a source/package transaction commits. */
-	async indexPending(companionId: string): Promise<void> {
-		const service = this.embeddingService?.();
-		if (!service?.isReady()) return;
+	indexPending(companionId: string): Promise<void> {
+		if (this.closed) return Promise.reject(new Error("Canon service is closed"));
+		const previous = this.indexing.get(companionId) ?? Promise.resolve();
+		// Serialize source changes and queries so a search includes writes admitted
+		// while an earlier indexing pass was awaiting the provider.
+		const pending = previous.catch(() => undefined).then(() => this.indexChunks(companionId));
+		this.indexing.set(companionId, pending);
+		void pending
+			.finally(() => {
+				if (this.indexing.get(companionId) === pending) this.indexing.delete(companionId);
+			})
+			.catch(() => undefined);
+		return pending;
+	}
+
+	async close(): Promise<void> {
+		this.closed = true;
+		await Promise.allSettled(this.indexing.values());
+	}
+
+	private assertOpen(): void {
+		if (this.closed) throw new Error("Canon service is closed");
+	}
+
+	private async indexChunks(companionId: string): Promise<void> {
+		this.assertOpen();
+		const service = await this.embeddingService?.();
+		this.assertOpen();
+		if (!service) return;
 		const configuration = canonEmbeddingConfiguration(service);
 		const vectors = this.vectors;
-		if (!configuration || !vectors || !this.ensureVectorIndex(configuration)) return;
+		if (!configuration || !vectors || !this.ensureVectorIndex(configuration))
+			throw new Error("Canon vector index is unavailable");
 		const rows = this.db
 			.select({
 				id: canonChunks.id,
@@ -648,30 +453,33 @@ export class CanonHubService {
 			.where(eq(canonSources.companionId, companionId))
 			.all();
 		for (const row of rows) {
-			try {
-				const embedding = row.embedding
-					? decodeEmbedding(row.embedding)
-					: await service.embed(row.content);
-				const currentConfiguration = canonEmbeddingConfiguration(this.embeddingService?.());
-				if (
-					embedding.length !== configuration.dimensions ||
-					currentConfiguration?.fingerprint !== configuration.fingerprint ||
-					!this.ensureVectorIndex(configuration)
-				)
-					return;
+			const embedding = row.embedding
+				? decodeEmbedding(row.embedding)
+				: await service.embed(row.content, "document");
+			this.assertOpen();
+			const currentConfiguration = canonEmbeddingConfiguration(await this.embeddingService?.());
+			this.assertOpen();
+			if (
+				embedding.length !== configuration.dimensions ||
+				currentConfiguration?.fingerprint !== configuration.fingerprint
+			)
+				throw new Error("Canon embedding configuration changed during indexing");
+			// A source can be replaced or deleted while embedding is in flight.
+			const current = this.db
+				.select({ content: canonChunks.content })
+				.from(canonChunks)
+				.where(eq(canonChunks.id, row.id))
+				.get();
+			if (current?.content !== row.content) continue;
+			this.db.transaction(() => {
 				vectors.upsertCanonVector(row.id, embedding);
-				if (!row.embedding) {
+				if (!row.embedding)
 					this.db
 						.update(canonChunks)
 						.set({ embedding: encodeEmbedding(embedding) })
 						.where(eq(canonChunks.id, row.id))
 						.run();
-				}
-			} catch {
-				// Providers are optional; retry the remaining unindexed chunks on the
-				// next source sync or retrieval rather than failing authoring flows.
-				return;
-			}
+			});
 		}
 	}
 
@@ -688,102 +496,23 @@ export class CanonHubService {
 		return includeAdjacent === false ? selected : this.expandAdjacent(selected, limit);
 	}
 
-	private matchAliases(companionId: string, query: string): string[] {
-		return this.db
-			.select({ name: canonEntities.name, aliases: canonEntities.aliasesJson })
-			.from(canonEntities)
-			.where(eq(canonEntities.companionId, companionId))
-			.all()
-			.filter((entity) => [entity.name, ...entity.aliases].some((alias) => query.includes(alias)))
-			.flatMap((entity) => [entity.name, ...entity.aliases]);
-	}
-
 	private exactSearch(companionId: string, terms: string[], limit: number): CanonChunkRecord[] {
 		if (!terms.length) return [];
-		const rows = this.db
-			.select({
-				id: canonChunks.id,
-				sourceId: canonChunks.sourceId,
-				sourceName: canonSources.logicalName,
-				ordinal: canonChunks.ordinal,
-				content: canonChunks.content,
-				heading: canonChunks.heading,
-				startOffset: canonChunks.startOffset,
-				endOffset: canonChunks.endOffset,
-				language: canonSources.language,
-				origin: canonSources.origin,
-			})
-			.from(canonChunks)
-			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
-			.where(eq(canonSources.companionId, companionId))
-			.orderBy(asc(canonChunks.sourceId), asc(canonChunks.ordinal))
-			.all();
-		return rows
-			.filter((row) => terms.some((term) => row.content.includes(term)))
-			.slice(0, limit)
-			.map(toChunkRecord);
-	}
-
-	private routedChunkIds(
-		companionId: string,
-		query: string,
-		aliases: string[],
-		moduleId?: string,
-	): Set<string> {
-		const modules = this.db
-			.select()
-			.from(storyModules)
-			.where(eq(storyModules.companionId, companionId))
-			.all();
-		const requested = moduleId
-			? modules.filter((module) => module.stableKey === moduleId || module.id === moduleId)
-			: modules.filter(
-					(module) =>
-						module.triggersJson.some((trigger) => query.includes(trigger)) ||
-						aliases.some((alias) => `${module.name} ${module.description}`.includes(alias)),
-				);
-		if (!requested.length) return new Set();
-		const selected = new Set(requested.map((module) => module.id));
-		let changed = true;
-		while (changed) {
-			changed = false;
-			for (const module of modules)
-				if (module.parentId && selected.has(module.parentId) && !selected.has(module.id)) {
-					selected.add(module.id);
-					changed = true;
-				}
-		}
-		return new Set(
-			modules
-				.filter((module) => selected.has(module.id))
-				.flatMap((module) => module.sourceRefsJson),
+		const matches = sql.join(
+			terms.map(
+				(term) => sql`CASE WHEN instr(lower(c.content), lower(${term})) > 0 THEN 1 ELSE 0 END`,
+			),
+			sql` + `,
 		);
-	}
-
-	private moduleChunks(companionId: string, moduleId: string, limit: number): CanonChunkRecord[] {
-		const routed = this.routedChunkIds(companionId, "", [], moduleId);
-		if (!routed.size) return [];
-		return this.db
-			.select({
-				id: canonChunks.id,
-				sourceId: canonChunks.sourceId,
-				sourceName: canonSources.logicalName,
-				ordinal: canonChunks.ordinal,
-				content: canonChunks.content,
-				heading: canonChunks.heading,
-				startOffset: canonChunks.startOffset,
-				endOffset: canonChunks.endOffset,
-				language: canonSources.language,
-				origin: canonSources.origin,
-			})
-			.from(canonChunks)
-			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
-			.where(eq(canonSources.companionId, companionId))
-			.orderBy(canonSources.logicalName, canonChunks.ordinal)
-			.all()
-			.filter((row) => routed.has(row.id))
-			.slice(0, limit)
-			.map(toChunkRecord);
+		const rows = this.db.all<Parameters<typeof toChunkRecord>[0]>(sql`
+			SELECT c.id, c.source_id AS sourceId, s.logical_name AS sourceName,
+				c.ordinal, c.content, c.heading, c.start_offset AS startOffset,
+				c.end_offset AS endOffset, -(${matches}) AS score, s.language, s.origin
+			FROM canon_chunks c JOIN canon_sources s ON s.id = c.source_id
+			WHERE s.companion_id = ${companionId} AND (${matches}) > 0
+			ORDER BY score, c.source_id, c.ordinal LIMIT ${limit}
+		`);
+		return rows.map(toChunkRecord);
 	}
 
 	private expandAdjacent(ranked: CanonChunkRecord[], limit: number): CanonChunkRecord[] {
@@ -834,6 +563,10 @@ function splitCanon(content: string): Array<{ content: string; heading: string |
 	let heading: string | null = null;
 	const flush = () => {
 		if (!current) return;
+		if (/^#{1,6}\s+[^\n]+$/.test(current)) {
+			current = "";
+			return;
+		}
 		chunks.push({ content: current, heading });
 		current = "";
 	};
@@ -843,11 +576,8 @@ function splitCanon(content: string): Array<{ content: string; heading: string |
 		const startsBoundSection =
 			(markdownHeading !== null && (markdownHeading[1]?.length ?? 0) <= 2) || proseHeading !== null;
 		if (startsBoundSection) {
-			// A manifest binding names a semantic section, so never let a chunk
-			// straddle two top-level sections. H3+ subsections remain part of
-			// their H1/H2 chapter so a chapter binding receives its actual body.
-			// The old order changed `heading` before flushing and mislabeled the
-			// preceding text as the next section.
+			// Keep independent sections apart and label the previous text before
+			// switching headings. A heading alone is not retrieval evidence.
 			flush();
 			heading = (markdownHeading?.[2] ?? proseHeading?.[1] ?? paragraph).trim();
 		}

@@ -143,7 +143,7 @@ export function createShellWorkflowStore(input: {
 		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
 		return identity?.scenes.find((candidate) => candidate.id === sceneId);
 	});
-	const visualState = createMemo(() => activeCharacterRuntime()?.expressionId);
+	const visualState = createMemo(() => activeCharacterRuntime()?.expressionId ?? undefined);
 	const composerPlaceholder = createMemo(
 		() =>
 			character()?.character.composer_placeholder ?? translate("shell.fallbackComposerPlaceholder"),

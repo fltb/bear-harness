@@ -34,7 +34,6 @@ export const queryKeys = {
 	characterPackage: CacheKey.characterPackage,
 	characterDeletionStatus: CacheKey.characterDeletionStatus,
 	canonSources: (id?: string) => ["canon", "sources", id ?? null] as const,
-	canonModules: (id?: string) => ["canon", "modules", id ?? null] as const,
 	onboarding: ["onboarding"] as const,
 	settings: CacheKey.settings(),
 	providers: CacheKey.providers(),

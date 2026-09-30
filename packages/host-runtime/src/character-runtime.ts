@@ -5,7 +5,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { awaitSource } from "./await-source.js";
-import { CanonHubService } from "./canon/service.js";
+import { type CanonEmbeddingService, CanonHubService } from "./canon/service.js";
 import type { CharacterLoader, CharacterPackage } from "./companion/character-loader.js";
 import { CompanionStateStore } from "./companion/companion-store.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
@@ -52,6 +52,8 @@ export interface CharacterRuntimeOptions {
 	forEachCompanionDatabase(visit: (database: AppDatabase) => void): void;
 	memoryScope: { readonly installationId: string; readonly userId: string };
 	memoryConfig(): DeepPartial<MemoryTdaiConfig> | undefined;
+	canonEmbedding(): Promise<CanonEmbeddingService | undefined>;
+	sharedEmbedding(): Promise<import("@bear-harness/tdai-core").EmbeddingService | undefined>;
 	piWorkerPath?: string;
 	bundledGit?: { shellPath: string; pathEntries: string[] };
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
@@ -117,8 +119,9 @@ export class CharacterRuntime {
 			db,
 			this.artifacts,
 			this.invalidations,
-			() => this.memoryRuntime.getEmbeddingService(),
+			options.canonEmbedding,
 			database,
+			() => options.logger?.warn?.("Canon background indexing failed; search will retry."),
 		);
 		const contextPack = new ContextPackCompiler(
 			db,
@@ -168,8 +171,8 @@ export class CharacterRuntime {
 						);
 				}
 			},
-			canon: async (_companionId, query, limit, moduleId) =>
-				this.canon.retrieve(this.companionId, query, { limit, moduleId, includeAdjacent: false }),
+			canon: async (_companionId, query, limit) =>
+				this.canon.retrieveHybrid(this.companionId, query, { limit, includeAdjacent: false }),
 			memory: {
 				enabled: () => this.memoryEnabled(),
 				recall: async (_companionId, sessionId, userText) => {
@@ -373,6 +376,7 @@ export class CharacterRuntime {
 				installationId: this.options.memoryScope.installationId,
 				userId: this.options.memoryScope.userId,
 				memoryConfig: this.options.memoryConfig(),
+				embeddingProvider: this.options.sharedEmbedding,
 				diagnostics: this.diagnostics,
 				logger: createMemoryDiagnosticsLogger(this.diagnostics),
 			});
@@ -396,6 +400,7 @@ export class CharacterRuntime {
 		this.stopping = (async () => {
 			const results = await Promise.allSettled([
 				this.externalAgentRuns.close(),
+				this.canon.close(),
 				this.pi.shutdown(),
 				this.artifacts.close(),
 			]);

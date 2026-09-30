@@ -1,0 +1,231 @@
+{
+	"results": [
+		{
+			"name": "All initial schema validations pass against actual Jizhou package",
+			"result": "PASS"
+		},
+		{
+			"name": "Exact source text retained before edit, all known page roots present",
+			"result": "PASS"
+		},
+		{
+			"name": "Canon modules retain kinds, parent and heading bindings",
+			"result": "PASS"
+		},
+		{
+			"name": "Onboarding switches using actual choices schema and retains common fields",
+			"result": "PASS"
+		},
+		{
+			"name": "Existing source edit preserves metadata and writes real file",
+			"result": "PASS"
+		},
+		{
+			"name": "New source uses source schema and preserves draft on return",
+			"result": "PASS"
+		},
+		{
+			"name": "Skill exposes real requires, active-when, resources, completion and priority",
+			"result": "PASS"
+		},
+		{
+			"name": "Missing text constraints are reported by actual schemas",
+			"result": "PASS"
+		}
+	],
+	"layout": [
+		{
+			"width": 1024,
+			"page": "behavior",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "character",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "modules",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "sources",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "state",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "skills",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 390,
+			"page": "behavior",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "character",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "modules",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "sources",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "state",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "skills",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 320,
+			"page": "behavior",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "character",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "modules",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "sources",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "state",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "skills",
+			"viewport": 288,
+			"scroll": 288
+		}
+	],
+	"accessibility": [
+		{
+			"theme": "light",
+			"page": "behavior",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "modules",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "sources",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "character",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "behavior",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "modules",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "sources",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "character",
+			"violations": []
+		}
+	],
+	"errors": [],
+	"scope": "Real package text and current schema-driven prototype. No Host writes, model calls, binary media rendering or complete Host validation.",
+	"date": "2026-09-29",
+	"productionModulesChanged": 0,
+	"prototype": {
+		"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-format/character-package-editor.html",
+		"bytes": 550521,
+		"sha256": "0a6220ce15dd28a61261c3c6ce5236c8bfd9a198249af66aa130be15b23049bf"
+	},
+	"schemaSources": [
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/character-loader.ts",
+			"sha256": "efc1d45adad8b3e4199651bf1bf4e671f544f57a17e23af391dd0fb8c8e9e1c3"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/behavior-schema.ts",
+			"sha256": "ad69f0dffe32bfbe02234b6945f3e95cd9a9186607588c93b2b8630dfb7ddc93"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/onboarding-schema.ts",
+			"sha256": "8354bbb3182cfd7335d693454f96ca348b3d15a9bdc84563ce9213e3f63354ea"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/media-schema.ts",
+			"sha256": "cc1fa73fc7427bee0f519df191b68f5c2bcbaa8e8465c7a39571f511042acdaf"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/state-schema.ts",
+			"sha256": "e4931303f938cab93312395f7cc12c0332e6f3618cb040f5234236394640a310"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/role-resources.ts",
+			"sha256": "dbf78c2aab49fe0f7b8c461e3d033aba51ec39d08844dcc5d7fed1219dbd9d01"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/companion/theme.ts",
+			"sha256": "f94d9abbfb44d17cd6d170d0f8449c86f3a222dfe12e8cf0514bd7087b8fac19"
+		},
+		{
+			"path": "/Users/bytedance/Documents/MRepo/bear-harness/packages/host-runtime/src/canon/package-schema.ts",
+			"sha256": "1dc571ca7ce708c813243ff450638138263ffbb38b69bcd3b7d470527c2776cf"
+		}
+	]
+}

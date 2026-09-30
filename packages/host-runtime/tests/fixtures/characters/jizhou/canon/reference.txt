@@ -1,1 +1,3 @@
+# Test reference
+
 The test character keeps a blue notebook in the reading room.

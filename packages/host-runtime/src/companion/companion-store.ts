@@ -4,7 +4,7 @@ import { and, eq, isNull, or, sql } from "drizzle-orm";
 import jsonPatch from "fast-json-patch";
 import type { AppDatabase } from "../storage/database.js";
 import { companionStateDocuments } from "../storage/schema.js";
-import type { CharacterPackage } from "./character-loader.js";
+import { type CharacterPackage, defaultSceneId } from "./character-loader.js";
 import {
 	applyCharacterStateChanges,
 	CharacterStateChange,
@@ -144,10 +144,11 @@ export class CompanionStateStore {
 				invalidIds.push(row.id);
 		}
 		if (!invalidIds.length) return { status: "unchanged" as const, documents: 0 };
-		this.db.transaction((tx) => {
-			for (const id of invalidIds) tx.delete(table).where(eq(table.id, id)).run();
-		});
-		return { status: "reset" as const, documents: invalidIds.length };
+		throw {
+			kind: "conflict",
+			reason: "character_state_schema_incompatible",
+			documents: invalidIds.length,
+		};
 	}
 	private rows(companionId: string, conversationId: string) {
 		const owned = and(
@@ -184,7 +185,7 @@ function projection(rows: Row[], definition: CharacterStateDefinition) {
 function displaySnapshot(rows: Row[], character: CharacterPackage): CompanionSnapshot {
 	const row = rows.find((item) => item.domain === "display");
 	const display = row?.stateJson ?? {
-		sceneId: character.visual.default_scene,
+		sceneId: defaultSceneId(character),
 		expressionId: character.visual.default_expression,
 	};
 	const revisions = { display: row?.revision ?? 0 };
@@ -194,8 +195,12 @@ function validateDisplay(value: unknown, character: CharacterPackage) {
 	const parsed = Protocol.CompanionDisplayState.safeParse(value);
 	if (!parsed.success) throw invalid("display_state_invalid");
 	const display = parsed.data;
-	if (!declared(display.sceneId, character.scenes)) throw invalid("display_scene_not_declared");
-	if (!declared(display.expressionId, character.visual.expressions))
+	if (display.sceneId !== null && !declared(display.sceneId, character.scenes))
+		throw invalid("display_scene_not_declared");
+	if (
+		display.expressionId !== null &&
+		!declared(display.expressionId, character.visual.expressions)
+	)
 		throw invalid("display_expression_not_declared");
 }
 function partition(document: JsonObject, definition: CharacterStateDefinition, scope: StateScope) {

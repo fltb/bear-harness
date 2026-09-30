@@ -159,16 +159,6 @@ describe("Zod RPC dispatcher", () => {
 			language: null,
 			sourceKind: null,
 		}));
-		const modules = Array.from({ length: 205 }, (_, index) => ({
-			id: `module-${String(index).padStart(3, "0")}`,
-			kind: "event" as const,
-			title: `Module ${index}`,
-			instructions: "Test module",
-			sourceChunkIds: [],
-			createdAt: "2026-01-01T00:00:00.000Z",
-			origin: "user" as const,
-			triggers: [],
-		}));
 		const providers = Array.from({ length: 65 }, (_, index) => ({
 			id: `provider-${String(index).padStart(3, "0")}`,
 			name: `Provider ${index}`,
@@ -211,7 +201,7 @@ describe("Zod RPC dispatcher", () => {
 				},
 			},
 			companionStore: { reconcileSchema: () => undefined },
-			canon: { listSources: () => sources, listModules: () => modules },
+			canon: { listSources: () => sources },
 			providers: {
 				listProviders: async () => providers,
 				modelProjectionFacts: () => ({}),
@@ -226,22 +216,16 @@ describe("Zod RPC dispatcher", () => {
 			characterId: "bear",
 			limit: 100,
 		});
-		const modulePage = await dispatcher.dispatch(RPC.canon.listModules.channel, {
-			characterId: "bear",
-			limit: 100,
-		});
 		const providerPage = await dispatcher.dispatch(RPC.provider.list.channel, { limit: 30 });
 		const modelPage = await dispatcher.dispatch(RPC.model.poolGet.channel, { limit: 100 });
 		expect({
 			characters: first.ok,
 			sources: sourcePage.ok,
-			modules: modulePage.ok,
 			providers: providerPage.ok,
 			models: modelPage.ok,
 		}).toEqual({
 			characters: true,
 			sources: true,
-			modules: true,
 			providers: true,
 			models: true,
 		});
@@ -269,9 +253,6 @@ describe("Zod RPC dispatcher", () => {
 		if (!sourcePage.ok) throw new Error("source page failed");
 		expect(sourcePage.data.sources).toHaveLength(100);
 		expect(sourcePage.data.nextCursor).toBe("source-099");
-		if (!modulePage.ok) throw new Error("module page failed");
-		expect(modulePage.data.modules).toHaveLength(100);
-		expect(modulePage.data.nextCursor).toBe("module-099");
 		if (!providerPage.ok) throw new Error("provider page failed");
 		expect(providerPage.data.providers).toHaveLength(30);
 		expect(providerPage.data.nextCursor).toBe("provider-029");

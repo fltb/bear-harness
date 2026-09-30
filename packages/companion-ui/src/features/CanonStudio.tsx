@@ -1,18 +1,14 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { For, Show } from "solid-js";
-import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { useCompanionStore } from "../stores/companion.js";
-import { Button, Checkbox, Select, TextField } from "../ui/primitives.js";
+import { Button, TextField } from "../ui/primitives.js";
 
 export function CanonStudio() {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
-	const state = workflow.canon(
-		() => t("canonStudio.moduleNoParent"),
-		(kind) => t(`canonStudio.kinds.${kind}`),
-	);
+	const state = workflow.canon();
 
 	return (
 		<div class="canon-studio">
@@ -106,145 +102,11 @@ export function CanonStudio() {
 				</form>
 				<For each={state.results()}>
 					{(chunk) => (
-						<Checkbox
-							class="canon-result"
-							checked={state.selectedChunks().includes(chunk.id)}
-							onChange={(checked) => state.toggleChunk(chunk.id, checked)}
-						>
-							<Checkbox.Input />
-							<Checkbox.Control>
-								<Checkbox.Indicator>✓</Checkbox.Indicator>
-							</Checkbox.Control>
-							<Checkbox.Label>
-								<span>
-									<strong>
-										{chunk.sourceName} · {chunk.ordinal + 1}
-									</strong>
-									{chunk.content}
-								</span>
-							</Checkbox.Label>
-						</Checkbox>
-					)}
-				</For>
-			</section>
-			<section>
-				<h3>{t("canonStudio.modules")}</h3>
-				<form
-					onSubmit={(event) => {
-						event.preventDefault();
-						state.saveModule();
-					}}
-				>
-					<Select
-						options={state.moduleKinds()}
-						value={state.moduleKinds().find((kind) => kind.id === state.moduleKind()) ?? null}
-						optionValue="id"
-						optionTextValue="label"
-						onChange={(kind) => kind && state.setModuleKind(kind.id)}
-						itemComponent={(itemProps) => (
-							<Select.Item item={itemProps.item} class="select-item">
-								<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
-							</Select.Item>
-						)}
-					>
-						<Select.Trigger class="select-trigger" aria-label={t("canonStudio.moduleKind")}>
-							<Select.Value class="select-value" />
-						</Select.Trigger>
-						<Select.Portal ref={markSelectPortalTopLayer}>
-							<Select.Content class="select-content">
-								<Select.Listbox class="select-listbox" />
-							</Select.Content>
-						</Select.Portal>
-					</Select>
-					<Select
-						options={state.parentModules()}
-						value={
-							state.parentModules().find((module) => module.id === state.moduleParentId()) ?? null
-						}
-						optionValue="id"
-						optionTextValue="title"
-						onChange={(module) => state.setModuleParentId(module?.id ?? "")}
-						itemComponent={(itemProps) => (
-							<Select.Item item={itemProps.item} class="select-item">
-								<Select.ItemLabel>{itemProps.item.rawValue.title}</Select.ItemLabel>
-							</Select.Item>
-						)}
-					>
-						<Select.Trigger class="select-trigger" aria-label={t("canonStudio.moduleParent")}>
-							<Select.Value class="select-value" />
-						</Select.Trigger>
-						<Select.Portal ref={markSelectPortalTopLayer}>
-							<Select.Content class="select-content">
-								<Select.Listbox class="select-listbox" />
-							</Select.Content>
-						</Select.Portal>
-					</Select>
-					<TextField class="setting-field">
-						<TextField.Input
-							aria-label={t("canonStudio.moduleTitle")}
-							placeholder={t("canonStudio.moduleTitle")}
-							value={state.moduleTitle()}
-							onInput={(event) => state.setModuleTitle(event.currentTarget.value)}
-						/>
-					</TextField>
-					<TextField class="setting-field">
-						<TextField.TextArea
-							aria-label={t("canonStudio.moduleInstructions")}
-							rows={4}
-							placeholder={t("canonStudio.moduleInstructions")}
-							value={state.moduleInstructions()}
-							onInput={(event) => state.setModuleInstructions(event.currentTarget.value)}
-						/>
-					</TextField>
-					<Button
-						data-control="command"
-						type="submit"
-						disabled={state.busy() || !state.moduleTitle().trim()}
-					>
-						{state.editingModuleId() ? t("canonStudio.updateModule") : t("canonStudio.saveModule")}
-					</Button>
-					<Show when={state.editingModuleId()}>
-						<Button data-control="command" type="button" onClick={state.clearModuleForm}>
-							{t("canonStudio.cancelEdit")}
-						</Button>
-					</Show>
-				</form>
-				<Show when={state.modules().length === 0}>
-					<p class="drawer-note">{t("canonStudio.noModules")}</p>
-				</Show>
-				<For each={state.modules()}>
-					{(module) => (
-						<div class="canon-row">
-							<div>
-								<strong>{module.title}</strong>
-								<span>
-									{t(`canonStudio.kinds.${module.kind}`)} · {module.sourceChunkIds.length}{" "}
-									{t("canonStudio.references")}
-								</span>
-								<Show when={module.origin === "package"}>
-									<span>{t("canonStudio.packageManaged")}</span>
-								</Show>
-							</div>
-							<Show when={module.origin !== "package"}>
-								<div class="canon-row-actions">
-									<Button
-										data-control="command"
-										type="button"
-										aria-label={`${t("canonStudio.editModule")} ${module.title}`}
-										onClick={() => state.editModule(module)}
-									>
-										{t("canonStudio.editModule")}
-									</Button>
-									<Button
-										data-control="command"
-										type="button"
-										aria-label={`${t("canonStudio.remove")} ${module.title}`}
-										onClick={() => state.deleteModule(module.id)}
-									>
-										{t("canonStudio.remove")}
-									</Button>
-								</div>
-							</Show>
+						<div class="canon-result">
+							<strong>
+								{chunk.sourceName} · {chunk.ordinal + 1}
+							</strong>
+							<p>{chunk.content}</p>
 						</div>
 					)}
 				</For>

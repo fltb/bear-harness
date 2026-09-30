@@ -1,0 +1,489 @@
+{
+	"results": [
+		{
+			"name": "Library and all editor pages",
+			"result": "PASS"
+		},
+		{
+			"name": "Blank character has automatic identity and no copied personality",
+			"result": "PASS"
+		},
+		{
+			"name": "Template, apply, undo boundary and library",
+			"result": "PASS"
+		},
+		{
+			"name": "Knowledge new draft survives close, error targets title",
+			"result": "PASS"
+		},
+		{
+			"name": "Knowledge editor exposes save failure and retry",
+			"result": "PASS"
+		},
+		{
+			"name": "Assets can be assigned to a new scene",
+			"result": "PASS"
+		},
+		{
+			"name": "Preview follows default scene and can switch",
+			"result": "PASS"
+		},
+		{
+			"name": "Onboarding choice editor and preview",
+			"result": "PASS"
+		},
+		{
+			"name": "Skill editor saves structured content",
+			"result": "PASS"
+		},
+		{
+			"name": "State creation and typed default",
+			"result": "PASS"
+		},
+		{
+			"name": "Topic links existing document and entity edits",
+			"result": "PASS"
+		},
+		{
+			"name": "Trial demo retains questions and marks stale draft",
+			"result": "PASS"
+		},
+		{
+			"name": "Import demonstration creates independent role",
+			"result": "PASS"
+		}
+	],
+	"layouts": [
+		{
+			"width": 1024,
+			"page": "general",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "identity",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "interaction",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "visual",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "media",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "assets",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "story",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "canon",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "topics",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "entities",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "onboarding",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "state",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "skills",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "plugins",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 1024,
+			"page": "files",
+			"viewport": 992,
+			"scroll": 992
+		},
+		{
+			"width": 768,
+			"page": "general",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "identity",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "interaction",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "visual",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "media",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "assets",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "story",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "canon",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "topics",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "entities",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "onboarding",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "state",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "skills",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "plugins",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 768,
+			"page": "files",
+			"viewport": 736,
+			"scroll": 736
+		},
+		{
+			"width": 390,
+			"page": "general",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "identity",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "interaction",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "visual",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "media",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "assets",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "story",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "canon",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "topics",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "entities",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "onboarding",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "state",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "skills",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "plugins",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 390,
+			"page": "files",
+			"viewport": 358,
+			"scroll": 358
+		},
+		{
+			"width": 320,
+			"page": "general",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "identity",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "interaction",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "visual",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "media",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "assets",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "story",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "canon",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "topics",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "entities",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "onboarding",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "state",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "skills",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "plugins",
+			"viewport": 288,
+			"scroll": 288
+		},
+		{
+			"width": 320,
+			"page": "files",
+			"viewport": 288,
+			"scroll": 288
+		}
+	],
+	"accessibility": [
+		{
+			"theme": "light",
+			"page": "general",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "assets",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "onboarding",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "state",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "skills",
+			"violations": []
+		},
+		{
+			"theme": "light",
+			"page": "canon",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "general",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "assets",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "onboarding",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "state",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "skills",
+			"violations": []
+		},
+		{
+			"theme": "dark",
+			"page": "canon",
+			"violations": []
+		}
+	],
+	"errors": [],
+	"scope": "In-memory prototype only; no real model, durable storage, ZIP import/export or Android device validation.",
+	"prototype": {
+		"path": "/Users/bytedance/.codex/visualizations/2026/09/24/01a0d2aa-8352-7882-8a9d-7c2aa6641a87/studio-v2/character-studio-v2.html",
+		"bytes": 358566,
+		"sha256": "ac933935ae3391d6c0020c5c4be31a5a21e1e760946cb992f1213e2214e895e7"
+	},
+	"productionModulesChanged": 0,
+	"date": "2026-09-29"
+}

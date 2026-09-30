@@ -153,7 +153,6 @@ export const CacheKey = Object.freeze({
 	characterDeletionStatus: (characterId: string) =>
 		["character", "deletionStatus", characterId] as const,
 	canonSources: (characterId: string) => ["canon", "sources", characterId] as const,
-	canonModules: (characterId: string) => ["canon", "modules", characterId] as const,
 	providers: () => ["providers"] as const,
 	providerLogin: (providerId: string) => ["providerLogin", providerId] as const,
 	providerLoginSessions: () => ["providerLoginSessions"] as const,
@@ -179,7 +178,6 @@ export const CacheKeySchema = z.union([
 	z.tuple([z.literal("character"), z.literal("runtime"), CacheIdentity]),
 	z.tuple([z.literal("character"), z.literal("deletionStatus"), CacheIdentity]),
 	z.tuple([z.literal("canon"), z.literal("sources"), CacheIdentity]),
-	z.tuple([z.literal("canon"), z.literal("modules"), CacheIdentity]),
 	z.tuple([z.literal("providers")]),
 	z.tuple([z.literal("providerLogin"), CacheIdentity]),
 	z.tuple([z.literal("models"), z.literal("pool")]),
@@ -326,24 +324,6 @@ export const CharacterTheme = z.strictObject({
 	font: z.strictObject({ body: z.string(), heading: z.string() }),
 });
 export type CharacterTheme = z.infer<typeof CharacterTheme>;
-export const CharacterWorkPresentationLabels = z.strictObject({
-	proposal: CharacterCopy.refine((value) => value.trim().length > 0),
-	running: CharacterCopy.refine((value) => value.trim().length > 0),
-	needs_user: CharacterCopy.refine((value) => value.trim().length > 0),
-	interrupted: CharacterCopy.refine((value) => value.trim().length > 0),
-	completed: CharacterCopy.refine((value) => value.trim().length > 0),
-	failed: CharacterCopy.refine((value) => value.trim().length > 0),
-	steer_placeholder: CharacterCopy.refine((value) => value.trim().length > 0),
-	interrupt: CharacterCopy.refine((value) => value.trim().length > 0),
-	resume: CharacterCopy.refine((value) => value.trim().length > 0),
-	approve: CharacterCopy.refine((value) => value.trim().length > 0),
-	reject: CharacterCopy.refine((value) => value.trim().length > 0),
-	artifact_open: CharacterCopy.refine((value) => value.trim().length > 0),
-	artifact_reveal: CharacterCopy.refine((value) => value.trim().length > 0),
-});
-export const CharacterWorkPresentation = z.strictObject({
-	labels: CharacterWorkPresentationLabels,
-});
 export const CharacterMedia = z.discriminatedUnion("kind", [
 	z.strictObject({
 		id: CharacterIdentifier,
@@ -413,8 +393,7 @@ export const CharacterDisplay = z
 				custom_label: z.string().max(MAX_STRING_LENGTH),
 				custom_placeholder: z.string().max(MAX_STRING_LENGTH),
 			}),
-			work_presentation: CharacterWorkPresentation.optional(),
-			first_meeting: CharacterOnboardingFlow,
+			first_meeting: CharacterOnboardingFlow.optional(),
 		}),
 		system_prompt: z.string().max(65_536),
 		theme: CharacterTheme,
@@ -429,9 +408,9 @@ export const CharacterDisplay = z
 			)
 			.max(MAX_ARRAY_LENGTH),
 		visual: z.strictObject({
-			defaultSceneId: z.string().min(1).max(64),
-			defaultExpressionId: z.string().min(1).max(64),
-			avatarUrl: CharacterMediaUrl,
+			defaultSceneId: z.string().min(1).max(64).nullable(),
+			defaultExpressionId: z.string().min(1).max(64).nullable(),
+			avatarUrl: CharacterMediaUrl.optional(),
 			expressions: boundedRecord(z.string().min(1).max(64), CharacterMediaUrl),
 			expressionLabels: boundedRecord(z.string().min(1).max(64), z.string().max(MAX_STRING_LENGTH)),
 		}),
@@ -439,7 +418,10 @@ export const CharacterDisplay = z
 	})
 	.superRefine((character, context) => {
 		const sceneIds = new Set(character.scenes.map((scene) => scene.id));
-		if (!sceneIds.has(character.visual.defaultSceneId)) {
+		if (
+			character.visual.defaultSceneId !== null &&
+			!sceneIds.has(character.visual.defaultSceneId)
+		) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["visual", "defaultSceneId"],
@@ -447,7 +429,10 @@ export const CharacterDisplay = z
 			});
 		}
 		const expressionIds = new Set(Object.keys(character.visual.expressions));
-		if (!expressionIds.has(character.visual.defaultExpressionId)) {
+		if (
+			character.visual.defaultExpressionId !== null &&
+			!expressionIds.has(character.visual.defaultExpressionId)
+		) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["visual", "defaultExpressionId"],
@@ -463,7 +448,7 @@ export const CharacterDisplay = z
 				});
 			}
 		}
-		for (const [index, step] of character.character.first_meeting.steps.entries()) {
+		for (const [index, step] of (character.character.first_meeting?.steps ?? []).entries()) {
 			if (step.kind === "text" && step.min_length > step.max_length) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -1014,43 +999,6 @@ export const CanonSearchRequest = z.strictObject({
 export const CanonRemoveSourceRequest = z.strictObject({
 	sourceId: z.string().min(1).max(64),
 });
-export const CanonModuleKind = z.union([
-	z.literal("root"),
-	z.literal("arc"),
-	z.literal("event"),
-	z.literal("entity"),
-	z.literal("relationship"),
-	z.literal("location"),
-	z.literal("object"),
-	z.literal("behavior"),
-]);
-export const CanonModule = z.strictObject({
-	id: z.string().min(1).max(64),
-	parentId: z.string().min(1).max(64).optional(),
-	kind: CanonModuleKind,
-	title: z.string().min(1).max(255),
-	instructions: z.string().max(16_384),
-	sourceChunkIds: z.array(z.string().min(1).max(64)).max(10_000),
-	createdAt: WireTimestamp,
-	origin: z.enum(["user", "package"]),
-	stableKey: z.string().max(64).optional(),
-	triggers: z.array(z.string().max(200)).max(40),
-});
-export const CanonListModulesRequest = z.strictObject({
-	cursor: z.string().min(1).max(64).optional(),
-	limit: z.number().int().min(1).max(100).default(50),
-});
-export const CanonUpsertModuleRequest = z.strictObject({
-	id: z.string().min(1).max(64).optional(),
-	parentId: z.string().min(1).max(64).optional(),
-	kind: CanonModuleKind,
-	title: z.string().min(1).max(255),
-	instructions: z.string().max(16_384),
-	sourceChunkIds: z.array(z.string().min(1).max(64)).max(10_000),
-});
-export const CanonDeleteModuleRequest = z.strictObject({
-	id: z.string().min(1).max(64),
-});
 export const CanonListSourcesResponse = z.strictObject({
 	sources: z.array(CanonSource).max(MAX_ARRAY_LENGTH),
 	nextCursor: z.string().min(1).max(64).optional(),
@@ -1061,14 +1009,6 @@ export const CanonAddSourceResponse = z.strictObject({
 export const CanonSearchResponse = z.strictObject({
 	chunks: z.array(CanonChunk).max(MAX_ARRAY_LENGTH),
 });
-export const CanonListModulesResponse = z.strictObject({
-	modules: z.array(CanonModule).max(MAX_ARRAY_LENGTH),
-	nextCursor: z.string().min(1).max(64).optional(),
-});
-export const CanonUpsertModuleResponse = z.strictObject({
-	module: CanonModule,
-});
-
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -1977,8 +1917,8 @@ export const ProviderOverrideBaseUrlRequest = z.strictObject({
 // ---------------------------------------------------------------------------
 
 export const CompanionDisplayState = z.strictObject({
-	sceneId: z.string().min(1).max(64),
-	expressionId: z.string().min(1).max(64),
+	sceneId: z.string().min(1).max(64).nullable(),
+	expressionId: z.string().min(1).max(64).nullable(),
 });
 export const CompanionConversationState = z.strictObject({
 	character: z.strictObject({
@@ -2452,24 +2392,6 @@ export const RPC = {
 		removeSource: characterEndpoint(
 			"canon.removeSource",
 			CanonRemoveSourceRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		listModules: characterEndpoint(
-			"canon.listModules",
-			CanonListModulesRequest,
-			CanonListModulesResponse,
-			"query",
-		),
-		upsertModule: characterEndpoint(
-			"canon.upsertModule",
-			CanonUpsertModuleRequest,
-			CanonUpsertModuleResponse,
-			"mutation",
-		),
-		deleteModule: characterEndpoint(
-			"canon.deleteModule",
-			CanonDeleteModuleRequest,
 			EmptyResponse,
 			"mutation",
 		),

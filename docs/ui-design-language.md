@@ -48,7 +48,7 @@ reading-plane and character geometry. Package signing and release gates remain s
 
 ## Persona editor follow-up
 
-The persona section edits `behavior.identity`, `behavior.agency`, `behavior.interaction`,
+The persona section edits `behavior.identity`, `behavior.interaction`,
 paired `behavior.examples`, and supplemental description/personality/scenario. Character
 System Prompt remains a separate section writing only `prompt.system_prompt`. The editor
 patches original YAML paths, retains revision-conflict checks, and never duplicates identity

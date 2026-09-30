@@ -570,9 +570,6 @@ export function createTestClient() {
 			addSource: vi.fn(() => ok(null)),
 			search: vi.fn(() => ok({ chunks: [] })),
 			removeSource: vi.fn(() => ok(null)),
-			listModules: vi.fn(() => ok({ modules: [] })),
-			upsertModule: vi.fn(() => ok(null)),
-			deleteModule: vi.fn(() => ok(null)),
 		},
 		provider: {
 			list: providerList,

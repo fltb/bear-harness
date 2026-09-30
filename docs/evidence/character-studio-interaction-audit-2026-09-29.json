@@ -1,0 +1,45 @@
+{
+	"date": "2026-09-29",
+	"scope": "Adversarial interaction review of isolated prototype. Findings are not production bug claims.",
+	"findings": [
+		{
+			"id": "new-document-dismiss-loses-input",
+			"reproduced": true,
+			"detail": "Esc closes the new-document form without confirmation or retaining text."
+		},
+		{
+			"id": "save-status-missing-in-document-editor",
+			"reproduced": true,
+			"saveState": "failed",
+			"dialogText": "编辑知识文档\n\n修改自动保存为草稿。\n\n关闭\n标题\n正文\n\n支持 Markdown；改标题不会改变其他内容对这篇文档的引用。\n\n返回知识列表",
+			"detail": "Failure is announced outside the modal; editor has no visible save-status or retry control."
+		},
+		{
+			"id": "new-role-retains-template-identity",
+			"reproduced": true,
+			"detail": "Creating a named new role retains Linzhou identity, dialogue examples, and knowledge."
+		},
+		{
+			"id": "undo-after-apply-crosses-installed-baseline",
+			"reproduced": true,
+			"detail": "Undo history survives Apply; first Undo recreates pre-apply content as an unapplied draft without explaining the boundary."
+		},
+		{
+			"id": "knowledge-error-does-not-locate-document",
+			"reproduced": true,
+			"section": "canon",
+			"focused": "BODY",
+			"detail": "Missing-title error returns only to the knowledge list; does not open/focus the offending document."
+		},
+		{
+			"id": "preview-ignores-selected-default-scene",
+			"reproduced": true,
+			"detail": "Preview still displays scenes[0] after setting a different scene as default."
+		},
+		{
+			"id": "apply-review-exposes-auto-generated-catalog",
+			"reproduced": true,
+			"detail": "The normal Apply review exposes manifest filename/raw diff instead of the changed document title."
+		}
+	]
+}

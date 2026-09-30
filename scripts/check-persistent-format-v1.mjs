@@ -17,13 +17,10 @@ function forbidText(path, forbidden) {
 }
 
 const character = parse(source("config/characters/jizhou/character.yaml"));
-if (character.format_version !== 1) throw new Error("character package format must be v1");
-if (character.state_schema?.$id !== "urn:bear-harness:character:jizhou:state:v1") {
-	throw new Error("character state schema identifier must be v1");
+if (character.format_version !== 2) throw new Error("character package format must be v2");
+if (character.state_schema?.$id !== "urn:bear-harness:character:jizhou:state:v2") {
+	throw new Error("Jizhou content 2.x state schema identifier must be v2");
 }
-const canon = parse(source("config/characters/jizhou/canon/manifest.yaml"));
-if (canon.format_version !== 1) throw new Error("canon package format must be v1");
-
 const contracts = [
 	["packages/host-runtime/src/storage/database.ts", "const DATABASE_SCHEMA_VERSION = 1"],
 	["apps/desktop/src/main/recovery-state.ts", "schemaVersion: 1"],
@@ -86,5 +83,5 @@ forbidText("packages/tdai-core/src/core/store/sqlite.ts", "migrateFtsTablesIfNee
 forbidText("packages/tdai-core/src/core/store/sqlite.ts", "ALTER TABLE l0_conversations");
 
 console.log(
-	`Persistent format v1 gate passed: ${contracts.length} contracts, no pre-release migration ladder`,
+	`Persistent format gate passed (storage v1, character package v2): ${contracts.length} contracts, no pre-release migration ladder`,
 );

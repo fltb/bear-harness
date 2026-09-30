@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Page, test } from "playwright/test";
@@ -14,10 +14,6 @@ import {
 } from "./helpers";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters/jizhou", import.meta.url));
-const storyScreenshotRoot = resolve(
-	import.meta.dirname,
-	"../../../artifacts/story-full-coverage-2026-09-01/screenshots",
-);
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
 	const requestData =
@@ -158,92 +154,45 @@ test("presented media choices send ordinary messages and open their native media
 	).toBe("先看书桌那张图。");
 });
 
-test("undelivered report enters, pauses, resumes, advances every chapter, and ends", async ({
+test("independent story loads once and resumes through native conversation history", async ({
 	page,
 }) => {
-	test.setTimeout(60_000);
-	mkdirSync(storyScreenshotRoot, { recursive: true });
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const conversationId = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Undelivered report full flow",
-	);
-	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
-	const conversationButton = sidebar
-		.getByRole("button")
-		.filter({ hasText: "Undelivered report full flow" });
-	await conversationButton.click();
-	await expect(conversationButton).toHaveAttribute("aria-current", "page");
-
-	const send = async (text: string, expected: string) => {
-		await sendMessage(page, text);
-		await expect
-			.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-			.toBe(expected);
-	};
-	const screenshot = async (name: string) => {
-		await page.screenshot({
-			path: join(storyScreenshotRoot, name),
-			fullPage: true,
-		});
-	};
-	const storyState = async () => {
-		const result = await rpc<{
-			state: { character: { document: { story: { active: boolean; chapter: number } } } };
-		}>(page, bootstrap.token, "companionState.get", { conversationId });
-		return result.state.character.document.story;
-	};
-	const latestStoryResource = async () => {
-		const trace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
-			prompts: string[];
-		};
-		const storyPrompt = trace.prompts.findLast((prompt) =>
-			prompt.includes('<role_skill id="undelivered-report"'),
-		);
-		const matches = [
-			...(storyPrompt ?? "").matchAll(
-				/<role_skill id="undelivered-report"[\s\S]*?<resource id="([^"]+)">/gu,
-			),
-		];
-		return matches.at(-1)?.[1];
-	};
-
-	await send("E2E_STORY_ENTRY", "E2E_STORY_ENTRY_DONE");
-	expect(await latestStoryResource()).toBe("entry");
-	const enter = page.getByRole("button", { name: "进入调查" });
+	const conversationId = await createFreshConversation(page, bootstrap.token, "Independent story");
+	await page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.locator(`[data-conversation-id="${conversationId}"]`)
+		.click();
+	const state = () => rpc(page, bootstrap.token, "companionState.get", { conversationId });
+	const before = await state();
+	await sendMessage(page, "E2E_STORY_ENTRY");
+	const enter = page.getByRole("button", { name: "进店看看" });
 	await expect(enter).toBeVisible();
-	await screenshot("01-entry-choice.png");
 	await enter.click();
 	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.poll(() => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_STORY_STARTED_DONE");
-	await expect.poll(storyState).toMatchObject({ active: true, chapter: 1 });
-	await screenshot("02-entered-signal.png");
-
-	await send("先暂停《未送达的回报》。", "E2E_STORY_PAUSED_DONE");
-	expect(await latestStoryResource()).toBe("damaged-signal");
-	await expect.poll(storyState).toMatchObject({ active: false, chapter: 1 });
-	await screenshot("03-paused.png");
-	await send("继续《未送达的回报》。", "E2E_STORY_RESUMED_DONE");
-	expect(await latestStoryResource()).toBe("damaged-signal");
-	await expect.poll(storyState).toMatchObject({ active: true, chapter: 1 });
-	await screenshot("04-resumed.png");
-
-	const resources = ["damaged-signal", "routes", "testimonies", "last-shift", "opinion", "ending"];
-	for (const [index, resource] of resources.entries()) {
-		const chapter = index + 2;
-		await send("E2E_STORY_ADVANCE", `E2E_STORY_ADVANCE_DONE_${chapter}`);
-		expect(await latestStoryResource()).toBe(resource);
-		await expect.poll(storyState).toMatchObject({ active: chapter < 7, chapter });
-		await screenshot(`${String(chapter + 3).padStart(2, "0")}-chapter-${chapter}.png`);
-	}
-
-	await send("E2E_STORY_CHECK_END", "E2E_STORY_END_CHECK_DONE");
-	expect(await latestStoryResource()).toBe("ending");
-	await expect.poll(storyState).toMatchObject({ active: false, chapter: 7 });
-	await screenshot("11-ending-check.png");
+	await sendMessage(page, "先暂停《打烊前的修伞铺》。");
+	await expect
+		.poll(() => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_STORY_PAUSED_DONE");
+	await page.reload();
+	await page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.locator(`[data-conversation-id="${conversationId}"]`)
+		.click();
+	await sendMessage(page, "继续《打烊前的修伞铺》。");
+	await expect
+		.poll(() => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_STORY_RESUMED_DONE");
+	const trace = await (await page.request.get(`${providerUrl}/trace/prompts`)).json();
+	const last = trace.prompts.at(-1);
+	expect(last).toContain('<role_skill id="umbrella-shop"');
+	expect(last).toContain('<resource id="story">');
+	expect(last).toContain("八点四十分");
+	expect(last).toContain("可能的收尾");
+	expect(await state()).toEqual(before);
 });
 
 test("adopted multi-turn history and a manual edit change the next model context", async ({

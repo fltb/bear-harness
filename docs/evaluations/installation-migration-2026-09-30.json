@@ -1,0 +1,67 @@
+{
+	"schemaVersion": 1,
+	"date": "2026-09-30",
+	"verdict": "LOCAL_INSTALLATION_MIGRATED",
+	"releaseDecision": "NOT_RELEASE_APPROVED",
+	"baseCommit": "3dfc847ca6a83372111390159c7d645f0589d900",
+	"workingTreeDirty": true,
+	"scope": {
+		"characters": 1,
+		"packageFormatVersion": 2,
+		"packageContentVersion": "2.0.0",
+		"configuredModelsPreserved": 7,
+		"encryptedProviderCredentialsPreserved": 1,
+		"externalRuns": 0
+	},
+	"installedHost": {
+		"credentialReadable": true,
+		"auditRecords": 15,
+		"auditVerified": true,
+		"canon": {
+			"chunks": 9,
+			"embedded": 9
+		},
+		"vectors": 9,
+		"semanticMatch": true,
+		"l0": 20,
+		"l1": 2,
+		"scenes": 1,
+		"relationshipMemoryEnabled": true,
+		"onboardingComplete": true,
+		"sessionCount": 5
+	},
+	"memoryVectorRebuild": {
+		"l1Count": 2,
+		"l0Count": 20,
+		"failedL1Count": 0,
+		"failedL0Count": 0,
+		"complete": true,
+		"dimensions": 768,
+		"queryReturnedMemory": true,
+		"modelLocationCurrent": true
+	},
+	"preservation": {
+		"originalNativeEntriesPreserved": 79,
+		"additionalNativeEntryTypes": ["thinking_level_change", "thinking_level_change"],
+		"protectedFilesUnchanged": 3,
+		"databaseVersions": [1, 1, 1],
+		"allDatabasesIntegrityOk": true
+	},
+	"browser": {
+		"conversationCount": 5,
+		"clickedEveryConversation": true,
+		"composerVisible": true,
+		"embeddingSettingsVisible": true,
+		"reloadRestored": true,
+		"pageErrors": []
+	},
+	"migrationTests": {
+		"passed": 7,
+		"failed": 0
+	},
+	"sourceHashes": {
+		"scripts/migrate-installation.mjs": "8ae345b53d34c6628bb817c96bafed2681f3eec0c42fe759cb1cdf0bb6f44738",
+		"scripts/migrate-installation.test.mjs": "23cd120e565f456eda2e1d1d53b5f408bd17c24579ed01a3d4ac9c1a88280ddd",
+		"config/characters/jizhou/character.yaml": "ab9575f0c82db30cf35038545a441451860c8f6a827e75e71e6588a5ccb42250"
+	}
+}

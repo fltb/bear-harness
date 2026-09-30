@@ -57,7 +57,6 @@ import { createModelProviderApis } from "./model-provider-api.js";
 import { withRpcMutations } from "./mutation-client.js";
 import { createOnboardingStore } from "./onboarding.js";
 import {
-	listAllCanonModules,
 	listAllCanonSources,
 	listAllCharacters,
 	listAllModels,
@@ -657,11 +656,6 @@ function createStoreForClient(
 		key: () => queryKeys.canonSources(currentCharacterId()),
 		request: () => listAllCanonSources(client),
 	});
-	const canonModules = createRpcQuery({
-		client: queryClient,
-		key: () => queryKeys.canonModules(currentCharacterId()),
-		request: () => listAllCanonModules(client),
-	});
 	const inventoryQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.embeddingInventory,
@@ -920,12 +914,6 @@ function createStoreForClient(
 			client: queryClient,
 			key: queryKeys.canonSources(currentCharacterId()),
 			request: () => listAllCanonSources(client),
-		});
-	const refreshCanonModules = () =>
-		refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.canonModules(currentCharacterId()),
-			request: () => listAllCanonModules(client),
 		});
 	const requireConversation = () => {
 		const id = activeConversationId();
@@ -1784,9 +1772,7 @@ function createStoreForClient(
 		cacheRevision,
 		currentCharacterId,
 		canonSources,
-		canonModules,
 		refreshSources: refreshCanonSources,
-		refreshModules: refreshCanonModules,
 	});
 	void Promise.all([
 		queryClient.ensureQueryData({

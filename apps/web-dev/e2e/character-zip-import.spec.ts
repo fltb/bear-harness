@@ -72,3 +72,57 @@ test("GUI retries damaged ZIP and imports large packages beyond former file and 
 		page.getByRole("dialog").getByRole("article", { name: characterName, exact: true }),
 	).toBeVisible();
 });
+
+test("a one-file text character imports and opens without missing images or a first-meeting flow", async ({
+	page,
+}) => {
+	const characterId = `text-${randomUUID()}`;
+	const characterName = "纯文本测试角色";
+	await ensureReadyForConversation(page);
+	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
+	const archive = Buffer.from(
+		zipSync({
+			[`${characterId}/character.yaml`]: Buffer.from(
+				`format_version: 2\nversion: 1.0.0\nid: ${characterId}\nname: ${characterName}\nlanguage: zh-CN\nbehavior:\n  identity:\n    summary: 你是观测站的值守人。\n`,
+			),
+		}),
+	);
+	const chosen = page.waitForEvent("filechooser");
+	await page.getByRole("button", { name: zhCN.backstage.roleImport, exact: true }).click();
+	await (await chosen).setFiles({
+		name: "text-role.zip",
+		mimeType: "application/zip",
+		buffer: archive,
+	});
+	const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	const row = dialog.getByRole("article", { name: characterName, exact: true });
+	await expect(row).toBeVisible();
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const setup = await page.request.post("/rpc/model.defaults.completeOnboarding", {
+		headers,
+		data: { characterId },
+	});
+	expect((await setup.json()).ok).toBe(true);
+	await row.getByRole("button", { name: zhCN.backstage.roleSwitch, exact: true }).click();
+	await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+	await expect(
+		page.getByRole("complementary").getByRole("strong").getByText(characterName, { exact: true }),
+	).toBeVisible();
+	await expect(page.getByTestId("character-avatar")).toHaveCount(0);
+	await expect(page.getByTestId("presence-stage")).toHaveCount(0);
+	const onboarding = await page.request.post("/rpc/onboarding.get", {
+		headers,
+		data: { characterId },
+	});
+	expect(await onboarding.json()).toMatchObject({ ok: true, data: { status: "complete" } });
+	await page.reload();
+	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
+	await expect(row).toBeVisible();
+	await row.getByRole("button", { name: zhCN.backstage.roleSwitch, exact: true }).click();
+	await dialog.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+	await expect(
+		page.getByRole("complementary").getByRole("strong").getByText(characterName, { exact: true }),
+	).toBeVisible();
+	await expect(page.getByTestId("character-avatar")).toHaveCount(0);
+});

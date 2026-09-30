@@ -177,64 +177,12 @@ describe("host projection validation", () => {
 	});
 
 	it("rejects malformed nested character-package presentation data", () => {
-		const labels = {
-			proposal: "Proposal",
-			running: "Running",
-			needs_user: "Needs you",
-			interrupted: "Paused",
-			completed: "Completed",
-			failed: "Failed",
-			steer_placeholder: "Add guidance",
-			interrupt: "Interrupt",
-			resume: "Resume",
-			approve: "Approve",
-			reject: "Reject",
-			artifact_open: "Open",
-			artifact_reveal: "Show in Finder",
-		};
-		const themedCharacter = structuredClone(THEMED_CHARACTER);
-		const valid = {
-			...themedCharacter,
-			character: {
-				...themedCharacter.character,
-				work_presentation: { labels },
-			},
-		};
+		const valid = structuredClone(THEMED_CHARACTER);
 		expect(isCharacterDisplay(valid)).toBe(true);
 		expect(
 			isCharacterDisplay({
 				...valid,
-				character: { ...valid.character, work_presentation: { labels } },
-			}),
-		).toBe(true);
-		expect(
-			isCharacterDisplay({
-				...valid,
-				character: {
-					...valid.character,
-					work_presentation: { labels: { ...labels, unknown: "Nope" } },
-				},
-			}),
-		).toBe(false);
-		expect(
-			isCharacterDisplay({
-				...valid,
-				character: {
-					...valid.character,
-					work_presentation: { labels: { ...labels, proposal: " " } },
-				},
-			}),
-		).toBe(false);
-		expect(
-			isCharacterDisplay({
-				...valid,
-				character: {
-					...valid.character,
-					work_presentation: {
-						labels,
-						execution: "not presentation",
-					},
-				},
+				character: { ...valid.character, work_presentation: { labels: {} } },
 			}),
 		).toBe(false);
 		for (const field of ["id", "name", "language", "character", "theme", "visual", "scenes"]) {

@@ -16,6 +16,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseDocument } from "yaml";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 import {
@@ -136,10 +137,9 @@ describe("character package import", () => {
 		await runtime.start();
 		const initial = await runtime.dispatch("character.packageGet", { characterId: "jizhou" });
 		if (!initial.ok) throw new Error(initial.error.reason);
-		const yaml = initial.data.package.yaml.replace(
-			initial.data.package.character.system_prompt.trim(),
-			"极昼正在新的值守室等待交接。",
-		);
+		const edited = parseDocument(initial.data.package.yaml);
+		edited.set("system_prompt", "极昼正在新的值守室等待交接。");
+		const yaml = String(edited);
 		await expect(
 			runtime.dispatch("character.packageUpdate", {
 				characterId: "jizhou",
@@ -206,12 +206,12 @@ describe("character package import", () => {
 		expect(closePrevious).not.toHaveBeenCalled();
 
 		await expect(
-			runtime.dispatch("canon.listModules", { characterId: "imported-role" }),
+			runtime.dispatch("canon.listSources", { characterId: "imported-role" }),
 		).resolves.toMatchObject({
 			ok: true,
 			data: {
-				modules: expect.arrayContaining([
-					expect.objectContaining({ stableKey: "reference_root", origin: "package" }),
+				sources: expect.arrayContaining([
+					expect.objectContaining({ logicalName: "Test reference", origin: "package" }),
 				]),
 			},
 		});

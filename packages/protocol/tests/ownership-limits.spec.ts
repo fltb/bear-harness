@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	CanonAddSourceRequest,
-	CanonUpsertModuleRequest,
 	CharacterImportRequest,
 	CharacterMedia,
 	CompanionStateUpdateRequest,
@@ -71,18 +70,9 @@ describe("content capacity follows its owner", () => {
 			}).success,
 		).toBe(false);
 	});
-	it("allows book-sized manual Canon sources and larger curated modules", () => {
+	it("allows book-sized manual Canon sources", () => {
 		const content = "x".repeat(1_048_577);
 		expect(CanonAddSourceRequest.parse({ logicalName: "Book", content }).content).toBe(content);
-		const sourceChunkIds = Array.from({ length: 101 }, (_, i) => `chunk-${i}`);
-		expect(
-			CanonUpsertModuleRequest.parse({
-				kind: "root",
-				title: "Book",
-				instructions: "",
-				sourceChunkIds,
-			}).sourceChunkIds,
-		).toEqual(sourceChunkIds);
 		expect(
 			CanonAddSourceRequest.safeParse({
 				logicalName: "Book",

@@ -4,8 +4,6 @@ export const PERSONA_FIELDS = {
 	summary: ["behavior", "identity", "summary"],
 	invariants: ["behavior", "identity", "invariants"],
 	knowledge: ["behavior", "identity", "knowledge_boundaries"],
-	never: ["behavior", "agency", "never"],
-	uncertain: ["behavior", "agency", "when_uncertain"],
 	interaction: ["behavior", "interaction"],
 } as const;
 export type PersonaField = keyof typeof PERSONA_FIELDS;
@@ -47,10 +45,13 @@ export function writePersona(source: string, draft: PersonaDraft): string {
 					.map((line) => line.trim())
 					.filter(Boolean)
 			: draft.fields[field];
-		yaml.setIn([...PERSONA_FIELDS[field]], value);
+		if (field !== "summary" && (Array.isArray(value) ? value.length === 0 : !value.trim()))
+			yaml.deleteIn([...PERSONA_FIELDS[field]]);
+		else yaml.setIn([...PERSONA_FIELDS[field]], value);
 	}
 	if (JSON.stringify(draft.examples) !== JSON.stringify(previous.examples)) {
-		yaml.setIn(["behavior", "examples"], draft.examples);
+		if (draft.examples.length) yaml.setIn(["behavior", "examples"], draft.examples);
+		else yaml.deleteIn(["behavior", "examples"]);
 	}
 	return String(yaml);
 }

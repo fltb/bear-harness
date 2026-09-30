@@ -33,6 +33,7 @@ import { Dispatcher, normalizeHandlerError, type RpcResponse } from "./dispatche
 import { assertRuntimeDeletable } from "./external-agents/run-service.js";
 import { ExplicitMemoryFile } from "./memory/explicit-memory.js";
 import { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
+import { SharedEmbeddingRuntime } from "./memory/shared-embedding-runtime.js";
 import {
 	type DeepPartial,
 	validateLocalEmbedding,
@@ -108,6 +109,7 @@ export class HostRuntime {
 	private readonly drafts: CharacterDraftService;
 	private readonly models: SystemModelRegistry;
 	private readonly systemInvalidations = new InvalidationHub();
+	private readonly sharedEmbedding: SharedEmbeddingRuntime;
 	private readonly localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
 	private readonly lifetime = new AbortController();
 	private readonly backgroundAttempts = new Set<Promise<void>>();
@@ -143,6 +145,7 @@ export class HostRuntime {
 			layout: this.storage.layout,
 			onStateChange: (state) => this.publish({ type: "embeddingAcquisition", state }),
 		});
+		this.sharedEmbedding = new SharedEmbeddingRuntime(() => this.memoryConfiguration()?.embedding);
 		this.memoryScope = options.memoryScope ?? {
 			installationId: loadInstallationId(systemDb),
 			userId: "default-user",
@@ -180,7 +183,17 @@ export class HostRuntime {
 		this.memoryEmbedding = {
 			validateLocal: (input) => validateLocalEmbedding({ ...input, logger: this.memoryLogger }),
 			validateRemote: (input) => validateRemoteEmbedding({ ...input, logger: this.memoryLogger }),
-			resetRuntimes: () => this.registry.visitOpen((resource) => resource.runtime.resetMemory()),
+			resetRuntimes: async () => {
+				await this.registry.visitOpen((resource) => resource.runtime.resetMemory());
+				await this.sharedEmbedding.reset();
+				await this.registry.visitOpen(async (resource) => {
+					this.scheduleBackground("Canon embedding reindex", () =>
+						this.registry.use(resource.characterId, (current) =>
+							current.runtime.canon.indexPending(current.characterId),
+						),
+					);
+				});
+			},
 			releaseRuntime: (id) =>
 				this.registry.visitOpen((resource) =>
 					resource.characterId === id ? resource.runtime.resetMemory() : undefined,
@@ -430,6 +443,7 @@ export class HostRuntime {
 		this.providers.dispose();
 		this.uninstallFsAudit?.uninstall();
 		await this.characterLoader.closeImports();
+		await this.sharedEmbedding.close();
 		this.storage.close();
 		this.invalidationListeners.clear();
 		this.livePushListeners.clear();
@@ -556,17 +570,9 @@ export class HostRuntime {
 			appSettings: this.appSettings,
 			forEachCompanionDatabase: (visit) => this.storage.forEachCompanionDatabase(visit),
 			memoryScope: this.memoryScope,
-			memoryConfig: () => {
-				const settings = this.appSettings.load();
-				const embeddingApiKey = this.credentials.read(REMOTE_EMBEDDING_CREDENTIAL_ID)?.apiKey;
-				return mergeEmbeddingConfig(
-					this.options.memoryConfig,
-					settings.memoryVectorService,
-					settings.modelDownloadSource,
-					embeddingApiKey,
-					(candidateId) => this.localEmbeddingAcquisition.resolveCandidatePath(candidateId),
-				);
-			},
+			memoryConfig: () => this.memoryConfiguration(),
+			canonEmbedding: () => this.sharedEmbedding.getCanon(),
+			sharedEmbedding: () => this.sharedEmbedding.get(),
 			piWorkerPath: this.options.piWorkerPath,
 			bundledGit: this.options.bundledGit,
 			logger: this.options.logger,
@@ -574,6 +580,17 @@ export class HostRuntime {
 				for (const listener of this.livePushListeners) listener(event);
 			},
 		});
+	}
+
+	private memoryConfiguration(): DeepPartial<MemoryTdaiConfig> | undefined {
+		const settings = this.appSettings.load();
+		return mergeEmbeddingConfig(
+			this.options.memoryConfig,
+			settings.memoryVectorService,
+			settings.modelDownloadSource,
+			this.credentials.read(REMOTE_EMBEDDING_CREDENTIAL_ID)?.apiKey,
+			(candidateId) => this.localEmbeddingAcquisition.resolveCandidatePath(candidateId),
+		);
 	}
 
 	private async inspectMemory(

@@ -1,118 +1,52 @@
-import { z } from "@bear-harness/schema";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
 
-const IdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
-
-export const CanonPackageManifestSchema = z.strictObject({
-	format_version: z.literal(1),
-	language: z.string().min(2).max(35),
-	sources: z.array(
-		z.strictObject({
-			id: IdSchema,
-			title: z.string().min(1).max(200),
-			path: z
-				.string()
-				.min(1)
-				.max(512)
-				.refine(
-					(value) =>
-						!value.startsWith("/") &&
-						!value.startsWith("\\") &&
-						!value.split(/[\\/]/).includes(".."),
-					"must stay inside the canon directory",
-				),
-			kind: z.enum(["original_text", "reference"]),
-		}),
-	),
-	entities: z.array(
-		z.strictObject({
-			id: IdSchema,
-			kind: z.string().min(1).max(64),
-			name: z.string().min(1).max(200),
-			aliases: z.array(z.string().min(1).max(200)).max(40).default([]),
-			description: z.string().max(2000).default(""),
-		}),
-	),
-	modules: z.array(
-		z.strictObject({
-			id: IdSchema,
-			parent: IdSchema.optional(),
-			kind: z.enum([
-				"root",
-				"arc",
-				"event",
-				"entity",
-				"relationship",
-				"location",
-				"object",
-				"behavior",
-			]),
-			title: z.string().min(1).max(200),
-			summary: z.string().max(4000).default(""),
-			triggers: z.array(z.string().min(1).max(200)).max(40).default([]),
-			bindings: z
-				.array(
-					z.strictObject({
-						source: IdSchema,
-						headings: z.array(z.string().min(1).max(300)).max(20).optional(),
-						start_offset: z.number().int().nonnegative().optional(),
-						end_offset: z.number().int().positive().optional(),
-					}),
-				)
-				.default([]),
-		}),
-	),
-});
-
-export type CanonPackageManifest = z.infer<typeof CanonPackageManifestSchema>;
-
+export interface CanonDocument {
+	/** Package-relative identity; no authored manifest or routing graph. */
+	id: string;
+	path: string;
+	title: string;
+	content: string;
+}
 export interface LoadedCanonPackage {
-	manifest: CanonPackageManifest;
-	sources: Array<CanonPackageManifest["sources"][number] & { content: string }>;
+	sources: CanonDocument[];
 }
 
-export function validateCanonManifest(manifest: CanonPackageManifest, characterId: string): void {
-	const unique = (values: string[], kind: string): void => {
-		if (new Set(values).size !== values.length)
-			throw new Error(`character package ${characterId}: duplicate canon ${kind} id`);
-	};
-	unique(
-		manifest.sources.map((entry) => entry.id),
-		"source",
-	);
-	unique(
-		manifest.entities.map((entry) => entry.id),
-		"entity",
-	);
-	unique(
-		manifest.modules.map((entry) => entry.id),
-		"module",
-	);
-	const sources = new Set(manifest.sources.map((entry) => entry.id));
-	const modules = new Set(manifest.modules.map((entry) => entry.id));
-	for (const module of manifest.modules) {
-		if (module.parent && !modules.has(module.parent))
-			throw new Error(`character package ${characterId}: canon module parent is missing`);
-		if (module.parent === module.id)
-			throw new Error(`character package ${characterId}: canon module cannot parent itself`);
-		for (const binding of module.bindings) {
-			if (!sources.has(binding.source))
-				throw new Error(`character package ${characterId}: canon binding source is missing`);
-			if (
-				binding.start_offset !== undefined &&
-				binding.end_offset !== undefined &&
-				binding.end_offset <= binding.start_offset
-			)
-				throw new Error(`character package ${characterId}: canon binding range is invalid`);
+/** Discover reference documents through the package's safe path resolver. */
+export function loadCanonDocuments(
+	packageDirectory: string,
+	resolveContent: (path: string) => string,
+): LoadedCanonPackage {
+	if (!existsSync(join(packageDirectory, "canon"))) return { sources: [] };
+	const pending = [{ path: "canon", depth: 0 }];
+	const sources: CanonDocument[] = [];
+	let bytes = 0;
+	while (pending.length) {
+		const current = pending.pop();
+		if (!current) break;
+		if (current.depth > 16) throw new Error("canon directory exceeds maximum depth");
+		for (const name of readdirSync(resolveContent(current.path)).sort()) {
+			const path = `${current.path}/${name}`;
+			if (path === "canon/manifest.yaml")
+				throw new Error("canon manifest is obsolete; convert the v1 package before loading");
+			const physical = resolveContent(path);
+			const stat = lstatSync(physical);
+			if (stat.isDirectory()) {
+				pending.push({ path, depth: current.depth + 1 });
+				continue;
+			}
+			if (!stat.isFile() || ![".md", ".txt"].includes(extname(name).toLowerCase()))
+				throw new Error(`unsupported Canon document: ${path}; import as Markdown or text`);
+			bytes += stat.size;
+			if (stat.size > 4 * 1024 * 1024 || bytes > 32 * 1024 * 1024 || sources.length >= 1000)
+				throw new Error("canon documents exceed package limits");
+			const content = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(physical));
+			const title =
+				/^#[ \t]+(.+)$/mu.exec(content)?.[1]?.trim() ?? name.replace(/\.(md|txt)$/iu, "");
+			if (!title || title.length > 255)
+				throw new Error(`Canon title must be 1–255 characters: ${path}`);
+			sources.push({ id: path, path, title, content });
 		}
 	}
-	for (const module of manifest.modules) {
-		const visited = new Set<string>([module.id]);
-		let parent = module.parent;
-		while (parent) {
-			if (visited.has(parent))
-				throw new Error(`character package ${characterId}: canon module hierarchy has a cycle`);
-			visited.add(parent);
-			parent = manifest.modules.find((entry) => entry.id === parent)?.parent;
-		}
-	}
+	return { sources: sources.sort((a, b) => a.path.localeCompare(b.path)) };
 }

@@ -70,6 +70,8 @@ const TAG = "[memory-tdai] [core]";
 // ============================
 
 export interface TdaiCoreOptions {
+	/** Optional externally owned embedding provider; consumers must not dispose it. */
+	embeddingProvider?: () => Promise<EmbeddingService | undefined>;
 	/** Notify the Host after capture/extraction changes, including uncertain failures. */
 	onRecordsChanged?: () => void;
 	/** Host adapter providing runtime context, logger, and LLM runner factory. */
@@ -147,9 +149,11 @@ export class TdaiCore {
 	};
 	private lastReindexResult?: ReindexResult;
 
+	private readonly embeddingProvider?: TdaiCoreOptions["embeddingProvider"];
 	private readonly onRecordsChanged?: () => void;
 	constructor(opts: TdaiCoreOptions) {
 		this.onRecordsChanged = opts.onRecordsChanged;
+		this.embeddingProvider = opts.embeddingProvider;
 		this.hostAdapter = opts.hostAdapter;
 		this.cfg = opts.config;
 		this.logger = opts.hostAdapter.getLogger();
@@ -605,7 +609,7 @@ export class TdaiCore {
 	private async initStores(): Promise<void> {
 		let acquired = false;
 		try {
-			const stores = await this.observe("storage.initialize", {}, () => initStores(this.cfg, this.dataDir, this.logger));
+			const stores = await this.observe("storage.initialize", {}, () => initStores(this.cfg, this.dataDir, this.logger, this.embeddingProvider));
 			acquired = true;
 			this.vectorStore = stores.vectorStore;
 			this.embeddingService = stores.embeddingService;

@@ -12,8 +12,6 @@ import type {
 	ArtifactReadRequest,
 	ArtifactReadResponse,
 	CanonChunk,
-	CanonModule,
-	CanonModuleKind,
 	CanonSource,
 	CharacterDeletionStatus,
 	CharacterDraft,
@@ -273,19 +271,8 @@ export interface CharacterApi {
 export interface CanonApi {
 	searchResults(query: string): CanonChunk[];
 	sources(): CanonSource[];
-	modules(): CanonModule[];
 	listSources(): Promise<void>;
 	addSource(logicalName: string, content: string): Promise<void>;
 	search(query: string): Promise<CanonChunk[]>;
 	removeSource(sourceId: string): Promise<void>;
-	listModules(): Promise<void>;
-	upsertModule(params: {
-		id?: string;
-		parentId?: string;
-		kind: CanonModuleKind;
-		title: string;
-		instructions: string;
-		sourceChunkIds: string[];
-	}): Promise<void>;
-	deleteModule(id: string): Promise<void>;
 }

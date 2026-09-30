@@ -252,17 +252,9 @@ export type CanonSearchRequest = z.infer<typeof schema.CanonSearchRequest>;
 export type CanonSearchResponse = z.infer<typeof schema.CanonSearchResponse>;
 export type CanonRemoveSourceRequest = z.infer<typeof schema.CanonRemoveSourceRequest>;
 export type CanonRemoveSourceResponse = z.infer<typeof schema.EmptyResponse>;
-export type CanonListModulesRequest = z.infer<typeof schema.CanonListModulesRequest>;
-export type CanonListModulesResponse = z.infer<typeof schema.CanonListModulesResponse>;
-export type CanonUpsertModuleRequest = z.infer<typeof schema.CanonUpsertModuleRequest>;
-export type CanonUpsertModuleResponse = z.infer<typeof schema.CanonUpsertModuleResponse>;
-export type CanonDeleteModuleRequest = z.infer<typeof schema.CanonDeleteModuleRequest>;
-export type CanonDeleteModuleResponse = z.infer<typeof schema.EmptyResponse>;
 
 export type CanonSource = z.infer<typeof schema.CanonSource>;
 export type CanonChunk = z.infer<typeof schema.CanonChunk>;
-export type CanonModuleKind = z.infer<typeof schema.CanonModuleKind>;
-export type CanonModule = z.infer<typeof schema.CanonModule>;
 
 // ---------------------------------------------------------------------------
 // Provider

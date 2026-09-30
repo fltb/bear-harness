@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCanonApi, createCharacterApi } from "../src/stores/character-api.js";
 import type {
 	CanonChunk,
-	CanonModule,
 	CanonSource,
 	CharacterDraft,
 	CharacterPackageDocument,
@@ -207,30 +206,16 @@ const chunk: CanonChunk = {
 	origin: "user",
 };
 
-const module: CanonModule = {
-	id: "module-one",
-	kind: "arc",
-	title: "Opening",
-	instructions: "Begin here",
-	sourceChunkIds: [chunk.id],
-	createdAt: "2026-01-01T00:00:00.000Z",
-	origin: "user",
-	triggers: [],
-};
-
 describe("canon store API", () => {
-	it("projects cached canon data and routes source, search, and module operations", async () => {
+	it("projects cached canon data and routes source and search operations", async () => {
 		const { client } = createTestClient();
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		clients.push(queryClient);
 		client.canon.search = vi.fn(() => ok({ chunks: [chunk] }));
 		client.canon.addSource = vi.fn(() => ok({ source }));
 		client.canon.removeSource = vi.fn(() => ok({}));
-		client.canon.upsertModule = vi.fn(() => ok({ module }));
-		client.canon.deleteModule = vi.fn(() => ok({}));
 		const cacheRevision = vi.fn(() => 2);
 		const refreshSources = vi.fn(async () => undefined);
-		const refreshModules = vi.fn(async () => undefined);
 		let api!: ReturnType<typeof createCanonApi>;
 		createRoot((dispose) => {
 			disposals.push(dispose);
@@ -240,14 +225,11 @@ describe("canon store API", () => {
 				cacheRevision,
 				currentCharacterId: () => characterSummary.id,
 				canonSources: { data: { sources: [source] } },
-				canonModules: { data: { modules: [module] } },
 				refreshSources,
-				refreshModules,
 			});
 		});
 
 		expect(api.sources()).toEqual([source]);
-		expect(api.modules()).toEqual([module]);
 		expect(api.searchResults("missing")).toEqual([]);
 		queryClient.setQueryData(["canon", "search", characterSummary.id, "cached"], {
 			chunks: [chunk],
@@ -269,21 +251,6 @@ describe("canon store API", () => {
 		});
 		await api.removeSource(source.id);
 		expect(refreshSources).toHaveBeenCalledTimes(3);
-
-		await api.listModules();
-		const upsert = {
-			kind: "arc" as const,
-			title: "Opening",
-			instructions: "Begin here",
-			sourceChunkIds: [chunk.id],
-		};
-		await api.upsertModule(upsert);
-		expect(client.canon.upsertModule).toHaveBeenCalledWith({
-			characterId: characterSummary.id,
-			...upsert,
-		});
-		await api.deleteModule(module.id);
-		expect(refreshModules).toHaveBeenCalledTimes(3);
 	});
 
 	it("uses empty projections and does not refresh after a failed canon mutation", async () => {
@@ -306,14 +273,11 @@ describe("canon store API", () => {
 				cacheRevision: vi.fn(() => 0),
 				currentCharacterId: () => undefined,
 				canonSources: {},
-				canonModules: {},
 				refreshSources,
-				refreshModules: vi.fn(async () => undefined),
 			});
 		});
 
 		expect(api.sources()).toEqual([]);
-		expect(api.modules()).toEqual([]);
 		expect(api.searchResults("missing")).toEqual([]);
 		expect(await api.search("missing")).toEqual([]);
 		await expect(api.addSource("broken", "content")).rejects.toMatchObject({

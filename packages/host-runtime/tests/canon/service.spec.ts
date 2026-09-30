@@ -67,6 +67,23 @@ describe("CanonHubService user workflow", () => {
 		expect(service.search("character-a", "observatory midnight")).toEqual([]);
 	});
 
+	it("keeps short Chinese keywords beside long names and ranks relevant passages first", () => {
+		service.addSource("character-a", "inn.txt", "白熊客栈在坡上。");
+		service.addSource("character-a", "rooms.txt", "厨房与书房之间是短走廊。");
+		const rows = service.retrieve("character-a", "白熊客栈 厨房 书房", {
+			limit: 1,
+			includeAdjacent: false,
+		});
+		expect(rows).toEqual([
+			expect.objectContaining({
+				sourceName: "rooms.txt",
+				content: expect.stringContaining("短走廊"),
+			}),
+		]);
+		expect(service.retrieve("character-b", "白熊客栈 厨房 书房")).toEqual([]);
+		expect(service.search("character-a", "厨房")[0]?.sourceName).toBe("rooms.txt");
+	});
+
 	it("persists embeddings and retrieves semantic matches when lexical search misses", async () => {
 		const vectorService = new CanonHubService(
 			database.orm,
@@ -213,164 +230,108 @@ describe("CanonHubService user workflow", () => {
 		}
 	});
 
-	it("manages a sourced hierarchy and rejects invalid references and cycles", () => {
-		const source = service.addSource("character-a", "canon.txt", "The harbor bell marks dawn.");
-		const chunk = service.search("character-a", "harbor bell")[0];
-		if (!chunk) throw new Error("expected imported canon chunk");
-		const rootModule = service.upsertModule({
-			companionId: "character-a",
-			kind: "root",
-			title: "Original story",
-			instructions: "Recall the original story before applying overlays.",
-			sourceChunkIds: [chunk.id],
-		});
-		const child = service.upsertModule({
-			companionId: "character-a",
-			parentId: rootModule.id,
-			kind: "event",
-			title: "Harbor dawn",
-			instructions: "Use the cited event.",
-			sourceChunkIds: [chunk.id],
-		});
-		const modules = service.listModules("character-a");
-		expect(modules.map((module) => module.id)).toEqual(
-			expect.arrayContaining([rootModule.id, child.id]),
-		);
-		expect(modules).toContainEqual(
-			expect.objectContaining({ id: child.id, parentId: rootModule.id }),
-		);
-		expect(() =>
-			service.upsertModule({
-				companionId: "character-a",
-				id: rootModule.id,
-				parentId: child.id,
-				kind: "root",
-				title: "Original story",
-				instructions: "cycle",
-				sourceChunkIds: [],
-			}),
-		).toThrow();
-		expect(() =>
-			service.upsertModule({
-				companionId: "character-b",
-				kind: "event",
-				title: "Foreign citation",
-				instructions: "invalid",
-				sourceChunkIds: [chunk.id],
-			}),
-		).toThrow();
-
-		service.deleteModule("character-a", rootModule.id);
-		expect(service.listModules("character-a")).toEqual([
-			expect.objectContaining({ id: child.id, sourceChunkIds: [chunk.id] }),
-		]);
-		service.removeSource("character-a", source.id);
-	});
-
-	it("syncs package canon idempotently and retrieves Chinese aliases, routed modules, and adjacent context", async () => {
+	it("syncs documents idempotently, refreshes changed text and preserves user sources", async () => {
+		const personal = service.addSource("character-a", "notes.txt", "Personal observatory notes.");
 		const canon = {
-			manifest: {
-				language: "zh-CN",
-				sources: [
-					{
-						id: "volume_one",
-						title: "第一卷",
-						path: "volume-one.txt",
-						kind: "original_text" as const,
-					},
-				],
-				entities: [
-					{
-						id: "aurora_station",
-						kind: "location",
-						name: "旧极光站",
-						aliases: ["旧站"],
-						description: "",
-					},
-				],
-				modules: [
-					{
-						id: "root",
-						kind: "root" as const,
-						title: "原作",
-						summary: "",
-						triggers: [],
-						bindings: [],
-					},
-					{
-						id: "storm",
-						parent: "root",
-						kind: "event" as const,
-						title: "风暴夜",
-						summary: "",
-						triggers: ["风暴"],
-						bindings: [{ source: "volume_one", headings: ["风暴夜"] }],
-					},
-					{
-						id: "dawn",
-						parent: "root",
-						kind: "event" as const,
-						title: "天亮",
-						summary: "",
-						triggers: ["天亮"],
-						bindings: [{ source: "volume_one", headings: ["天亮"] }],
-					},
-				],
-			},
 			sources: [
 				{
-					id: "volume_one",
+					id: "canon/volume.md",
+					path: "canon/volume.md",
 					title: "第一卷",
-					path: "volume-one.txt",
-					kind: "original_text" as const,
-					content: `# 风暴夜\n\n旧极光站的主灯在风暴里熄灭。\n\n${"守机人逐项核对备用电源。".repeat(180)}\n\n## 天亮\n\n主灯在清晨重新点亮。`,
+					content: "# 风暴夜\n\n旧极光站的主灯在风暴里熄灭。",
 				},
 			],
 		};
-		const notices: Array<{ keys: readonly (readonly string[])[] }> = [];
-		invalidations.subscribe((notice) => notices.push(notice));
 		service.syncPackage("character-a", canon);
+		const first = service.listSources("character-a");
 		service.syncPackage("character-a", canon);
-		expect(notices).toContainEqual({
-			scope: "system",
-			keys: [
-				["canon", "sources", "character-a"],
-				["canon", "modules", "character-a"],
-			],
-		});
-		expect(service.listSources("character-a")).toHaveLength(1);
-		expect(service.listModules("character-a")).toEqual(
+		expect(service.listSources("character-a")).toEqual(first);
+		expect(service.retrieve("character-a", "风暴")).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ stableKey: "root", origin: "package" }),
-				expect.objectContaining({ stableKey: "storm", sourceChunkIds: expect.any(Array) }),
-				expect.objectContaining({ stableKey: "dawn", sourceChunkIds: expect.any(Array) }),
+				expect.objectContaining({ sourceName: "第一卷", origin: "package" }),
 			]),
 		);
-		const packageModules = service.listModules("character-a");
-		const stormRefs = packageModules.find((module) => module.stableKey === "storm")?.sourceChunkIds;
-		const dawnRefs = packageModules.find((module) => module.stableKey === "dawn")?.sourceChunkIds;
-		expect(stormRefs?.length).toBeGreaterThan(0);
-		expect(dawnRefs?.length).toBeGreaterThan(0);
-		expect(stormRefs).not.toEqual(dawnRefs);
-		const citations = service.retrieve("character-a", "旧站风暴发生了什么", {
-			moduleId: "storm",
-			limit: 3,
+		expect(service.retrieve("character-b", "风暴")).toEqual([]);
+		await expect(service.retrieveHybrid("character-a", "unrelated-word")).resolves.toEqual([]);
+		const packaged = first.find((source) => source.origin === "package");
+		expect(() => service.removeSource("character-a", packaged?.id ?? "")).toThrow();
+		service.syncPackage("character-a", {
+			sources: [{ ...canon.sources[0], content: "# 天亮\n\n主灯在清晨重新点亮。" }],
 		});
-		expect(citations[0]).toEqual(
-			expect.objectContaining({ sourceName: "第一卷", heading: "风暴夜", origin: "package" }),
-		);
-		expect(citations.some((citation) => citation.adjacent)).toBe(true);
-		const explicitModule = await service.retrieveHybrid("character-a", "完全不相干的检索词", {
-			moduleId: "storm",
+		expect(service.retrieve("character-a", "风暴")).toEqual([]);
+		expect(service.retrieve("character-a", "清晨").length).toBeGreaterThan(0);
+		service.syncPackage("character-a", { sources: [] });
+		expect(service.listSources("character-a")).toEqual([personal]);
+	});
+});
+
+describe("Canon indexing lifecycle", () => {
+	it("awaits readiness, retries failures, and does not resurrect a deleted source", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-canon-lifecycle-"));
+		const database = new CompanionDatabase(join(root, "runtime.db"), "role");
+		database.initialize(COMPANION_SCHEMA_SQL);
+		database.ensureRuntimeIdentity();
+		let ready!: () => void;
+		const readiness = new Promise<void>((resolve) => {
+			ready = resolve;
 		});
-		expect(explicitModule).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ heading: "风暴夜", content: expect.stringContaining("主灯") }),
-			]),
+		let fail = true;
+		let calls = 0;
+		let entered!: () => void;
+		let release!: () => void;
+		let delayed: Promise<void> | undefined;
+		const service = new CanonHubService(
+			database.orm,
+			new ArtifactStore(database.orm, join(root, "cas")),
+			new InvalidationHub(),
+			async () => {
+				await readiness;
+				return {
+					isReady: () => true,
+					getDimensions: () => 2,
+					getProviderInfo: () => ({ provider: "test", model: "semantic" }),
+					embed: async () => {
+						calls++;
+						if (fail) throw new Error("provider failed");
+						if (delayed) {
+							entered();
+							await delayed;
+						}
+						return new Float32Array([1, 0]);
+					},
+				};
+			},
+			database,
 		);
-		expect(explicitModule.every((chunk) => chunk.heading === "风暴夜")).toBe(true);
-		expect(() =>
-			service.removeSource("character-a", service.listSources("character-a")[0]?.id ?? ""),
-		).toThrow();
+		try {
+			service.addSource("role", "a.txt", "The moon is visible.");
+			expect(calls).toBe(0);
+			ready();
+			await expect(service.searchHybrid("role", "lunar")).rejects.toThrow("provider failed");
+			fail = false;
+			await expect(service.searchHybrid("role", "lunar")).resolves.toEqual([
+				expect.objectContaining({ sourceName: "a.txt" }),
+			]);
+			expect(service.search("role", "lunar")).toEqual([]);
+			const begun = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			delayed = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const source = service.addSource("role", "b.txt", "A removable reference.");
+			await begun;
+			service.removeSource("role", source.id);
+			release();
+			await service.indexPending("role");
+			expect(
+				database.connection.prepare("SELECT count(*) AS n FROM canon_chunk_vectors").get(),
+			).toMatchObject({ n: 1 });
+			await expect(service.searchHybrid("other", "lunar")).resolves.toEqual([]);
+		} finally {
+			await service.close();
+			database.close();
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

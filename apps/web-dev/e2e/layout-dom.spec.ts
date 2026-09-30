@@ -370,7 +370,7 @@ async function visitSystemSettings(page: Page, viewport: Viewport): Promise<void
 async function visitConversationContent(page: Page, viewport: Viewport): Promise<void> {
 	await sendMessage(page, "E2E_STORY_ENTRY");
 	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
-	const choices = page.getByRole("region", { name: "要进入《未送达的回报》吗？" });
+	const choices = page.getByRole("region", { name: "要进入《打烊前的修伞铺》吗？" });
 	await expect(choices).toBeVisible();
 	await choices.scrollIntoViewIfNeeded();
 	await assertSurface(page, viewport, choices);

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "playwright/test";
 import { parse } from "yaml";
@@ -36,19 +36,24 @@ interface CapturedTurn {
 	user: string;
 	assistant: string;
 	assistantEntryIds: string[];
+	entries: unknown[];
 }
 
 type LiveRpc = <T>(channel: string, data: unknown) => Promise<T>;
 
 function characterSourceHash(): string {
 	const hash = createHash("sha256");
-	for (const relativePath of [
-		"config/characters/jizhou/character.yaml",
-		"config/characters/jizhou/canon/manifest.yaml",
-		"config/characters/jizhou/canon/jizhou-story.md",
-		"config/characters/jizhou/skills/undelivered-report/SKILL.md",
-		"config/characters/jizhou/skills/undelivered-report/resources/story.md",
-	]) {
+	const root = resolve(repositoryRoot, "config/characters/jizhou");
+	const files = [
+		"character.yaml",
+		...["canon", "skills"].flatMap((directory) =>
+			readdirSync(resolve(root, directory), { recursive: true, withFileTypes: true })
+				.filter((entry) => entry.isFile())
+				.map((entry) => resolve(entry.parentPath, entry.name).slice(root.length + 1)),
+		),
+	].sort();
+	for (const path of files) {
+		const relativePath = `config/characters/jizhou/${path}`;
 		hash.update(relativePath);
 		hash.update("\0");
 		hash.update(readFileSync(resolve(repositoryRoot, relativePath)));
@@ -150,6 +155,17 @@ test("configured live model answers the Jizhou adversarial character-quality cor
 		capturedAt: new Date().toISOString(),
 		baseCommit: process.env.BEAR_E2E_BASE_COMMIT ?? "working-tree",
 		characterSourceSha256: characterSourceHash(),
+		hostPromptSourceSha256: createHash("sha256")
+			.update(
+				[
+					"packages/host-runtime/src/companion/character-loader.ts",
+					"packages/host-runtime/src/companion/host-tool-register.ts",
+					"packages/host-runtime/src/canon/service.ts",
+				]
+					.map((path) => readFileSync(resolve(repositoryRoot, path), "utf8"))
+					.join("\n"),
+			)
+			.digest("hex"),
 		corpusSha256: createHash("sha256").update(readFileSync(corpusPath)).digest("hex"),
 		characterId: corpus.characterId,
 		providerId: configuredProviderId,
@@ -195,7 +211,8 @@ test("configured live model answers the Jizhou adversarial character-quality cor
 						conversationId: conversation.conversationId,
 					});
 				for (const [turnIndex, prompt] of session.prompts.entries()) {
-					const before = projectPiEntries((await open()).branch.entries);
+					const beforeSnapshot = await open();
+					const before = projectPiEntries(beforeSnapshot.branch.entries);
 					const beforeIds = new Set(before.map((entry) => entry.id));
 					await rpc("message.send", {
 						conversationId: conversation.conversationId,
@@ -239,6 +256,7 @@ test("configured live model answers the Jizhou adversarial character-quality cor
 						user: prompt,
 						assistant,
 						assistantEntryIds: fresh.map((entry) => entry.id),
+						entries: settled.branch.entries.slice(beforeSnapshot.branch.entries.length),
 					});
 					expect(
 						assistant,

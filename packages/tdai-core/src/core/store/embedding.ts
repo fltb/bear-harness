@@ -194,8 +194,11 @@ export class LocalEmbeddingService implements EmbeddingService {
 	private initState: LocalInitState = "idle";
 	private initPromise: Promise<void> | null = null;
 	private initError: Error | null = null;
+	private model?: { dispose?: () => void | Promise<void> };
+	private closing?: Promise<void>;
 	private embeddingContext: {
 		getEmbeddingFor: (text: string) => Promise<{ vector: Float32Array | number[] }>;
+		dispose?: () => void | Promise<void>;
 	} | null = null;
 
 	constructor(config?: LocalEmbeddingConfig, logger?: Logger, importLlama?: ImportLlamaFn) {
@@ -223,7 +226,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 	 * Whether the local model is fully loaded and ready to serve requests.
 	 */
 	isReady(): boolean {
-		return this.initState === "ready" && this.embeddingContext !== null;
+		return !this.closing && this.initState === "ready" && this.embeddingContext !== null;
 	}
 
 	/**
@@ -232,7 +235,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 	 * Safe to call multiple times (idempotent); re-triggers on "failed" state.
 	 */
 	startWarmup(): void {
-		if (this.initState === "initializing" || this.initState === "ready") {
+		if (this.closing || this.initState === "initializing" || this.initState === "ready") {
 			return; // already in progress or done
 		}
 		this.logger?.info(`${TAG} Starting background warmup for local embedding model...`);
@@ -286,19 +289,27 @@ export class LocalEmbeddingService implements EmbeddingService {
 	 * Release the node-llama-cpp embedding context and model resources.
 	 * Safe to call multiple times (idempotent).
 	 */
-	close(): void {
-		if (this.embeddingContext) {
+	close(): Promise<void> {
+		if (this.closing) return this.closing;
+		this.closing = this.disposeResources().finally(() => { this.closing = undefined; });
+		return this.closing;
+	}
+
+	private async disposeResources(): Promise<void> {
+		await this.initPromise;
+		try {
+			await this.embeddingContext?.dispose?.();
+		} finally {
 			try {
-				const ctx = this.embeddingContext as unknown as { dispose?: () => void };
-				ctx.dispose?.();
-			} catch {
-				// best-effort cleanup
+				await this.model?.dispose?.();
+			} finally {
+				this.model = undefined;
+				this.embeddingContext = null;
+				this.initPromise = null;
+				this.initState = "idle";
+				this.initError = null;
 			}
 		}
-		this.embeddingContext = null;
-		this.initPromise = null;
-		this.initState = "idle";
-		this.initError = null;
 		this.logger?.info(`${TAG} Local embedding resources released`);
 	}
 
@@ -306,7 +317,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 	 * Assert the model is ready. Throws EmbeddingNotReadyError if not.
 	 */
 	private assertReady(): void {
-		if (this.initState === "ready" && this.embeddingContext) {
+		if (!this.closing && this.initState === "ready" && this.embeddingContext) {
 			return;
 		}
 		if (this.initState === "failed") {
@@ -345,7 +356,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 	 */
 	private async _doInitialize(): Promise<void> {
 		// Track partially-initialized resources for cleanup on failure
-		let model: { createEmbeddingContext: () => Promise<unknown>; dispose?: () => void } | undefined;
+		let model: { createEmbeddingContext: () => Promise<unknown>; dispose?: () => void | Promise<void> } | undefined;
 		try {
 			this.logger?.debug?.(`${TAG} Loading node-llama-cpp for local embedding...`);
 
@@ -379,6 +390,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 			model = await (
 				llama as unknown as { loadModel: (opts: { modelPath: string }) => Promise<typeof model> }
 			).loadModel({ modelPath: resolvedPath });
+			this.model = model;
 			this.logger?.debug?.(`${TAG} Model loaded, creating embedding context...`);
 
 			this.embeddingContext =
@@ -390,12 +402,13 @@ export class LocalEmbeddingService implements EmbeddingService {
 			// Clean up partially-initialized resources to prevent leaks.
 			if (model?.dispose) {
 				try {
-					model.dispose();
+					await model.dispose();
 				} catch {
 					/* best-effort */
 				}
 			}
 			this.embeddingContext = null;
+			this.model = undefined;
 			if (
 				(err as NodeJS.ErrnoException)?.code === "ERR_MODULE_NOT_FOUND" ||
 				(err instanceof Error && err.message.includes("node-llama-cpp"))
