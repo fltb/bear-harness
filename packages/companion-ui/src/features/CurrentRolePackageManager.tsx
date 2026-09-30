@@ -1,16 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createMemo, createSignal, For, Index, type JSX, Show } from "solid-js";
-import { parseDocument } from "yaml";
-import {
-	isPersonaList,
-	PERSONA_KEYS,
-	type PersonaDraft,
-	type PersonaField,
-	readPersona,
-	writePersona,
-} from "../lib/persona-editor.js";
+import { createSignal, For, type JSX, Show } from "solid-js";
 import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
-import { Button, Dialog, TextField } from "../ui/primitives.js";
+import { Button, Dialog } from "../ui/primitives.js";
 
 type PluginTrust = {
 	origin: CharacterPackageDocument["origin"];
@@ -29,6 +20,7 @@ function desktopBridgeAvailable(): boolean {
 }
 
 export function CurrentRolePackageManager(props: {
+	onEditPackage?: (id: string) => void;
 	characters: () => Array<{ id: string; name: string; active: boolean }>;
 	selectedId: () => string | undefined;
 	memory?: JSX.Element;
@@ -37,7 +29,6 @@ export function CurrentRolePackageManager(props: {
 	loading: () => boolean;
 	error: () => string | undefined;
 	selectPackage: (id: string, confirmDiscard: () => boolean) => void;
-	savePackage: (yaml: string, expectedSha256: string) => Promise<CharacterPackageDocument>;
 	revealPackage: (id: string) => Promise<void>;
 	pluginTrust: (id: string) => Promise<PluginTrust>;
 	pluginTrustData: (id: string) => PluginTrust | undefined;
@@ -50,47 +41,6 @@ export function CurrentRolePackageManager(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const documentId = () => props.document()?.characterId ?? "";
-	const originalPersona = createMemo(() => readPersona(props.document()?.yaml ?? ""));
-	const [drafts, setDrafts] = createSignal<
-		Record<string, { system_prompt: string; persona: PersonaDraft; baseSha256: string }>
-	>({});
-	const draft = () => drafts()[documentId()];
-	const persona = () => draft()?.persona ?? originalPersona();
-	const updatePersona = (next: PersonaDraft) => {
-		const current = props.document();
-		if (!current?.writable || saving()) return;
-		setDrafts((all) => ({
-			...all,
-			[current.characterId]: {
-				baseSha256: draft()?.baseSha256 ?? current.sha256,
-				system_prompt: prompt(),
-				persona: next,
-			},
-		}));
-	};
-	const updatePersonaField = (field: PersonaField, value: string) =>
-		updatePersona({
-			...persona(),
-			fields: { ...persona().fields, [field]: value },
-		});
-	const prompt = (): string =>
-		draft()?.system_prompt ?? props.document()?.character.system_prompt ?? "";
-	const updatePrompt = (value: string) => {
-		const current = props.document();
-		if (!current) return;
-		setDrafts((drafts) => {
-			const existing = drafts[current.characterId];
-			return {
-				...drafts,
-				[current.characterId]: {
-					baseSha256: existing?.baseSha256 ?? current.sha256,
-					persona: existing?.persona ?? originalPersona(),
-					system_prompt: value,
-				},
-			};
-		});
-	};
-	const [parseError, setParseError] = createSignal<string>();
 	const [saveError, setSaveError] = createSignal<string>();
 	const [revealError, setRevealError] = createSignal<string>();
 	const [saving, setSaving] = createSignal(false);
@@ -98,21 +48,7 @@ export function CurrentRolePackageManager(props: {
 	const [pendingDeletion, setPendingDeletion] = createSignal<"runtime" | "package">();
 	const [deleting, setDeleting] = createSignal(false);
 	const [deletionFeedback, setDeletionFeedback] = createSignal<string>();
-	const dirty = () => {
-		const current = props.document();
-		return Boolean(
-			current &&
-				(prompt() !== current.character.system_prompt ||
-					JSON.stringify(persona()) !== JSON.stringify(originalPersona())),
-		);
-	};
-	const load = (id: string) => {
-		if (id === props.selectedId()) return;
-		props.selectPackage(
-			id,
-			() => !dirty() || window.confirm(t("currentRolePackage.discardConfirm")),
-		);
-	};
+	const load = (id: string) => props.selectPackage(id, () => true);
 
 	const enablePlugins = async () => {
 		const characterId = documentId();
@@ -123,49 +59,6 @@ export function CurrentRolePackageManager(props: {
 			await props.pluginTrust(characterId);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : String(error));
-		} finally {
-			setSaving(false);
-		}
-	};
-	const discard = () => {
-		const current = props.document();
-		if (!current) return;
-		setDrafts((drafts) => {
-			const next = { ...drafts };
-			delete next[current.characterId];
-			return next;
-		});
-		setParseError(undefined);
-		setSaveError(undefined);
-	};
-	const save = async () => {
-		const current = props.document();
-		if (!current || !dirty() || parseError()) return;
-		setSaving(true);
-		setSaveError(undefined);
-		try {
-			const yaml = parseDocument(writePersona(current.yaml, persona()));
-			if (yaml.errors.length > 0) {
-				setParseError(yaml.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
-				return;
-			}
-			yaml.set("system_prompt", prompt());
-			const next = await props.savePackage(String(yaml), draft()?.baseSha256 ?? current.sha256);
-			setDrafts((drafts) => ({
-				...drafts,
-				[next.characterId]: {
-					baseSha256: next.sha256,
-					persona: readPersona(next.yaml),
-					system_prompt: next.character.system_prompt,
-				},
-			}));
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			setSaveError(
-				message.includes("character_package_revision_mismatch")
-					? t("currentRolePackage.conflict")
-					: message,
-			);
 		} finally {
 			setSaving(false);
 		}
@@ -308,145 +201,13 @@ export function CurrentRolePackageManager(props: {
 								</Show>
 							</div>
 						</Show>
-						<fieldset class="detail-card current-role-prompt-editor">
-							<legend>{t("currentRolePackage.promptEditor")}</legend>
-							<p class="field-hint">{t("currentRolePackage.promptEditorDescription")}</p>
-							<For each={PERSONA_KEYS}>
-								{(field) => (
-									<TextField
-										class="prompt-field"
-										value={persona().fields[field]}
-										disabled={!current().writable || saving()}
-									>
-										<TextField.Label>
-											{t(`currentRolePackage.personaFields.${field}`)}
-										</TextField.Label>
-										<Show when={isPersonaList(field)}>
-											<TextField.Description class="field-hint">
-												{t("currentRolePackage.listHint")}
-											</TextField.Description>
-										</Show>
-										<TextField.TextArea
-											class="prompt-textarea"
-											rows={4}
-											onInput={(event) => updatePersonaField(field, event.currentTarget.value)}
-										/>
-									</TextField>
-								)}
-							</For>
-							<fieldset class="persona-examples">
-								<legend>{t("currentRolePackage.examplesTitle")}</legend>
-								<Index each={persona().examples}>
-									{(example, index) => (
-										<div class="persona-example">
-											<For each={["user", "assistant"] as const}>
-												{(role) => (
-													<TextField
-														class="prompt-field"
-														value={example()[role]}
-														disabled={!current().writable || saving()}
-													>
-														<TextField.Label>
-															{t(`currentRolePackage.exampleRoles.${role}`)} {index + 1}
-														</TextField.Label>
-														<TextField.TextArea
-															class="prompt-textarea"
-															rows={2}
-															onInput={(event) =>
-																updatePersona({
-																	...persona(),
-																	examples: persona().examples.map((item, i) =>
-																		i === index
-																			? { ...item, [role]: event.currentTarget.value }
-																			: item,
-																	),
-																})
-															}
-														/>
-													</TextField>
-												)}
-											</For>
-											<Button
-												data-control="command"
-												disabled={!current().writable || saving() || persona().examples.length <= 1}
-												onClick={() =>
-													updatePersona({
-														...persona(),
-														examples: persona().examples.filter((_, i) => i !== index),
-													})
-												}
-											>
-												{t("currentRolePackage.removeExample")} {index + 1}
-											</Button>
-										</div>
-									)}
-								</Index>
-								<Button
-									data-control="command"
-									disabled={!current().writable || saving() || persona().examples.length >= 40}
-									onClick={() =>
-										updatePersona({
-											...persona(),
-											examples: [...persona().examples, { user: "", assistant: "" }],
-										})
-									}
-								>
-									{t("currentRolePackage.addExample")}
-								</Button>
-							</fieldset>
-						</fieldset>
-						<fieldset class="detail-card current-role-prompt-editor">
-							<legend>{t("currentRolePackage.systemPromptTitle")}</legend>
-							<p class="field-hint">{t("currentRolePackage.systemPromptHint")}</p>
-							<TextField
-								class="prompt-field"
-								value={prompt()}
-								disabled={!current().writable || saving()}
-							>
-								<TextField.Label>
-									{t("currentRolePackage.promptFields.system_prompt")}
-								</TextField.Label>
-								<TextField.TextArea
-									class="prompt-textarea"
-									rows={9}
-									onInput={(event) => updatePrompt(event.currentTarget.value)}
-								/>
-							</TextField>
-						</fieldset>
-						<Show when={parseError()}>
-							{(message) => (
-								<p class="status-line err" role="alert">
-									{message()}
-								</p>
-							)}
+						<Show when={props.onEditPackage}>
+							<Button onClick={() => props.onEditPackage?.(documentId())}>
+								{t("studio.editRole")}
+							</Button>
 						</Show>
 						<Show when={saveError()}>
-							{(message) => (
-								<p class="status-line err" role="alert">
-									{message()}
-								</p>
-							)}
-						</Show>
-						<Show when={dirty() || saving() || Boolean(saveError())}>
-							<div class="current-role-package-actions">
-								<span>{t("currentRolePackage.unsaved")}</span>
-								<Button
-									data-control="command"
-									type="button"
-									disabled={!dirty() || saving() || !current().writable}
-									onClick={discard}
-								>
-									{t("currentRolePackage.discard")}
-								</Button>
-								<Button
-									data-variant="primary"
-									type="button"
-									disabled={!dirty() || saving() || !current().writable || Boolean(parseError())}
-									onClick={() => void save()}
-								>
-									{t("currentRolePackage.save")}
-								</Button>
-							</div>
+							<p role="alert">{saveError()}</p>
 						</Show>
 						<section
 							class="character-deletion-zone"
@@ -490,16 +251,12 @@ export function CurrentRolePackageManager(props: {
 									<Show when={props.deletionStatus()?.runtimePresent}>
 										<small>{t("currentRolePackage.deleteBlockedRuntimePresent")}</small>
 									</Show>
-									<Show when={dirty()}>
-										<small>{t("currentRolePackage.deleteBlockedUnsaved")}</small>
-									</Show>
 								</div>
 								<Button
 									data-variant="danger"
 									type="button"
 									disabled={
 										deleting() ||
-										dirty() ||
 										!props.deletionStatus() ||
 										props.deletionStatus()?.default ||
 										props.deletionStatus()?.runtimePresent ||

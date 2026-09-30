@@ -1,250 +1,257 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostRuntime } from "../src/runtime.js";
 
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
-
 afterEach(async () => {
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
-
-async function createRuntime() {
-	const root = await mkdtemp(join(tmpdir(), "bear-character-draft-"));
+async function setup() {
+	const root = await mkdtemp(join(tmpdir(), "bear-studio-"));
 	roots.push(root);
-	const runtime = new HostRuntime({
-		dataDir: join(root, "data"),
-		characterSeedRoot: characterRoot,
-		productConfig: { defaultCharacterId: "jizhou" },
-	});
-	await runtime.start();
-	return runtime;
+	const open = () =>
+		new HostRuntime({
+			dataDir: root,
+			characterSeedRoot: characterRoot,
+			productConfig: { defaultCharacterId: "jizhou" },
+		});
+	const host = open();
+	await host.start();
+	return { root, host, open };
 }
-
-async function packageAsDraftFiles(
-	root: string,
-	directory = root,
-): Promise<Record<string, { encoding: "base64"; content: string }>> {
-	const entries = await readdir(directory, { withFileTypes: true });
-	const files: Record<string, { encoding: "base64"; content: string }> = {};
-	for (const entry of entries) {
-		if (entry.name.startsWith(".")) continue;
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) Object.assign(files, await packageAsDraftFiles(root, path));
-		else
-			files[relative(root, path)] = {
-				encoding: "base64",
-				content: (await readFile(path)).toString("base64"),
-			};
-	}
-	return files;
+async function content(host: HostRuntime, id: string, path: string) {
+	const result = await host.dispatch("character.draftFileGet", { id, path, offset: 0 });
+	assert(result.ok);
+	return Buffer.from(result.data.base64, "base64").toString("utf8");
 }
-
-describe("character package drafts", () => {
-	it("creates immutable file revisions and returns only the protocol draft projection", async () => {
-		const runtime = await createRuntime();
+async function create(host: HostRuntime, characterId = "jizhou") {
+	const result = await host.dispatch("character.draftCreate", { characterId });
+	assert(result.ok, JSON.stringify(result));
+	return result.data.draft;
+}
+describe("character author drafts", () => {
+	it("takes an exact package snapshot, keeps bodies outside settings.db and isolates owners", async () => {
+		const { host, root } = await setup();
 		try {
-			const created = await runtime.dispatch("character.draftCreate", { locale: "zh-CN" });
-			expect(created).toMatchObject({
-				ok: true,
-				data: { draft: { status: "draft", locale: "zh-CN", currentRevision: 1, files: {} } },
+			const draft = await create(host);
+			expect(draft.baseSha256).toHaveLength(64);
+			const original = await readFile(join(root, "characters/jizhou/character.yaml"), "utf8");
+			expect(await content(host, draft.id, "character.yaml")).toBe(original);
+			expect(draft.files["character.yaml"]).not.toHaveProperty("content");
+			const copy = await host.dispatch("character.draftCreate", {
+				characterId: "another",
+				basePackageId: "jizhou",
+				name: "Another",
 			});
-			const draftId = created.data.draft.id;
-
-			const firstPatch = await runtime.dispatch("character.draftPatch", {
-				id: draftId,
+			assert(copy.ok);
+			expect(await content(host, copy.data.draft.id, "character.yaml")).toContain("id: another");
+			expect(copy.data.draft.baseSha256).toBeUndefined();
+			const stored = JSON.parse(
+				await readFile(join(root, "companions/jizhou/drafts", draft.id, "current.json"), "utf8"),
+			);
+			expect(stored.schemaVersion).toBe(1);
+			expect(
+				(await host.dispatch("character.draftGet", { id: draft.id.replace("jizhou~", "another~") }))
+					.ok,
+			).toBe(false);
+			const system = Reflect.get(host, "storage").system.connection;
+			expect(system.prepare("SELECT count(*) AS n FROM character_drafts").get().n).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+	it("saves invalid YAML verbatim, survives Host restart, detects stale saves and restores deletions", async () => {
+		const { host, open } = await setup();
+		let current = host;
+		try {
+			const draft = await create(current);
+			const patch = await current.dispatch("character.draftPatch", {
+				id: draft.id,
 				expectedRevision: 1,
 				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
-					"locales/zh-CN.yaml": { encoding: "utf8", content: "name: 测试\n" },
+					"character.yaml": { encoding: "utf8", content: "broken: [" },
+					"canon/new.md": { encoding: "utf8", content: "# New\nA fact." },
 				},
 			});
-			expect(firstPatch.data.draft).toMatchObject({
-				currentRevision: 2,
+			assert(patch.ok);
+			expect(await content(current, draft.id, "character.yaml")).toBe("broken: [");
+			expect(
+				(await current.dispatch("character.draftValidate", { id: draft.id, expectedRevision: 2 }))
+					.ok,
+			).toBe(false);
+			expect(
+				await current.dispatch("character.draftPatch", {
+					id: draft.id,
+					expectedRevision: 1,
+					files: { "x.txt": { encoding: "utf8", content: "stale" } },
+				}),
+			).toMatchObject({ ok: false, error: { kind: "conflict" } });
+			await current.close();
+			current = open();
+			await current.start();
+			expect(await content(current, draft.id, "canon/new.md")).toContain("A fact.");
+			const removed = await current.dispatch("character.draftPatch", {
+				id: draft.id,
+				expectedRevision: 2,
+				files: { "canon/new.md": null },
+			});
+			assert(removed.ok);
+			expect(removed.data.draft.files).not.toHaveProperty("canon/new.md");
+			const restore = await current.dispatch("character.draftRestoreRevision", {
+				id: draft.id,
+				expectedRevision: 3,
+				sourceRevision: 2,
+			});
+			assert(restore.ok);
+			expect(restore.data.draft.currentRevision).toBe(4);
+			expect(await content(current, draft.id, "canon/new.md")).toContain("A fact.");
+			const list = await current.dispatch("character.draftList", {});
+			assert(list.ok);
+			expect(list.data.drafts[0]).toMatchObject({ id: draft.id, currentRevision: 4 });
+			expect(list.data.drafts[0]).not.toHaveProperty("files");
+		} finally {
+			await current.close();
+		}
+	});
+	it("applies existing complete packages, retains binary files, and blocks changes made outside the editor", async () => {
+		const { host, root } = await setup();
+		try {
+			const draft = await create(host);
+			const original = await content(host, draft.id, "character.yaml");
+			const patch = await host.dispatch("character.draftPatch", {
+				id: draft.id,
+				expectedRevision: 1,
 				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
-					"locales/zh-CN.yaml": { encoding: "utf8", content: "name: 测试\n" },
+					"character.yaml": {
+						encoding: "utf8",
+						content: original.replace("name: 极昼", "name: 新极昼"),
+					},
+					"canon/new.md": {
+						encoding: "utf8",
+						content: "# A new reference\nOriginal test content.",
+					},
 				},
 			});
-
-			const secondPatch = await runtime.dispatch("character.draftPatch", {
-				id: draftId,
+			assert(patch.ok);
+			await writeFile(join(root, "characters/jizhou/external.txt"), "external change");
+			expect(
+				await host.dispatch("character.draftPublish", { id: draft.id, expectedRevision: 2 }),
+			).toMatchObject({ ok: false, error: { reason: "character_package_revision_mismatch" } });
+			await rm(join(root, "characters/jizhou/external.txt"));
+			const applied = await host.dispatch("character.draftPublish", {
+				id: draft.id,
+				expectedRevision: 2,
+			});
+			assert(applied.ok, JSON.stringify(applied));
+			expect(applied.data.draft.status).toBe("published");
+			expect(await readFile(join(root, "characters/jizhou/canon/new.md"), "utf8")).toContain(
+				"Original test content.",
+			);
+			const repeated = await host.dispatch("character.draftPublish", {
+				id: draft.id,
+				expectedRevision: 2,
+			});
+			expect(repeated.ok).toBe(true);
+			for (const [path, file] of Object.entries(draft.files))
+				if (file.encoding === "base64") {
+					const response = await host.dispatch("character.draftFileGet", {
+						id: draft.id,
+						path,
+						offset: 0,
+					});
+					assert(response.ok);
+					expect(
+						(await readFile(join(root, "characters/jizhou", path)))
+							.subarray(0, 256 * 1024)
+							.toString("base64"),
+					).toBe(response.data.base64);
+				}
+		} finally {
+			await host.close();
+		}
+	});
+	it("creates new text-only characters without model setup and protects package identity", async () => {
+		const { host } = await setup();
+		try {
+			const draft = await create(host, "new-role");
+			const source = await content(host, draft.id, "character.yaml");
+			expect(source).toContain('summary: ""');
+			const patch = await host.dispatch("character.draftPatch", {
+				id: draft.id,
+				expectedRevision: 1,
+				files: {
+					"character.yaml": {
+						encoding: "utf8",
+						content: source.replace('summary: ""', "summary: A quiet librarian."),
+					},
+				},
+			});
+			assert(patch.ok);
+			const applied = await host.dispatch("character.draftPublish", {
+				id: draft.id,
+				expectedRevision: 2,
+			});
+			expect(applied).toMatchObject({ ok: true, data: { character: { id: "new-role" } } });
+			await host.dispatch("character.draftPatch", {
+				id: draft.id,
 				expectedRevision: 2,
 				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
-				},
-			});
-			expect(secondPatch.data.draft).toMatchObject({
-				currentRevision: 3,
-				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
-					"locales/zh-CN.yaml": { encoding: "utf8", content: "name: 测试\n" },
-				},
-			});
-
-			const fetched = await runtime.dispatch("character.draftGet", { id: draftId });
-			expect(fetched.data.draft).toEqual(secondPatch.data.draft);
-		} finally {
-			await runtime.close();
-		}
-	});
-
-	it("rejects a stale validation request before it can inspect or publish a newer revision", async () => {
-		const runtime = await createRuntime();
-		try {
-			const created = await runtime.dispatch("character.draftCreate", {});
-			const draftId = created.data.draft.id;
-			const patched = await runtime.dispatch("character.draftPatch", {
-				id: draftId,
-				expectedRevision: 1,
-				files: {
-					"character.yaml": { encoding: "utf8", content: "id: incomplete-workshop-package\n" },
-				},
-			});
-			await expect(
-				runtime.dispatch("character.draftValidate", {
-					id: draftId,
-					expectedRevision: 1,
-				}),
-			).resolves.toMatchObject({
-				ok: false,
-				error: { kind: "conflict", reason: "character_draft_revision_mismatch" },
-			});
-			await expect(
-				runtime.dispatch("character.draftValidate", {
-					id: draftId,
-					expectedRevision: patched.data.draft.currentRevision,
-				}),
-			).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
-			await expect(runtime.dispatch("character.draftGet", { id: draftId })).resolves.toMatchObject({
-				data: { draft: { status: "draft", currentRevision: 2 } },
-			});
-		} finally {
-			await runtime.close();
-		}
-	});
-
-	it("accepts image uploads directly and preserves their source bytes in the next revision", async () => {
-		const runtime = await createRuntime();
-		try {
-			const created = await runtime.dispatch("character.draftCreate", {});
-			const avatar = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]).toString("base64");
-			await expect(
-				runtime.dispatch("character.draftUploadAssets", {
-					id: created.data.draft.id,
-					expectedRevision: 1,
-					assets: [{ path: "assets/avatar.png", mime: "image/png", base64: avatar }],
-				}),
-			).resolves.toMatchObject({
-				ok: true,
-				data: {
-					draft: {
-						currentRevision: 2,
-						files: { "assets/avatar.png": { encoding: "base64", content: avatar } },
+					"character.yaml": {
+						encoding: "utf8",
+						content: source.replace("id: new-role", "id: jizhou"),
 					},
 				},
 			});
-			await expect(
-				runtime.dispatch("character.draftUploadAssets", {
-					id: created.data.draft.id,
-					expectedRevision: 1,
-					assets: [{ path: "assets/again.png", mime: "image/png", base64: avatar }],
-				}),
-			).resolves.toMatchObject({
-				ok: false,
-				error: { kind: "conflict", reason: "character_draft_revision_mismatch" },
-			});
+			expect(
+				(await host.dispatch("character.draftPublish", { id: draft.id, expectedRevision: 3 })).ok,
+			).toBe(false);
 		} finally {
-			await runtime.close();
+			await host.close();
 		}
 	});
-
-	it("restores an old revision by appending a new immutable revision", async () => {
-		const runtime = await createRuntime();
+	it("rejects unsafe paths and symlink blobs without modifying installed files", async () => {
+		const { host, root } = await setup();
 		try {
-			const created = await runtime.dispatch("character.draftCreate", {});
-			const first = await runtime.dispatch("character.draftPatch", {
-				id: created.data.draft.id,
-				expectedRevision: 1,
-				files: { "notes.txt": { encoding: "utf8", content: "first" } },
-			});
-			const second = await runtime.dispatch("character.draftPatch", {
-				id: created.data.draft.id,
-				expectedRevision: first.data.draft.currentRevision,
-				files: { "notes.txt": { encoding: "utf8", content: "second" } },
-			});
-			await expect(
-				runtime.dispatch("character.draftRestoreRevision", {
-					id: created.data.draft.id,
-					expectedRevision: second.data.draft.currentRevision,
-					sourceRevision: first.data.draft.currentRevision,
-				}),
-			).resolves.toMatchObject({
-				ok: true,
-				data: {
-					draft: {
-						status: "draft",
-						currentRevision: 4,
-						files: { "notes.txt": { encoding: "utf8", content: "first" } },
-					},
-				},
-			});
-			await expect(
-				runtime.dispatch("character.draftListRevisions", { id: created.data.draft.id }),
-			).resolves.toMatchObject({
-				ok: true,
-				data: { revisions: [{ revision: 4 }, { revision: 3 }, { revision: 2 }, { revision: 1 }] },
-			});
+			const draft = await create(host);
+			for (const path of [
+				"../escape.txt",
+				"/absolute.txt",
+				"C:/file",
+				"assets/../../secret",
+				"assets\\escape.txt",
+				"CON",
+			]) {
+				expect(
+					(
+						await host.dispatch("character.draftPatch", {
+							id: draft.id,
+							expectedRevision: 1,
+							files: { [path]: { encoding: "utf8", content: "unsafe" } },
+						})
+					).ok,
+				).toBe(false);
+			}
+			const file = draft.files["character.yaml"];
+			assert(file);
+			const blob = join(root, "companions/jizhou/drafts", draft.id, file.sha256);
+			await rm(blob);
+			await symlink(join(root, "characters/jizhou/character.yaml"), blob);
+			expect(
+				(
+					await host.dispatch("character.draftFileGet", {
+						id: draft.id,
+						path: "character.yaml",
+						offset: 0,
+					})
+				).ok,
+			).toBe(false);
 		} finally {
-			await runtime.close();
+			await host.close();
 		}
 	});
-
-	it("validates and publishes a binary-safe package revision, without changing another character selection", async () => {
-		const runtime = await createRuntime();
-		try {
-			const created = await runtime.dispatch("character.draftCreate", {
-				basePackageId: "jizhou",
-			});
-			const files = await packageAsDraftFiles(join(characterRoot, "jizhou"));
-			const manifest = files["character.yaml"];
-			if (!manifest) throw new Error("fixture character manifest missing");
-			manifest.content = Buffer.from(
-				Buffer.from(manifest.content, "base64")
-					.toString("utf8")
-					.replace("id: jizhou", "id: workshop-published"),
-			).toString("base64");
-			const patched = await runtime.dispatch("character.draftPatch", {
-				id: created.data.draft.id,
-				expectedRevision: 1,
-				files,
-			});
-			const revision = patched.data.draft.currentRevision;
-			await expect(
-				runtime.dispatch("character.draftValidate", {
-					id: created.data.draft.id,
-					expectedRevision: revision,
-				}),
-			).resolves.toMatchObject({ ok: true, data: { draft: { status: "ready_to_publish" } } });
-			await expect(
-				runtime.dispatch("character.draftPublish", {
-					id: created.data.draft.id,
-					expectedRevision: revision,
-				}),
-			).resolves.toMatchObject({
-				ok: true,
-				data: { draft: { status: "published" }, character: { id: "workshop-published" } },
-			});
-			await expect(
-				runtime.dispatch("character.get", { characterId: "workshop-published" }),
-			).resolves.toMatchObject({
-				data: { character: { id: "workshop-published" } },
-			});
-		} finally {
-			await runtime.close();
-		}
-	}, 15_000);
 });

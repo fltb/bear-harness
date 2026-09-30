@@ -25,6 +25,7 @@ export function Backstage(props: {
 	onSettingsPageChange?: (page: SettingsPage) => void;
 	onOpenMemorySettings?: () => void;
 	returnFocus?: () => void;
+	onEditPackage?: (id: string) => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
@@ -76,7 +77,10 @@ export function Backstage(props: {
 							</div>
 						}
 					>
-						<RoleManager onOpenMemorySettings={props.onOpenMemorySettings} />
+						<RoleManager
+							onEditPackage={props.onEditPackage}
+							onOpenMemorySettings={props.onOpenMemorySettings}
+						/>
 					</Show>
 				</Dialog.Content>
 			</Dialog.Portal>
@@ -84,7 +88,10 @@ export function Backstage(props: {
 	);
 }
 
-function RoleManager(props: { onOpenMemorySettings?: () => void }) {
+function RoleManager(props: {
+	onOpenMemorySettings?: () => void;
+	onEditPackage?: (id: string) => void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
@@ -133,6 +140,7 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 				</div>
 			</aside>
 			<CurrentRolePackageManager
+				onEditPackage={props.onEditPackage}
 				characters={workflow.characters}
 				selectedId={workflow.selectedPackageId}
 				memory={
@@ -163,7 +171,6 @@ function RoleManager(props: { onOpenMemorySettings?: () => void }) {
 				loading={workflow.selectedPackageLoading}
 				error={workflow.selectedPackageError}
 				selectPackage={workflow.selectPackage}
-				savePackage={workflow.savePackage}
 				revealPackage={(id) => companion.characters.packageReveal(id)}
 				pluginTrust={(id) => companion.characters.pluginTrust(id)}
 				confirmPluginTrust={async (id) => {

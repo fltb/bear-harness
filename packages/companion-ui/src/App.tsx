@@ -18,6 +18,7 @@ import { Composer } from "./Composer";
 import { ConversationPanel, MediaViewer } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
+import { CharacterStudio } from "./features/studio/CharacterStudio.js";
 import { Icon } from "./Icon.js";
 import { type AppLayoutMode, layoutModeForWidth } from "./layout.js";
 import { syncDocumentTitle } from "./lib/dom-effects.js";
@@ -124,6 +125,15 @@ function DesktopFrame(props: { platform?: string }) {
 		if (pi?.errorMessage) return "problem";
 		return "presence";
 	});
+	const [studioOpen, setStudioOpen] = createSignal(false);
+	const [editCharacterId, setEditCharacterId] = createSignal<string>();
+	let dismissMedia = () => {};
+	const openStudio = (id?: string) => {
+		dismissMedia();
+		workflow.closeBackstage();
+		setEditCharacterId(id);
+		setStudioOpen(true);
+	};
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
 	const [mobileNavigationPresent, setMobileNavigationPresent] = createSignal(false);
@@ -204,7 +214,12 @@ function DesktopFrame(props: { platform?: string }) {
 			role="application"
 			aria-label={t("shell.productName")}
 		>
-			<div class="shell" data-mobile-navigation-open={mobileNavigationOpen() ? "true" : "false"}>
+			<div
+				class="shell"
+				hidden={studioOpen()}
+				inert={studioOpen()}
+				data-mobile-navigation-open={mobileNavigationOpen() ? "true" : "false"}
+			>
 				<Show when={layoutMode() === "mobile" && mobileNavigationPresent()}>
 					<Button
 						type="button"
@@ -217,6 +232,7 @@ function DesktopFrame(props: { platform?: string }) {
 				<Sidebar
 					character={workflow.character()}
 					onOpenBackstage={openBackstage}
+					onOpenStudio={() => openStudio()}
 					navigationHidden={layoutMode() === "mobile" ? !mobileNavigationOpen() : undefined}
 					onNavigate={() => closeMobileNavigation(true)}
 					onNavigationMotionEnd={(event) => {
@@ -281,6 +297,7 @@ function DesktopFrame(props: { platform?: string }) {
 						{(_conversationId) => {
 							// A keyed conversation owns only its local viewer selection.
 							const [media, setMedia] = createSignal<CharacterMedia>();
+							dismissMedia = () => setMedia(undefined);
 							return (
 								<>
 									<ConversationPanel
@@ -302,11 +319,20 @@ function DesktopFrame(props: { platform?: string }) {
 						}}
 					</Show>
 					<PermissionLayer />
-					<FirstMeeting platform={props.platform} />
+					<Show when={!studioOpen()}>
+						<FirstMeeting platform={props.platform} onOpenStudio={() => openStudio()} />
+					</Show>
 				</main>
 				<ArtifactPreview />
 			</div>
+			<Show when={studioOpen()}>
+				<CharacterStudio
+					initialCharacterId={editCharacterId()}
+					onClose={() => setStudioOpen(false)}
+				/>
+			</Show>
 			<Backstage
+				onEditPackage={openStudio}
 				open={workflow.backstageOpen()}
 				onClose={workflow.closeBackstage}
 				initialTab={workflow.backstageTab()}

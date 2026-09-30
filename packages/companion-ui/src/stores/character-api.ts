@@ -180,8 +180,33 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			await invoke(client, () => client.character.pluginTrustConfirm({ characterId }));
 			await api.pluginTrust(characterId);
 		},
-		draftCreate: async (params = {}) =>
-			api.draftGet((await invoke(client, () => client.character.draftCreate(params))).draft.id),
+		draftCreate: async (params) =>
+			(await invoke(client, () => client.character.draftCreate(params))).draft,
+		draftList: async () => (await invoke(client, () => client.character.draftList({}))).drafts,
+		draftFile: async (id, path) => {
+			const pieces: Uint8Array[] = [];
+			let offset = 0;
+			let hash: string | undefined;
+			while (true) {
+				const piece = await invoke(client, () =>
+					client.character.draftFileGet({ id, path, offset }),
+				);
+				if (hash && hash !== piece.sha256) throw new Error("character_draft_revision_mismatch");
+				hash = piece.sha256;
+				const bytes = Uint8Array.from(atob(piece.base64), (char) => char.charCodeAt(0));
+				pieces.push(bytes);
+				offset += bytes.length;
+				if (offset >= piece.totalBytes) break;
+				if (!bytes.length) throw new Error("character_draft_file_corrupt");
+			}
+			const result = new Uint8Array(offset);
+			let position = 0;
+			for (const piece of pieces) {
+				result.set(piece, position);
+				position += piece.length;
+			}
+			return result;
+		},
 		draftGet: async (id) =>
 			(
 				await refreshRpcQuery({
@@ -191,18 +216,14 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				})
 			).draft,
 		draftPatch: async (id, expectedRevision, files) =>
-			api.draftGet(
-				(await invoke(client, () => client.character.draftPatch({ id, expectedRevision, files })))
-					.draft.id,
-			),
+			(await invoke(client, () => client.character.draftPatch({ id, expectedRevision, files })))
+				.draft,
 		draftUploadAssets: async (id, expectedRevision, assets) =>
-			api.draftGet(
-				(
-					await invoke(client, () =>
-						client.character.draftUploadAssets({ id, expectedRevision, assets }),
-					)
-				).draft.id,
-			),
+			(
+				await invoke(client, () =>
+					client.character.draftUploadAssets({ id, expectedRevision, assets }),
+				)
+			).draft,
 		draftListRevisions: async (id) =>
 			(
 				await refreshRpcQuery({
@@ -212,18 +233,13 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				})
 			).revisions,
 		draftRestoreRevision: async (id, expectedRevision, sourceRevision) =>
-			api.draftGet(
-				(
-					await invoke(client, () =>
-						client.character.draftRestoreRevision({ id, expectedRevision, sourceRevision }),
-					)
-				).draft.id,
-			),
+			(
+				await invoke(client, () =>
+					client.character.draftRestoreRevision({ id, expectedRevision, sourceRevision }),
+				)
+			).draft,
 		draftValidate: async (id, expectedRevision) =>
-			api.draftGet(
-				(await invoke(client, () => client.character.draftValidate({ id, expectedRevision }))).draft
-					.id,
-			),
+			(await invoke(client, () => client.character.draftValidate({ id, expectedRevision }))).draft,
 		draftPublish: async (id, expectedRevision) => {
 			const draft = (
 				await invoke(client, () => client.character.draftPublish({ id, expectedRevision }))
@@ -235,7 +251,7 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				c.invalidateActiveConversation(),
 				c.refreshSnapshot(),
 			]);
-			return api.draftGet(draft.id);
+			return draft;
 		},
 	};
 	return api;

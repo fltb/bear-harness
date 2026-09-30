@@ -173,7 +173,7 @@ export class HostRuntime {
 			},
 			options.nativeProviders,
 		);
-		this.drafts = new CharacterDraftService(systemDb, this.characterLoader);
+		this.drafts = new CharacterDraftService(this.storage.layout, this.characterLoader);
 		const defaultCharacter = this.characterLoader.load(options.productConfig.defaultCharacterId);
 		if (!defaultCharacter) throw new Error("default character package missing");
 		this.characterLoader.seed(systemDb, defaultCharacter);
@@ -216,6 +216,17 @@ export class HostRuntime {
 			providers: this.providers,
 			characterLoader: this.characterLoader,
 			drafts: this.drafts,
+			publishDraft: async (id: string, revision: number) => {
+				const draft = this.drafts.validate(id, revision);
+				return this.registry.replaceIdle(
+					draft.characterId,
+					(resource) => {
+						resource.runtime.pi.assertIdleForPackageEdit();
+						resource.runtime.externalAgentRuns.assertRuntimeDeletable();
+					},
+					() => this.drafts.publish(id, revision),
+				);
+			},
 			artifactPresenter: options.artifactPresenter,
 			characterPackagePresenter: options.characterPackagePresenter,
 			defaultCharacterId: options.productConfig.defaultCharacterId,

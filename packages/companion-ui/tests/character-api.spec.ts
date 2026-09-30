@@ -50,11 +50,13 @@ const deletionStatus = {
 };
 
 const draft: CharacterDraft = {
-	id: "draft-one",
+	id: "character-one~00000000-0000-4000-8000-000000000000",
+	characterId: "character-one",
+	updatedAt: "2026-10-01T00:00:00.000Z",
 	status: "draft",
 	locale: "en-US",
 	currentRevision: 3,
-	files: { "character.yaml": { encoding: "utf8", content: "id: character-one" } },
+	files: { "character.yaml": { encoding: "utf8", sha256: "a".repeat(64), size: 17 } },
 };
 
 function createCharacterHarness() {

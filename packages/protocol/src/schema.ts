@@ -550,71 +550,82 @@ export const CharacterPluginTrustResponse = z.strictObject({
 export const CharacterPluginTrustConfirmRequest = z.strictObject({
 	characterId: CharacterPackageId,
 });
+const DraftId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}~[0-9a-f-]{36}$/);
+const CharacterDraftInput = z.strictObject({
+	encoding: z.enum(["utf8", "base64"]),
+	content: z.string().max(12 * 1024 * 1024),
+});
 const CharacterDraftFile = z.strictObject({
 	encoding: z.enum(["utf8", "base64"]),
-	content: z.string(),
+	sha256: z.string().regex(/^[0-9a-f]{64}$/),
+	size: z.number().int().nonnegative(),
 });
-const CharacterDraftFiles = z.record(z.string().min(1).max(512), CharacterDraftFile);
 export const CharacterDraft = z.strictObject({
-	id: z.string().min(1).max(64),
-	basePackageId: z.string().min(1).max(64).optional(),
-	status: z.enum(["draft", "validating", "ready_to_publish", "published"]),
+	id: DraftId,
+	characterId: CharacterPackageId,
+	basePackageId: CharacterPackageId.optional(),
+	baseSha256: z.string().length(64).optional(),
+	status: z.enum(["draft", "ready_to_publish", "published"]),
 	locale: z.string().min(2).max(35),
-	currentRevision: z.number().int().min(1),
-	files: CharacterDraftFiles,
+	currentRevision: z.number().int().positive(),
+	updatedAt: WireTimestamp,
+	files: z.record(z.string().min(1).max(512), CharacterDraftFile),
 });
 export const CharacterDraftCreateRequest = z.strictObject({
-	basePackageId: z.string().min(1).max(64).optional(),
+	characterId: CharacterPackageId,
+	basePackageId: CharacterPackageId.optional(),
+	name: z.string().min(1).max(4096).optional(),
 	locale: z.string().min(2).max(35).optional(),
 });
-export const CharacterDraftGetRequest = z.strictObject({
-	id: z.string().min(1).max(64),
+export const CharacterDraftGetRequest = z.strictObject({ id: DraftId });
+export const CharacterDraftListResponse = z.strictObject({
+	drafts: z.array(CharacterDraft.omit({ files: true })).max(200),
+});
+export const CharacterDraftFileGetRequest = CharacterDraftGetRequest.extend({
+	path: z.string().min(1).max(512),
+	offset: z.number().int().nonnegative().default(0),
+});
+export const CharacterDraftFileGetResponse = z.strictObject({
+	base64: z.string(),
+	totalBytes: z.number().int().nonnegative(),
+	sha256: z.string().length(64),
 });
 export const CharacterDraftListRevisionsRequest = CharacterDraftGetRequest;
-export const CharacterDraftPatchRequest = z
-	.strictObject({
-		id: z.string().min(1).max(64),
-		expectedRevision: z.number().int().min(1),
-		files: CharacterDraftFiles,
-	})
-	.superRefine(({ files }, context) => {
-		const count = Object.keys(files).length;
-		if (count < 1)
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "files must contain at least one entry",
-				path: ["files"],
-			});
-	});
+export const CharacterDraftPatchRequest = z.strictObject({
+	id: DraftId,
+	expectedRevision: z.number().int().positive(),
+	files: z.record(z.string().min(1).max(512), CharacterDraftInput.nullable()),
+});
 export const CharacterDraftResponse = z.strictObject({ draft: CharacterDraft });
 export const CharacterDraftRevision = z.strictObject({
-	revision: z.number().int().min(1),
+	revision: z.number().int().positive(),
 	createdAt: WireTimestamp,
 });
 export const CharacterDraftListRevisionsResponse = z.strictObject({
 	revisions: z.array(CharacterDraftRevision),
 });
 export const CharacterDraftRestoreRevisionRequest = z.strictObject({
-	id: z.string().min(1).max(64),
-	expectedRevision: z.number().int().min(1),
-	sourceRevision: z.number().int().min(1),
+	id: DraftId,
+	expectedRevision: z.number().int().positive(),
+	sourceRevision: z.number().int().positive(),
 });
 export const CharacterDraftUploadAssetsRequest = z.strictObject({
-	id: z.string().min(1).max(64),
-	expectedRevision: z.number().int().min(1),
+	id: DraftId,
+	expectedRevision: z.number().int().positive(),
 	assets: z
 		.array(
 			z.strictObject({
 				path: z.string().min(1).max(512),
 				mime: z.string().min(3).max(128),
-				base64: z.string().min(1),
+				base64: z.string().max(12 * 1024 * 1024),
 			}),
 		)
-		.min(1),
+		.min(1)
+		.max(20),
 });
 export const CharacterDraftValidateRequest = z.strictObject({
-	id: z.string().min(1).max(64),
-	expectedRevision: z.number().int().min(1),
+	id: DraftId,
+	expectedRevision: z.number().int().positive(),
 });
 export const CharacterDraftPublishRequest = CharacterDraftValidateRequest;
 export const CharacterDraftPublishResponse = z.strictObject({
@@ -2177,6 +2188,18 @@ export const RPC = {
 			CharacterPluginTrustConfirmRequest,
 			CharacterPluginTrustResponse,
 			"mutation",
+		),
+		draftList: endpoint(
+			"character.draftList",
+			z.strictObject({}),
+			CharacterDraftListResponse,
+			"query",
+		),
+		draftFileGet: endpoint(
+			"character.draftFileGet",
+			CharacterDraftFileGetRequest,
+			CharacterDraftFileGetResponse,
+			"query",
 		),
 		draftCreate: endpoint(
 			"character.draftCreate",

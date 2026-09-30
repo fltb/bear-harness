@@ -246,7 +246,14 @@ export interface CharacterApi {
 	deletionStatus(characterId: string): Promise<CharacterDeletionStatus>;
 	runtimeDelete(characterId: string): Promise<CharacterRuntimeDeleteResponse>;
 	packageDelete(characterId: string): Promise<CharacterPackageDeleteResponse>;
-	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
+	draftCreate(params: {
+		characterId: string;
+		basePackageId?: string;
+		name?: string;
+		locale?: string;
+	}): Promise<CharacterDraft>;
+	draftList(): Promise<Array<Omit<CharacterDraft, "files">>>;
+	draftFile(id: string, path: string): Promise<Uint8Array>;
 	draftGet(id: string): Promise<CharacterDraft>;
 	draftPatch(
 		id: string,

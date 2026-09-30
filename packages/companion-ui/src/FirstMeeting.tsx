@@ -11,7 +11,7 @@ import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button, Checkbox, Dialog, Link, TextField } from "./ui/primitives.js";
 
 /** First-run gates: system model setup → embedding configuration → role onboarding. */
-export function FirstMeeting(props: { platform?: string } = {}) {
+export function FirstMeeting(props: { platform?: string; onOpenStudio?: () => void } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const shell = useShellWorkflowStore();
@@ -99,6 +99,9 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 				<Dialog open={workflow.licenseRequired()}>
 					<Dialog.Content class="intro license-notice" aria-label={t("licenseNotice.dialogLabel")}>
 						<article class="intro-card">
+							<Show when={props.onOpenStudio}>
+								<Button onClick={props.onOpenStudio}>{t("studio.library")}</Button>
+							</Show>
 							<div class="intro-step">{t("licenseNotice.step")}</div>
 							<h2>{t("licenseNotice.title")}</h2>
 							<p>{t("licenseNotice.description")}</p>
@@ -183,6 +186,9 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 				<Dialog open={workflow.modelRequired() || workflow.roleModelRequired()}>
 					<Dialog.Content class="intro model-setup" aria-label={t("modelSetup.dialogLabel")}>
 						<article class="intro-card">
+							<Show when={props.onOpenStudio}>
+								<Button onClick={props.onOpenStudio}>{t("studio.library")}</Button>
+							</Show>
 							<div class="intro-step">{t("modelSetup.dialogLabel")}</div>
 							<h2>
 								{workflow.roleModelRequired() ? t("modelSetup.roleTitle") : t("modelSetup.title")}
@@ -298,6 +304,9 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 				<Dialog open={workflow.memorySetupRequired()}>
 					<Dialog.Content class="intro model-setup" aria-label={t("settings.memoryVectorSection")}>
 						<article class="intro-card">
+							<Show when={props.onOpenStudio}>
+								<Button onClick={props.onOpenStudio}>{t("studio.library")}</Button>
+							</Show>
 							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
 							<EmbeddingSettings mode="onboarding" />
 							<Show when={workflow.setupError() ?? store.setupLoadError}>
@@ -317,6 +326,9 @@ export function FirstMeeting(props: { platform?: string } = {}) {
 						data-onboarding-step={workflow.currentStep()?.id ?? ""}
 					>
 						<article class="intro-card">
+							<Show when={props.onOpenStudio}>
+								<Button onClick={props.onOpenStudio}>{t("studio.library")}</Button>
+							</Show>
 							<Show when={workflow.currentStep()} keyed>
 								{(activeStep) => (
 									<>

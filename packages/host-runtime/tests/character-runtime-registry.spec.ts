@@ -18,6 +18,59 @@ function resource(characterId: string): CharacterResource {
 }
 
 describe("CharacterRuntimeRegistry", () => {
+	it("applies a package only after idle disposal and fences new work for that owner", async () => {
+		const closed = deferred();
+		const a = resource("a");
+		const b = resource("b");
+		vi.mocked(a.close).mockImplementationOnce(() => closed.promise);
+		const registry = new CharacterRuntimeRegistry(async (id) => (id === "a" ? a : b));
+		await registry.use("a", () => {});
+		await registry.use("b", () => {});
+		const apply = vi.fn(() => "updated");
+		const replace = registry.replaceIdle("a", () => {}, apply);
+		await expect(registry.use("a", () => {})).rejects.toMatchObject({
+			reason: "character_runtime_closing",
+		});
+		expect(await registry.use("b", (value) => value)).toBe(b);
+		expect(apply).not.toHaveBeenCalled();
+		expect(b.close).not.toHaveBeenCalled();
+		closed.resolve();
+		expect(await replace).toBe("updated");
+		expect(a.stop).not.toHaveBeenCalled();
+		await registry.shutdown();
+	});
+
+	it("refuses an active request or native streaming without closing or applying", async () => {
+		const work = deferred();
+		const entered = deferred();
+		const a = resource("a");
+		const registry = new CharacterRuntimeRegistry(async () => a);
+		const request = registry.use("a", async () => {
+			entered.resolve();
+			await work.promise;
+		});
+		await entered.promise;
+		const apply = vi.fn();
+		await expect(registry.replaceIdle("a", () => {}, apply)).rejects.toMatchObject({
+			reason: "character_package_busy",
+		});
+		work.resolve();
+		await request;
+		await expect(
+			registry.replaceIdle(
+				"a",
+				() => {
+					throw new Error("streaming");
+				},
+				apply,
+			),
+		).rejects.toThrow("streaming");
+		expect(apply).not.toHaveBeenCalled();
+		expect(a.close).not.toHaveBeenCalled();
+		expect(await registry.use("a", (value) => value)).toBe(a);
+		await registry.shutdown();
+	});
+
 	it("deduplicates construction and keeps A alive across A/B/A requests", async () => {
 		const opening = deferred<CharacterResource>();
 		const first = resource("a");

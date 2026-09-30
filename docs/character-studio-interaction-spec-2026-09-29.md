@@ -4,6 +4,8 @@
 
 日期：2026-09-29。状态：交互设计与隔离原型，非产品实现验收。
 
+2026-10-01：已落地首批真实编辑流程，具体功能、测试与未完成项见 [实现记录](character-studio-implementation-2026-10-01.md)。下文是完整目标，不代表全部已经实现。
+
 本文细化并修订 `modular-android-character-studio-proposal-2026-09-24.md` 的 Studio 部分。实现以本文件的交互定义为准，Pi / Bear 的所有权继续遵循 AGENTS.md。
 
 ## 1. 已作出的设计决定

@@ -21,6 +21,7 @@ export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
 	onOpenBackstage: (tab: "roles" | "settings" | "archived") => void;
 	onNavigate?: () => void;
+	onOpenStudio?: () => void;
 	navigationHidden?: boolean;
 	onNavigationMotionEnd?(event: AnimationEvent): void;
 }) {
@@ -86,6 +87,7 @@ export function Sidebar(props: {
 
 	onMount(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
+			if (searchRef?.closest("[inert]")) return;
 			if (!event.metaKey && !event.ctrlKey) return;
 			if (event.key.toLocaleLowerCase() !== "k") return;
 			const targets = [
@@ -377,6 +379,11 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{t("sidebar.application")}</div>
+					<Show when={props.onOpenStudio}>
+						<Button type="button" onClick={props.onOpenStudio}>
+							{t("studio.library")}
+						</Button>
+					</Show>
 					<Button
 						type="button"
 						class="system-nav"

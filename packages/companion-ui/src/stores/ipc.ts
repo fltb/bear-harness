@@ -138,6 +138,6 @@ export type CharacterDeletionStatus = Wire.CharacterDeletionStatus;
 export type CharacterRuntimeDeleteResponse = Wire.CharacterRuntimeDeleteResponse;
 export type CharacterPackageDeleteResponse = Wire.CharacterPackageDeleteResponse;
 export type CharacterDraft = Wire.CharacterDraft;
-export type CharacterDraftFiles = Wire.CharacterDraft["files"];
+export type CharacterDraftFiles = Wire.CharacterDraftPatchRequest["files"];
 export type CharacterDraftRevision = Wire.CharacterDraftRevision;
 export type Snapshot = Wire.SnapshotResponse;

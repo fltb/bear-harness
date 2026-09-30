@@ -115,6 +115,7 @@ export interface HostCompositionContext {
 	credentials: CredentialStore;
 	characterLoader: CharacterLoader;
 	drafts: CharacterDraftService;
+	publishDraft(id: string, revision: number): Promise<ReturnType<CharacterDraftService["publish"]>>;
 	companionStore: CompanionStateStore;
 	defaultCharacterId: string;
 	reloadCharacter(characterId: string): Promise<void>;
@@ -386,9 +387,13 @@ export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionC
 		await s.reloadCharacter(characterId);
 		return { trust };
 	});
-	dispatcher.registerHandler(RPC.character.draftCreate, async ({ basePackageId, locale }) => {
-		return { draft: s.drafts.create({ basePackageId, locale }) };
+	dispatcher.registerHandler(RPC.character.draftCreate, async (params) => {
+		return { draft: s.drafts.create(params) };
 	});
+	dispatcher.registerHandler(RPC.character.draftList, async () => ({ drafts: s.drafts.list() }));
+	dispatcher.registerHandler(RPC.character.draftFileGet, async ({ id, path, offset }) =>
+		s.drafts.readFile(id, path, offset),
+	);
 	dispatcher.registerHandler(RPC.character.draftGet, async ({ id }) => {
 		return { draft: s.drafts.get(id) };
 	});
@@ -416,7 +421,7 @@ export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionC
 		return { draft: s.drafts.validate(id, expectedRevision) };
 	});
 	dispatcher.registerHandler(RPC.character.draftPublish, async ({ id, expectedRevision }) => {
-		const result = s.drafts.publish(id, expectedRevision);
+		const result = await s.publishDraft(id, expectedRevision);
 		s.seedCharacter(result.character, "local");
 		return {
 			draft: result.draft,

@@ -224,6 +224,16 @@ export class PiRuntime {
 		return this.inSessionSequence(sessionId, () => this.openNow(sessionId));
 	}
 
+	assertIdleForPackageEdit(): void {
+		if (
+			this.opening.size ||
+			[...this.sessions.values()].some(
+				({ session }) => session.isStreaming || session.isCompacting || session.isRetrying,
+			)
+		)
+			throw { kind: "conflict", reason: "character_package_busy" };
+	}
+
 	snapshot(sessionId: string): PiSnapshot {
 		return this.sessions.get(sessionId)?.session;
 	}

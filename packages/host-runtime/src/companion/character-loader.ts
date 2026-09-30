@@ -1,4 +1,5 @@
 import { CharacterArchiveImport } from "./character-archive-import.js";
+import { packageDigest, packageFiles } from "./character-package-files.js";
 /**
  * Character package loader — reads YAML role packages from
  * `config/characters/<id>/character.yaml`.
@@ -1178,6 +1179,51 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		return character;
 	}
 
+	/** Replace every package file atomically after checking the complete source revision. */
+	replacePackage(
+		id: string,
+		expected: string,
+		files: Array<{ path: string; base64: string }>,
+	): CharacterPackage {
+		const current = this.load(id);
+		if (!current) throw { kind: "conflict", reason: "character_package_not_found" };
+		const installed = packageFiles(this.packageLocation(id));
+		const candidate = Object.fromEntries(
+			files.map((file) => [file.path, Buffer.from(file.base64, "base64")]),
+		);
+		// Recognize a committed package after an interrupted authoring acknowledgement.
+		if (packageDigest(installed) === packageDigest(candidate)) return current;
+		if (packageDigest(installed) !== expected)
+			throw { kind: "conflict", reason: "character_package_revision_mismatch" };
+		const next = this.validate(files);
+		if (next.id !== id) throw { kind: "invalid_request", reason: "character_id_immutable" };
+		if (JSON.stringify(current.state) !== JSON.stringify(next.state))
+			throw { kind: "conflict", reason: "character_state_schema_change_requires_migration" };
+		if (
+			current.scenes.some((scene) => !next.scenes.some((item) => item.id === scene.id)) ||
+			current.visual.expressions.some(
+				(expression) => !next.visual.expressions.some((item) => item.id === expression.id),
+			)
+		)
+			throw { kind: "conflict", reason: "character_display_removal_requires_migration" };
+		replaceDurableFileSync({
+			root: this.libraryRoot,
+			target: join(this.libraryRoot, id),
+			stage: (staging) => {
+				mkdirSync(staging, { recursive: true });
+				for (const [path, bytes] of Object.entries(candidate)) {
+					const target = join(staging, path);
+					mkdirSync(dirname(target), { recursive: true });
+					writeFileSync(target, bytes, { mode: 0o600 });
+				}
+			},
+			verify: (root) => this.verifyPackageDirectory(id, root),
+		});
+		const result = this.load(id);
+		if (!result) throw new Error("character_package_missing_after_write");
+		return result;
+	}
+
 	/** Validate an import-shaped package without retaining it in the installed library. */
 	validate(files: Array<{ path: string; base64: string }>): CharacterPackage {
 		const validationRoot = join(this.libraryRoot, `.validate-${randomUUID()}`);
@@ -1208,7 +1254,7 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 			.from(companionPackages)
 			.where(eq(companionPackages.id, character.id))
 			.get();
-		const effectiveOrigin = existingPackage?.origin ?? origin;
+		const effectiveOrigin = origin === "local" ? origin : (existingPackage?.origin ?? origin);
 		systemDb.transaction((transaction) => {
 			const pluginHash = this.pluginHash(character);
 			transaction

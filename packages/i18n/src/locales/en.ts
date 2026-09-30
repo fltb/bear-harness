@@ -2,6 +2,95 @@ import type { LocalizedCatalog } from "./types.js";
 import type { zhCN } from "./zh-CN.js";
 
 export const en = {
+	studio: {
+		idExists:
+			"This character ID already exists. Choose another ID or edit the existing character in the library.",
+		freshDraft: "Start a draft from the current package",
+		rescueText: "Download unsaved source",
+		discardQuestion: "Discard unsaved input and return to the library? Saved drafts remain.",
+		discardUnsaved: "Discard unsaved changes and return",
+		library: "Character library",
+		libraryHint:
+			"Editing does not switch your conversation. Drafts save automatically; apply them to update the character.",
+		backChat: "Back to conversation",
+		backLibrary: "Back to library",
+		editRole: "Edit character",
+		search: "Search characters",
+		newRole: "New character",
+		edit: "Edit",
+		resume: "Continue editing",
+		copy: "Copy as new character",
+		chat: "Start conversation",
+		drafts: "Saved drafts",
+		contents: "Package contents",
+		commonFields: "Basics and character identity",
+		fileHint: "These are the actual package files. All text files can be edited.",
+		fieldsHint:
+			"Forms change only the named fields. Edit first meeting, examples, scenes, expressions, media and state definitions in character.yaml.",
+		name: "Character name",
+		version: "Content version",
+		language: "Language",
+		subtitle: "Description",
+		greeting: "Greeting",
+		identity: "Identity",
+		invariants: "Identity constraints",
+		knowledge: "Knowledge boundaries",
+		interaction: "Interaction",
+		systemPrompt: "Global character prompt",
+		required: "(required)",
+		optional: "(optional)",
+		onePerLine: "One item per line",
+		invalidYaml:
+			"Cannot parse character.yaml. Open its source to fix it; the draft can still be saved.",
+		saving: "Saving draft…",
+		unsaved: "Draft not yet saved",
+		saved: "Draft saved",
+		save: "Save draft",
+		apply: "Apply to character",
+		applied:
+			"Applied. Reopen a conversation to load the new character context. Messages and memory are preserved. Changed plugins require renewed trust.",
+		retry: "Retry",
+		loading: "Loading…",
+		busyRole:
+			"This character has an operation or reply in progress. Your draft is kept; apply again later.",
+		packageConflict:
+			"The installed package changed elsewhere. Your draft is kept and has not overwritten it. Open a new editing copy to compare changes.",
+		draftConflict:
+			"This draft changed elsewhere. Your current input is not saved. Copy the source before reopening the draft.",
+		immutableId: "The character ID cannot change. Copy it as a new character in the library.",
+		stateConflict:
+			"State definition changes need a separate migration. Restore the definition or copy as a new character.",
+		displayConflict:
+			"An existing scene or expression ID was removed. Restore it or copy as a new character.",
+		fileLimit:
+			"Each upload or file save is limited to 8 MB; packages to 256 MB and 2048 files. Existing larger files are preserved.",
+		pathInvalid: "Use a package-relative path without .. or reserved system characters.",
+		fileExists: "This file already exists. Select it to edit.",
+		replaceFile: "Replace {path} in the draft? Previous versions remain in draft history.",
+		downloadFile: "Download file",
+		remove: "Delete file",
+		deleteFile:
+			"Delete {path} from the draft? Apply checks resource references; previous versions can be restored.",
+		binaryHint:
+			"Binary file ({bytes} bytes), fully preserved. Download it to inspect or upload an asset with the same name to replace it.",
+		source: "File source",
+		addContent: "Add files and assets",
+		pathHint:
+			"Put references in canon/, skills in skills/, plugins in plugins/, and the story in STORY.md.",
+		filePath: "Package-relative file path",
+		newFile: "New text file",
+		upload: "Upload assets to assets/",
+		history: "Draft history",
+		restore: "Restore revision",
+		id: "Character ID",
+		idHint: "Lowercase letters, numbers and hyphens; up to 64 characters. Fixed after creation.",
+		create: "Create draft",
+		applyReview: "Apply character package",
+		applyDescription: "Target: {id}. Draft revision: {revision}. Package: {fileCount} files.",
+		applyHint:
+			"Full package validation passed. Apply replaces the package and preserves conversations and memory. Active replies or external changes block apply.",
+		confirmApply: "Confirm apply",
+	},
 	shell: {
 		productName: "Bear Harness",
 		fallbackComposerPlaceholder: "Message your companion...",

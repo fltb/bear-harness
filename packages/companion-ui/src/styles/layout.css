@@ -529,3 +529,35 @@ html[data-app-layout="fullscreen"] .backstage-sheet-settings {
 		@apply text-left;
 	}
 }
+
+.studio-workspace {
+	grid-template-columns: 230px minmax(0, 1fr);
+}
+.studio-cards {
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.shell[hidden] {
+	@apply hidden;
+}
+@media (max-width: 767px) {
+	.studio-workspace {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto minmax(0, 1fr);
+	}
+	.studio-navigation {
+		@apply max-h-56;
+		border-right: 0;
+		border-bottom: 1px solid var(--sys-border);
+	}
+	.studio-header {
+		@apply gap-2 p-3;
+	}
+	.studio-editor,
+	.studio-library {
+		@apply p-4;
+	}
+	.studio-save-state {
+		@apply w-full;
+	}
+}

@@ -321,7 +321,7 @@ async function visitCharacterSettings(page: Page, viewport: Viewport): Promise<v
 		dialog.getByRole("region", { name: zhCN.currentRolePackage.selectorLabel }),
 	).toBeVisible();
 	await expect(
-		dialog.getByRole("group", { name: zhCN.currentRolePackage.promptEditor }),
+		dialog.getByRole("button", { name: zhCN.studio.editRole, exact: true }),
 	).toBeVisible();
 	await assertSurface(page, viewport, dialog);
 

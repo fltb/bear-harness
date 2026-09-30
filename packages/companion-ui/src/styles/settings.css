@@ -753,3 +753,112 @@
 .diagnostics-traces button[data-control="command"] {
 	@apply shrink-0 justify-start text-left;
 }
+
+.character-studio {
+	@apply absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden;
+	background: var(--surface-panel);
+	color: var(--sys-text);
+}
+.studio-header {
+	@apply flex flex-wrap items-center gap-3 border-b p-4;
+	border-color: var(--sys-border);
+}
+.studio-heading {
+	@apply mr-auto min-w-0;
+}
+.studio-heading h1 {
+	@apply m-0 text-lg;
+}
+.studio-heading span,
+.studio-save-state {
+	@apply text-sm;
+}
+.studio-workspace {
+	@apply grid min-h-0 flex-1;
+}
+.studio-navigation {
+	@apply flex min-w-0 flex-col gap-1 overflow-y-auto border-r p-3;
+	border-color: var(--sys-border);
+}
+.studio-navigation button {
+	@apply min-h-11 text-left;
+}
+.studio-file {
+	@apply w-full break-all;
+}
+.studio-navigation [aria-current="page"] {
+	background: var(--surface-control);
+	@apply font-bold;
+}
+.studio-editor,
+.studio-library {
+	@apply min-w-0 overflow-auto p-6;
+}
+.studio-library {
+	@apply flex-1;
+}
+.studio-fields {
+	@apply grid max-w-3xl gap-5;
+}
+.studio-field {
+	@apply grid gap-1;
+}
+.studio-field input,
+.studio-field textarea,
+.studio-source textarea {
+	@apply w-full min-w-0 rounded-lg border p-3 text-base;
+	border-color: var(--sys-border);
+	background: var(--surface-panel);
+}
+.studio-source {
+	@apply grid gap-2;
+}
+.studio-source textarea {
+	@apply min-h-96 font-mono;
+	resize: vertical;
+}
+.studio-tools {
+	@apply flex flex-wrap items-end gap-3;
+}
+.studio-tools h2 {
+	@apply mr-auto min-w-0 break-all text-base;
+}
+.studio-tools button,
+.studio-tools .button-like {
+	@apply min-h-11;
+}
+.studio-cards {
+	@apply my-6 grid gap-4;
+}
+.studio-card {
+	@apply rounded-xl border p-5;
+	border-color: var(--sys-border);
+}
+.studio-card h2 {
+	@apply m-0 text-lg;
+}
+.studio-card code {
+	@apply mb-4 block text-sm;
+}
+.studio-draft-row {
+	@apply flex flex-wrap items-center justify-between gap-3 border-b py-3;
+	border-color: var(--sys-border);
+}
+.studio-draft-row span {
+	@apply break-all;
+}
+.studio-file-actions {
+	@apply my-8 grid gap-3 border-t pt-5;
+	border-color: var(--sys-border);
+}
+.studio-file-actions h2 {
+	@apply m-0 text-base;
+}
+.studio-error,
+.studio-feedback {
+	@apply m-0 border-b px-5 py-3;
+	border-color: var(--sys-border);
+}
+.studio-error p {
+	@apply whitespace-pre-wrap break-words;
+}

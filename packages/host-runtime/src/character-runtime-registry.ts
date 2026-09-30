@@ -95,6 +95,29 @@ export class CharacterRuntimeRegistry<R extends CharacterResource> {
 		return result;
 	}
 
+	/** A package edit may close idle resources, but never interrupt admitted work. */
+	async replaceIdle<T>(
+		characterId: string,
+		verify: (resource: R) => void,
+		apply: () => T,
+	): Promise<T> {
+		const id = requireCompanionId(characterId);
+		if (this.shuttingDown) throw { kind: "unavailable", reason: "host_closed" };
+		let entry = this.entries.get(id);
+		if (entry && (entry.blocked || entry.users || !entry.resource))
+			throw { kind: "conflict", reason: "character_package_busy" };
+		if (entry?.resource) verify(entry.resource);
+		entry ??= { users: 0, blocked: false, removals: [] };
+		entry.blocked = true;
+		this.entries.set(id, entry);
+		await entry.resource?.close();
+		try {
+			return apply();
+		} finally {
+			if (this.entries.get(id) === entry) this.entries.delete(id);
+		}
+	}
+
 	async shutdown(): Promise<void> {
 		this.shuttingDown = true;
 		const results = await Promise.allSettled([...this.entries.keys()].map((id) => this.close(id)));

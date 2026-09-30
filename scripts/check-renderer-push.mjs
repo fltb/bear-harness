@@ -4,8 +4,10 @@ import { parse } from "@babel/parser";
 // UI state must arrive via RPC mutation results or Host events, never a
 // periodic query. The bounded timers below do not poll state: one backs off a
 // failed Pi event transport, one releases a browser download URL, and one
-// clears transient copy feedback.
+// clears transient copy feedback. Studio also debounces local author input before
+// submitting a draft mutation; it never polls Host state.
 const allowedTimeouts = new Set([
+	"packages/companion-ui/src/features/studio/workflow.ts:edit",
 	"packages/companion-ui/src/stores/companion.tsx:waitForPiReconnect",
 	"packages/companion-ui/src/lib/browser-download.ts:downloadBlob",
 	"packages/companion-ui/src/ConversationPanel.tsx:PiTimelineEntryView",

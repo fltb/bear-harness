@@ -64,10 +64,6 @@ export interface BackstageWorkflowStore {
 	selectedPackageError: Accessor<string | undefined>;
 	selectPackage(id: string, confirmDiscard: () => boolean): void;
 	packageDeleted(id: string): void;
-	savePackage(
-		yaml: string,
-		expectedSha256: string,
-	): Promise<import("./ipc.js").CharacterPackageDocument>;
 }
 
 const WORKFLOW_STORES = new WeakMap<CompanionStore, BackstageWorkflowStore>();
@@ -227,16 +223,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		},
 		packageDeleted: (id) => {
 			if (id === selectedPackageId()) setSelectedPackageId(undefined);
-		},
-		savePackage: async (yaml, expectedSha256) => {
-			const current = selectedPackage();
-			if (!current) throw new Error("character_package_not_loaded");
-			const next = await companion.characters.packageUpdate(
-				current.characterId,
-				yaml,
-				expectedSha256,
-			);
-			return next;
 		},
 		canon: createCanonSelectors,
 		relationshipEnabled,
