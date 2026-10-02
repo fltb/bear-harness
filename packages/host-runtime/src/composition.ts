@@ -1,3 +1,4 @@
+import type { CharacterTrialService } from "./companion/character-trial-service.js";
 /**
  * Host composition — wires all domain services to the instance dispatcher.
  *
@@ -115,7 +116,18 @@ export interface HostCompositionContext {
 	credentials: CredentialStore;
 	characterLoader: CharacterLoader;
 	drafts: CharacterDraftService;
-	publishDraft(id: string, revision: number): Promise<ReturnType<CharacterDraftService["publish"]>>;
+	trials: CharacterTrialService;
+	reviewDraft(
+		id: string,
+		revision: number,
+	): ReturnType<CharacterDraftService["review"]> & {
+		migration?: import("@bear-harness/protocol").CharacterDraftReviewResponse["migration"];
+	};
+	publishDraft(
+		id: string,
+		revision: number,
+		migrationToken?: string,
+	): Promise<ReturnType<CharacterDraftService["publish"]>>;
 	companionStore: CompanionStateStore;
 	defaultCharacterId: string;
 	reloadCharacter(characterId: string): Promise<void>;
@@ -387,12 +399,60 @@ export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionC
 		await s.reloadCharacter(characterId);
 		return { trust };
 	});
+	dispatcher.registerHandler(RPC.character.trial, async (input) => {
+		if (
+			input.action === "start" &&
+			!s.models
+				.list(s.providers.modelProjectionFacts())
+				.some(
+					(model) =>
+						model.providerId === input.providerId &&
+						model.modelId === input.modelId &&
+						model.enabled &&
+						model.readiness === "ready",
+				)
+		)
+			throw { kind: "unavailable", reason: "model_not_ready" };
+		return s.trials.request(input);
+	});
+	dispatcher.registerHandler(RPC.character.authoringSchema, async () => s.drafts.schemas());
+	dispatcher.registerHandler(RPC.character.draftReview, async ({ id, expectedRevision }) =>
+		s.reviewDraft(id, expectedRevision),
+	);
+	dispatcher.registerHandler(RPC.character.draftDiff, async ({ id, expectedRevision, path }) =>
+		s.drafts.diff(id, expectedRevision, path),
+	);
+	dispatcher.registerHandler(RPC.character.draftExport, async ({ id, expectedRevision, offset }) =>
+		s.drafts.export(id, expectedRevision, offset),
+	);
+	dispatcher.registerHandler(RPC.character.draftTransfer, async (input) =>
+		s.drafts.transfer(input),
+	);
+	dispatcher.registerHandler(RPC.character.draftManage, async (input) => {
+		if (input.action === "delete") {
+			await s.trials.closeDraft(input.id);
+			try {
+				s.drafts.delete(input.id, input.expectedRevision);
+			} finally {
+				s.trials.allowDraft(input.id);
+			}
+			return {};
+		}
+		return {
+			draft:
+				input.action === "move"
+					? s.drafts.move(input.id, input.expectedRevision, input.from, input.to)
+					: s.drafts.prune(input.id, input.expectedRevision, input.keep),
+		};
+	});
 	dispatcher.registerHandler(RPC.character.draftCreate, async (params) => {
 		return { draft: s.drafts.create(params) };
 	});
-	dispatcher.registerHandler(RPC.character.draftList, async () => ({ drafts: s.drafts.list() }));
-	dispatcher.registerHandler(RPC.character.draftFileGet, async ({ id, path, offset }) =>
-		s.drafts.readFile(id, path, offset),
+	dispatcher.registerHandler(RPC.character.draftList, async (input) => s.drafts.list(input));
+	dispatcher.registerHandler(
+		RPC.character.draftFileGet,
+		async ({ id, path, offset, expectedSha256 }) =>
+			s.drafts.readFile(id, path, offset, expectedSha256),
 	);
 	dispatcher.registerHandler(RPC.character.draftGet, async ({ id }) => {
 		return { draft: s.drafts.get(id) };
@@ -406,8 +466,8 @@ export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionC
 			return { draft: s.drafts.uploadAssets(id, expectedRevision, assets) };
 		},
 	);
-	dispatcher.registerHandler(RPC.character.draftListRevisions, async ({ id }) => {
-		return { revisions: s.drafts.listRevisions(id) };
+	dispatcher.registerHandler(RPC.character.draftListRevisions, async ({ id, before }) => {
+		return { revisions: s.drafts.listRevisions(id, before) };
 	});
 	dispatcher.registerHandler(
 		RPC.character.draftRestoreRevision,
@@ -420,14 +480,17 @@ export function wireSystemHandlers(dispatcher: Dispatcher, s: SystemCompositionC
 	dispatcher.registerHandler(RPC.character.draftValidate, async ({ id, expectedRevision }) => {
 		return { draft: s.drafts.validate(id, expectedRevision) };
 	});
-	dispatcher.registerHandler(RPC.character.draftPublish, async ({ id, expectedRevision }) => {
-		const result = await s.publishDraft(id, expectedRevision);
-		s.seedCharacter(result.character, "local");
-		return {
-			draft: result.draft,
-			character: s.characterLoader.display(result.character),
-		};
-	});
+	dispatcher.registerHandler(
+		RPC.character.draftPublish,
+		async ({ id, expectedRevision, migrationToken }) => {
+			const result = await s.publishDraft(id, expectedRevision, migrationToken);
+			s.seedCharacter(result.character, "local");
+			return {
+				draft: result.draft,
+				character: s.characterLoader.display(result.character),
+			};
+		},
+	);
 	const configuredLocalTarget = () => {
 		const memory = s.appSettings.load().memoryVectorService;
 		if (memory.provider !== "local" || !memory.enabled) return undefined;

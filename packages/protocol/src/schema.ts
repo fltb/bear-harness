@@ -578,10 +578,20 @@ export const CharacterDraftCreateRequest = z.strictObject({
 	locale: z.string().min(2).max(35).optional(),
 });
 export const CharacterDraftGetRequest = z.strictObject({ id: DraftId });
+export const CharacterDraftListRequest = z.strictObject({
+	cursor: z.string().max(300).optional(),
+	characterId: CharacterPackageId.optional(),
+	limit: z.number().int().min(1).max(100).default(50),
+});
 export const CharacterDraftListResponse = z.strictObject({
-	drafts: z.array(CharacterDraft.omit({ files: true })).max(200),
+	drafts: z.array(CharacterDraft.omit({ files: true })).max(100),
+	nextCursor: z.string().optional(),
 });
 export const CharacterDraftFileGetRequest = CharacterDraftGetRequest.extend({
+	expectedSha256: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
 	path: z.string().min(1).max(512),
 	offset: z.number().int().nonnegative().default(0),
 });
@@ -590,7 +600,9 @@ export const CharacterDraftFileGetResponse = z.strictObject({
 	totalBytes: z.number().int().nonnegative(),
 	sha256: z.string().length(64),
 });
-export const CharacterDraftListRevisionsRequest = CharacterDraftGetRequest;
+export const CharacterDraftListRevisionsRequest = CharacterDraftGetRequest.extend({
+	before: z.number().int().positive().optional(),
+});
 export const CharacterDraftPatchRequest = z.strictObject({
 	id: DraftId,
 	expectedRevision: z.number().int().positive(),
@@ -627,10 +639,95 @@ export const CharacterDraftValidateRequest = z.strictObject({
 	id: DraftId,
 	expectedRevision: z.number().int().positive(),
 });
-export const CharacterDraftPublishRequest = CharacterDraftValidateRequest;
+export const CharacterDraftPublishRequest = CharacterDraftValidateRequest.extend({
+	migrationToken: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
+});
 export const CharacterDraftPublishResponse = z.strictObject({
 	draft: CharacterDraft,
 	character: CharacterDisplay,
+});
+export const CharacterAuthoringSchemaResponse = z.strictObject({
+	manifest: z.record(z.string(), z.unknown()),
+	skill: z.record(z.string(), z.unknown()),
+});
+export const CharacterDraftReviewRequest = CharacterDraftValidateRequest;
+export const CharacterDraftReviewResponse = z.strictObject({
+	migration: z
+		.strictObject({
+			token: z.string(),
+			changes: z.array(
+				z.strictObject({
+					scope: z.string(),
+					conversationId: z.string().optional(),
+					field: z.string(),
+					before: z.string(),
+					after: z.string(),
+				}),
+			),
+		})
+		.optional(),
+	issues: z.array(z.strictObject({ file: z.string(), path: z.string(), message: z.string() })),
+	changes: z.array(
+		z.strictObject({
+			path: z.string(),
+			kind: z.enum(["added", "modified", "deleted"]),
+			binary: z.boolean(),
+		}),
+	),
+});
+export const CharacterDraftManageRequest = z.discriminatedUnion("action", [
+	CharacterDraftValidateRequest.extend({ action: z.literal("delete") }),
+	CharacterDraftValidateRequest.extend({
+		action: z.literal("prune"),
+		keep: z.number().int().min(1).max(1000).default(20),
+	}),
+	CharacterDraftValidateRequest.extend({
+		action: z.literal("move"),
+		from: z.string().min(1).max(512),
+		to: z.string().min(1).max(512),
+	}),
+]);
+export const CharacterDraftManageResponse = z.strictObject({ draft: CharacterDraft.optional() });
+export const CharacterDraftExportRequest = CharacterDraftValidateRequest.extend({
+	offset: z.number().int().nonnegative().default(0),
+});
+export const CharacterDraftDiffRequest = CharacterDraftValidateRequest.extend({
+	path: z.string().min(1).max(512),
+});
+export const CharacterDraftDiffResponse = z.strictObject({
+	before: z.string(),
+	after: z.string(),
+	truncated: z.boolean(),
+});
+export const CharacterDraftTransferRequest = z.discriminatedUnion("action", [
+	CharacterDraftValidateRequest.extend({
+		action: z.literal("begin"),
+		path: z.string().min(1).max(512),
+		size: z
+			.number()
+			.int()
+			.min(0)
+			.max(256 * 1024 * 1024),
+	}),
+	CharacterDraftGetRequest.extend({
+		action: z.literal("append"),
+		uploadId: z.string().uuid(),
+		offset: z.number().int().nonnegative(),
+		base64: z.string().max(2 * 1024 * 1024),
+	}),
+	CharacterDraftValidateRequest.extend({
+		action: z.literal("finish"),
+		uploadId: z.string().uuid(),
+	}),
+	CharacterDraftGetRequest.extend({ action: z.literal("cancel"), uploadId: z.string().uuid() }),
+]);
+export const CharacterDraftTransferResponse = z.strictObject({
+	uploadId: z.string().uuid().optional(),
+	offset: z.number().int().nonnegative().optional(),
+	draft: CharacterDraft.optional(),
 });
 export const OnboardingResponse = z.discriminatedUnion("status", [
 	z.strictObject({
@@ -1982,6 +2079,11 @@ export const SnapshotResponse = z.strictObject({
 /** Process-local live updates. Nothing in this union is persisted or replayed. */
 export const LivePush = z.discriminatedUnion("type", [
 	z.strictObject({
+		type: z.literal("studioTrial"),
+		trialId: z.string().uuid(),
+		event: PiAgentSessionEvent,
+	}),
+	z.strictObject({
 		type: z.literal("pi"),
 		characterId: CharacterPackageId,
 		conversationId: ConversationId,
@@ -2015,6 +2117,29 @@ export const LivePush = z.discriminatedUnion("type", [
 		state: ProviderLoginResponse,
 	}),
 ]);
+export const CharacterTrialRequest = z.discriminatedUnion("action", [
+	z.strictObject({
+		action: z.literal("start"),
+		id: z.string().min(1).max(256),
+		expectedRevision: z.number().int().positive(),
+		providerId: z.string().min(1),
+		modelId: z.string().min(1),
+	}),
+	z.strictObject({ action: z.literal("get"), trialId: z.string().uuid() }),
+	z.strictObject({
+		action: z.literal("send"),
+		trialId: z.string().uuid(),
+		text: z.string().min(1).max(100000),
+		clientMessageId: z.string().uuid(),
+	}),
+	z.strictObject({ action: z.literal("abort"), trialId: z.string().uuid() }),
+	z.strictObject({ action: z.literal("close"), trialId: z.string().uuid() }),
+]);
+export const CharacterTrialResponse = z.strictObject({
+	trialId: z.string().uuid(),
+	detail: ConversationDetail.optional(),
+});
+
 export const LivePushBatch = z.strictObject({
 	events: z.array(LivePush),
 });
@@ -2189,9 +2314,46 @@ export const RPC = {
 			CharacterPluginTrustResponse,
 			"mutation",
 		),
+		authoringSchema: endpoint(
+			"character.authoringSchema",
+			z.strictObject({}),
+			CharacterAuthoringSchemaResponse,
+			"query",
+		),
+		trial: endpoint("character.trial", CharacterTrialRequest, CharacterTrialResponse, "mutation"),
+		draftReview: endpoint(
+			"character.draftReview",
+			CharacterDraftReviewRequest,
+			CharacterDraftReviewResponse,
+			"query",
+		),
+		draftDiff: endpoint(
+			"character.draftDiff",
+			CharacterDraftDiffRequest,
+			CharacterDraftDiffResponse,
+			"query",
+		),
+		draftManage: endpoint(
+			"character.draftManage",
+			CharacterDraftManageRequest,
+			CharacterDraftManageResponse,
+			"mutation",
+		),
+		draftExport: endpoint(
+			"character.draftExport",
+			CharacterDraftExportRequest,
+			CharacterDraftFileGetResponse,
+			"query",
+		),
+		draftTransfer: endpoint(
+			"character.draftTransfer",
+			CharacterDraftTransferRequest,
+			CharacterDraftTransferResponse,
+			"mutation",
+		),
 		draftList: endpoint(
 			"character.draftList",
-			z.strictObject({}),
+			CharacterDraftListRequest,
 			CharacterDraftListResponse,
 			"query",
 		),

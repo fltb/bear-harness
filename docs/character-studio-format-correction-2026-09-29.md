@@ -1,5 +1,7 @@
 # 角色包编辑原型：格式校正
 
+> 已被角色包 v2 取代的历史记录。下文 Canon sources/entities/modules、旧角色文案字段与旧状态约束不再是现行格式。请使用 [当前作者文档](character-package-authoring.md) 和 [实际 Studio 实现](character-studio-implementation-2026-10-02.md)。
+
 本文件校正此前 Studio 方案和 v1/v2 原型的字段映射。此前原型中的概括用语、示例结构与轻量校验不能作为真实角色包格式依据。权威仍为当前源码与角色包，不由原型定义新格式。
 
 ## 真实来源

@@ -4,6 +4,8 @@ import type { CharacterApi } from "../../stores/supplementary-api.js";
 
 /** Author edits only. Pi state remains in the application store while this page is open. */
 export function createStudioWorkflow(api: CharacterApi) {
+	const [undoRevisions, setUndoRevisions] = createSignal<number[]>();
+	const [redoRevisions, setRedoRevisions] = createSignal<number[]>([]);
 	const [draft, setDraft] = createSignal<CharacterDraft>();
 	const [texts, setTexts] = createSignal<Record<string, string>>({});
 	const [pending, setPending] = createSignal<CharacterDraftFiles>({});
@@ -39,6 +41,7 @@ export function createStudioWorkflow(api: CharacterApi) {
 						draft()?.currentRevision ?? current.currentRevision,
 						files,
 					);
+					recordRevision();
 					setDraft(next);
 					setError("");
 				} catch (cause) {
@@ -52,6 +55,11 @@ export function createStudioWorkflow(api: CharacterApi) {
 			save = undefined;
 		});
 		return save;
+	}
+	function recordRevision() {
+		const current = draft();
+		if (current) setUndoRevisions((all) => (all ? [...all, current.currentRevision] : undefined));
+		setRedoRevisions([]);
 	}
 	function edit(path: string, content: string) {
 		setTexts((all) => ({ ...all, [path]: content }));
@@ -81,6 +89,8 @@ export function createStudioWorkflow(api: CharacterApi) {
 	}
 	async function open(next: CharacterDraft) {
 		await flush();
+		setUndoRevisions(undefined);
+		setRedoRevisions([]);
 		setDraft(next);
 		setTexts({});
 		setPending({});
@@ -104,18 +114,20 @@ export function createStudioWorkflow(api: CharacterApi) {
 		await flush();
 		const current = draft();
 		if (!current) return;
-		setDraft(await api.draftPatch(current.id, current.currentRevision, files));
+		const next = await api.draftPatch(current.id, current.currentRevision, files);
+		recordRevision();
+		setDraft(next);
 		setApplied(false);
 		setTexts((all) =>
 			Object.fromEntries(Object.entries(all).filter(([path]) => !Object.hasOwn(files, path))),
 		);
 	}
-	async function apply() {
+	async function apply(migrationToken?: string) {
 		await flush();
 		const current = draft();
 		if (!current) return;
 		await api.draftValidate(current.id, current.currentRevision);
-		setDraft(await api.draftPublish(current.id, current.currentRevision));
+		setDraft(await api.draftPublish(current.id, current.currentRevision, migrationToken));
 		setApplied(true);
 	}
 	async function restore(revision: number) {
@@ -124,6 +136,35 @@ export function createStudioWorkflow(api: CharacterApi) {
 		if (!current) return;
 		const next = await api.draftRestoreRevision(current.id, current.currentRevision, revision);
 		await open(next);
+	}
+	async function undo(redo = false) {
+		await flush();
+		const current = draft();
+		if (!current) return;
+		if (!redo && undoRevisions() === undefined) {
+			const revisions = await api.draftListRevisions(current.id);
+			setUndoRevisions(
+				revisions
+					.filter((item) => item.revision < current.currentRevision)
+					.map((item) => item.revision)
+					.reverse(),
+			);
+		}
+		const stack = redo ? redoRevisions() : (undoRevisions() ?? []);
+		const target = stack.at(-1);
+		if (target === undefined) return;
+		const next = await api.draftRestoreRevision(current.id, current.currentRevision, target);
+		if (redo) {
+			setRedoRevisions(stack.slice(0, -1));
+			setUndoRevisions((all) => [...(all ?? []), current.currentRevision]);
+		} else {
+			setUndoRevisions(stack.slice(0, -1));
+			setRedoRevisions((all) => [...all, current.currentRevision]);
+		}
+		setDraft(next);
+		setTexts({});
+		setApplied(false);
+		await select(next.files[selected()] ? selected() : "character.yaml");
 	}
 	const onUnload = (event: BeforeUnloadEvent) => {
 		if (dirty() || saving()) {
@@ -146,6 +187,13 @@ export function createStudioWorkflow(api: CharacterApi) {
 	});
 	return {
 		draft,
+		undo,
+		retainHistory: (revisions: number[]) => {
+			setUndoRevisions((all) => all?.filter((revision) => revisions.includes(revision)));
+			setRedoRevisions((all) => all.filter((revision) => revisions.includes(revision)));
+		},
+		canUndo: () => undoRevisions()?.length ?? ((draft()?.currentRevision ?? 1) > 1 ? 1 : 0),
+		canRedo: () => redoRevisions().length,
 		texts,
 		dirty,
 		saving,
@@ -165,6 +213,8 @@ export function createStudioWorkflow(api: CharacterApi) {
 		clear: () => {
 			clearTimeout(timer);
 			setDraft(undefined);
+			setUndoRevisions(undefined);
+			setRedoRevisions([]);
 			setTexts({});
 			setPending({});
 			setError("");

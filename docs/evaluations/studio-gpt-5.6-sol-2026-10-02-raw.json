@@ -1,0 +1,257 @@
+{
+	"provider": "openai-codex",
+	"model": "gpt-5.6-sol",
+	"prompts": ["你今晚在忙什么？", "请用 host_state 看看我们现在的状态，再告诉我。"],
+	"trialId": "2c64549b-0ba4-4582-867f-1f70f5ffbdd5",
+	"detail": {
+		"conversationId": "01a0fbc0-a748-758d-b0cc-49469972152d",
+		"name": "Studio",
+		"selectedModel": {
+			"providerId": "openai-codex",
+			"modelId": "gpt-5.6-sol"
+		},
+		"branch": {
+			"activeLeafId": "67d30210",
+			"latestLeafIds": ["67d30210"],
+			"entries": [
+				{
+					"type": "session_info",
+					"id": "474b54f5",
+					"parentId": null,
+					"timestamp": "2026-10-02T08:35:02.088Z",
+					"name": "Studio"
+				},
+				{
+					"type": "model_change",
+					"id": "e271e487",
+					"parentId": "474b54f5",
+					"timestamp": "2026-10-02T08:35:02.095Z",
+					"provider": "openai-codex",
+					"modelId": "gpt-5.6-sol"
+				},
+				{
+					"type": "thinking_level_change",
+					"id": "703d2970",
+					"parentId": "e271e487",
+					"timestamp": "2026-10-02T08:35:02.095Z",
+					"thinkingLevel": "medium"
+				},
+				{
+					"type": "message",
+					"id": "34758b55",
+					"parentId": "703d2970",
+					"timestamp": "2026-10-02T08:35:02.110Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "你今晚在忙什么？"
+							}
+						],
+						"timestamp": 1790930102102
+					}
+				},
+				{
+					"type": "message",
+					"id": "8093d969",
+					"parentId": "34758b55",
+					"timestamp": "2026-10-02T08:35:06.003Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "thinking",
+								"thinking": "**Planning casual Chinese response**",
+								"thinkingSignature": "{\"id\":\"rs_03b50f6265b65262016abf6cb8ea8087d0b45c49d2c6e96714\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqv2y5UG4QVltYANyoXljUhWbbswPHKWmiU4G18ifL-E2mS5CDnVhizwHaG4UU86yKmYM6YfZA9NAum4K587xccKqkYGUlel4UlzA--_iAPU3GByBcQxRUfpxGpA57k1tEjFSRdiFgbDl83zUVTxFLCPGXjWUz9ECxKNa0zI6ELLIcuEqy1ch_3jAWvL5fLLgDJSHHFuGrSxc4oPWTyTzKDoA1zYKl0t7VjWKl5PsSHeiqis9su0kP-HhXs9Lry4Qutqp700maEQwIZ_JV4poq8cxccLOvEe4r0-nbfG57rQisLc0-AzriXQY25Ql1-lbfH0l-8e7jk4NBPAd0Sz6z4JzvuJJajR4BnESaJfqAs7_V6rLr8aJ1GG-gZ9pOGtaUKGrNbyN2AKUwHDsymGglJ2shrvXCe2fShUzO-3EHh48oxhcxNxCtTi-Bpv6A6mIb5u1hFsvTsMyhnXyRV62DIXqA8zcCwzHgUlzInEcnrXyAXoaOurJahGAPpI7Fc1R9bIt4GM423N5bE8PpXRpzuCdKzrO2WNzZVLwol-y3YqI4woRJyegKeDUvzhwRLYEVw8Aa51_RnUTqMx8wbfAbBa9nTX1VrPwOACeQ9-PsoIJbIWTf-g0KNIzYCOYWW7nri-WwQ96O4UDnlnBwW83ALtlF8nSBp3l0BWojsLgEwhyD9B3bCoOUGaVPV0nAtWYPGUce3JmNezhZj9l-F76XVYpb-nzDSbQB5LCO3jh0yTTHg9nArJ3u2pWw2pggm6J5p-RIadmskiyfEfLVfG2-hNB2j_ijlibrKU_qr3ni_2rdzp136ZZLd-jFzkSyF5BlNTypm8w6WmN8otUZgmytnEwiWgQpRmQxsMG2GSyQiXtIEqs0GpeR8IuH26aGdDJiJ7GbtC3_lcavJVe3puKcz1nM-_9t9srMxvMC65kTZrzHvuJww32zIlr9zB5vuwzwzlWPkzQmTcjveOMMcon3RB4AAWSbzumKts0-8qo8LQh7h8YlF2XAl9K--TClAKo6gR0Nt5Xy8KvOJZHc09IyjPk51q0j_BoCVKBr31UXYPbwGk0x7Nkz1dSb6u4vfSrk62HZEgaBWvVvfIPsRMyBsZjIV7EVzSJ8gUEh8DE5hpfexwbbbMWhCXZD9oQ-pgghFx_4pe3-oW3V3PSBjEyA6vPf1xlq__qnzxxa_x67ybGTwni1BqXt1Od9Xs9hLiFTdmDWHqx-03StjXCGq7uaeYSPISjjIH6_pktAQbR7GtdcKwIgMT2_SH9nvodKFGnWYyxuf8y5uUYg9yI-_rEyl2DHll3Yk25-zL1BZGF6FJShuJOA-x4mMILnkqPcKaCqFnEYaCp69WKcqE9eZCaGy1a-GZTdJ7RVs-R3tLAZXfQLVsQiZKqP1G2hOJvUE-RLp022tfpB4kLl_iyvF3tVm6aSTQtK9WByLcAGnrmYYRa65fY=\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning casual Chinese response**\"}]}"
+							},
+							{
+								"type": "text",
+								"text": "在整理东边储物间的清单。清到第三箱就开始走神，现在正对着两本没人认领的旧小说发呆。",
+								"textSignature": "{\"v\":1,\"id\":\"msg_03b50f6265b65262016abf6cb9bff087d09d9346f4648e0de6\",\"phase\":\"final_answer\"}"
+							}
+						],
+						"api": "openai-codex-responses",
+						"provider": "openai-codex",
+						"model": "gpt-5.6-sol",
+						"usage": {
+							"input": 7036,
+							"output": 72,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"reasoning": 31,
+							"totalTokens": 7108,
+							"cost": {
+								"input": 0.03518,
+								"output": 0.00216,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0.037340000000000005
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1790930102119,
+						"responseId": "resp_03b50f6265b65262016abf6cb7cd5887d092e59561e8cf7335",
+						"rawStopReason": "completed"
+					}
+				},
+				{
+					"type": "message",
+					"id": "12b47e43",
+					"parentId": "8093d969",
+					"timestamp": "2026-10-02T08:35:06.018Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "请用 host_state 看看我们现在的状态，再告诉我。"
+							}
+						],
+						"timestamp": 1790930106008
+					}
+				},
+				{
+					"type": "message",
+					"id": "bad0093f",
+					"parentId": "12b47e43",
+					"timestamp": "2026-10-02T08:35:09.982Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "thinking",
+								"thinking": "**Reading host state**",
+								"thinkingSignature": "{\"id\":\"rs_03b50f6265b65262016abf6cbd904087d0acb0210c3e05a97c\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqv2y-hSxC04wVM5tZHxVp-IzyMRyVV5bjcbwZun0nFix_tegM13_yYQgDNbj_vnjjewIkBvlwH1QpfuonduzkBK6zuI-HE1fidvXahazIGkUlXxIGwDf3Kbrtb72LWTfKnMgdq5F4j7pwxDRFW4WEqvGPf8j3p7w6J40Ph1AnJSJ88CMbeT0vrT8Q30vTREgW-i_F6TyIXnASa60R4kGmze7MvZbXFlbIrkpBG1-VvkLEgC5WG5oyGkVG0ivTCQDEiJOSWjfD5ggazgFpzA8iOkK9ZUPiKA-go972D3ws_E-3Itq3kCCQFRczdZGbiibn2eYcKRiGZWWG2W2NwmPe3C-up1QJ2-eGX5OH1P0XraLLZp-D48cWu8BNsn9Q2tVy3ySRBWaJXFPhBOmhl1ss4rex1cvodeGRI_uKiv837p3TQKkF2-4MYeaECC20ByUhxC0jcRhMWGWQ7CGxa1gj1hAvyu18U9fbHMrus8r_0tr5TVzDlR6BcJe9mktET9QW9uZwgimrfUIoRNNZ9CsF9sUH58E0NSddo-u3aFP4BwMWu4lHo3N65EA0cZr58tbNsoPPmJ3b7Xk2wr3_2M0-aO_gjCCzpOzJRdyaoKZz3KKpYnXbJYESvMvz81h2vlPkphJy-Z6wAns1EXAFFIIRmA6UzI01XnMajFpjaRuezxcJySly_jwbjdPUWN2mbEgLBazOm7kA08qJkFpjA603ldgbeXXkUfnnGgCC20d56jCkXeVPMAp1y7dS0OcY6JVrlkaoJ-kr-vzTuDILyJ-xg43oJmKkozJbzNoBKheXXCAU9bg71NdyeqL8T-i-QuKk1UPnP_XNaOHegCZCvEY_cIVMufhJ5V3jSPrLlLvmDWiOEp3hHWGcDB56_PKKavOXnV2CRt0SacE5BK3wI5hl6zVT8cGnLznCn3B0x1I5y1RH7j7HmJvEgipv2nW5TbPwyqt3-fXo_AjRAWIUHyS9BpxjeS3wQbKcwmfwY93wMt02S5zpin5kb3ZmPlfSAP2CbM4d-j3F1NEOawEdShQ6lTb3ImtpW8PaVNJDwGlB83O3oH18AJvqY9vLQfaNGmKCDkb3TtBarbqiG6zXq4j4E2xkviyTydzlefJg0JcItFG1oQHQA9kX6gZJuWQBg-XJqCUpIArh8io_PQCY96YIbRd6zVcrA0Y4XD92CLvfXpypNiGsa0Xte0pyFGyhxNfQz1D4FfsRFlVXEtY5soVKODEp8aQL2cDpbaYY4N1lyAVDVCR_J0SmiVe17sOlj_1Fa9npv5fD_Uy2a0oYxaVH742Fex3lPiw1h-_icrHZ9OsKpwM=\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Reading host state**\"}]}"
+							},
+							{
+								"type": "toolCall",
+								"id": "call_INFjpOkQ1GJdI5444DRFshxX|fc_03b50f6265b65262016abf6cbe290c87d09b82ae73235a23d8",
+								"name": "host_state",
+								"arguments": {
+									"action": "read"
+								}
+							}
+						],
+						"api": "openai-codex-responses",
+						"provider": "openai-codex",
+						"model": "gpt-5.6-sol",
+						"usage": {
+							"input": 216,
+							"output": 29,
+							"cacheRead": 6912,
+							"cacheWrite": 0,
+							"reasoning": 9,
+							"totalTokens": 7157,
+							"cost": {
+								"input": 0.00108,
+								"output": 0.00087,
+								"cacheRead": 0.003456,
+								"cacheWrite": 0,
+								"total": 0.005405999999999999
+							}
+						},
+						"stopReason": "toolUse",
+						"timestamp": 1790930106019,
+						"responseId": "resp_03b50f6265b65262016abf6cbaea6487d0ba4784fb5a479779",
+						"rawStopReason": "completed"
+					}
+				},
+				{
+					"type": "message",
+					"id": "d894fbba",
+					"parentId": "bad0093f",
+					"timestamp": "2026-10-02T08:35:09.984Z",
+					"message": {
+						"role": "toolResult",
+						"toolCallId": "call_INFjpOkQ1GJdI5444DRFshxX|fc_03b50f6265b65262016abf6cbe290c87d09b82ae73235a23d8",
+						"toolName": "host_state",
+						"content": [
+							{
+								"type": "text",
+								"text": "{\"character\":{\"relationship\":{\"affinity\":0,\"summary\":\"双方刚刚认识。\"},\"story\":{\"active\":false,\"summary\":\"尚未开始。\",\"current_situation\":\"当前没有正在进行的剧情。\",\"user_choices\":\"用户尚未作出与当前剧情有关的选择。\",\"unresolved\":\"当前没有未解决事项。\"}},\"display\":{\"sceneId\":\"study\",\"expressionId\":\"calm\"}}"
+							}
+						],
+						"details": {
+							"ok": true,
+							"message": "{\"character\":{\"relationship\":{\"affinity\":0,\"summary\":\"双方刚刚认识。\"},\"story\":{\"active\":false,\"summary\":\"尚未开始。\",\"current_situation\":\"当前没有正在进行的剧情。\",\"user_choices\":\"用户尚未作出与当前剧情有关的选择。\",\"unresolved\":\"当前没有未解决事项。\"}},\"display\":{\"sceneId\":\"study\",\"expressionId\":\"calm\"}}",
+							"data": {
+								"character": {
+									"relationship": {
+										"affinity": 0,
+										"summary": "双方刚刚认识。"
+									},
+									"story": {
+										"active": false,
+										"summary": "尚未开始。",
+										"current_situation": "当前没有正在进行的剧情。",
+										"user_choices": "用户尚未作出与当前剧情有关的选择。",
+										"unresolved": "当前没有未解决事项。"
+									}
+								},
+								"display": {
+									"sceneId": "study",
+									"expressionId": "calm"
+								}
+							}
+						},
+						"isError": false,
+						"timestamp": 1790930109984
+					}
+				},
+				{
+					"type": "message",
+					"id": "67d30210",
+					"parentId": "d894fbba",
+					"timestamp": "2026-10-02T08:35:12.227Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "现在我们刚刚认识，亲近度是 0；没有正在进行的剧情，也没有待处理的悬念。眼下在极光书房，我的状态很平静。",
+								"textSignature": "{\"v\":1,\"id\":\"msg_03b50f6265b65262016abf6cbfa88087d09cb05debb7895009\",\"phase\":\"final_answer\"}"
+							}
+						],
+						"api": "openai-codex-responses",
+						"provider": "openai-codex",
+						"model": "gpt-5.6-sol",
+						"usage": {
+							"input": 212,
+							"output": 45,
+							"cacheRead": 7040,
+							"cacheWrite": 0,
+							"reasoning": 0,
+							"totalTokens": 7297,
+							"cost": {
+								"input": 0.0010600000000000002,
+								"output": 0.00135,
+								"cacheRead": 0.0035199999999999997,
+								"cacheWrite": 0,
+								"total": 0.0059299999999999995
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1790930109985,
+						"responseId": "resp_03b50f6265b65262016abf6cbee38487d0b7b5db64ff05e1ea",
+						"rawStopReason": "completed"
+					}
+				}
+			],
+			"hasMoreBefore": false
+		},
+		"live": {
+			"version": {
+				"instanceId": "8b622ad8-581c-4b2d-965b-99a62cf52896",
+				"sequence": 119
+			},
+			"isStreaming": false,
+			"isRetrying": false,
+			"retryAttempt": 0,
+			"isCompacting": false,
+			"pendingToolCallIds": [],
+			"steering": [],
+			"followUp": []
+		}
+	}
+}

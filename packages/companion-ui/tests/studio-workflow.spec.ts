@@ -84,3 +84,55 @@ describe("Studio draft editing", () => {
 		});
 	});
 });
+
+it("undoes and redoes whole saved revisions and starts a new branch after editing an undone draft", async () => {
+	let revision = 1;
+	const bodies = new Map<number, string>([[1, "original"]]);
+	const { workflow, api } = setup(async (_id, expected, files) => {
+		expect(expected).toBe(revision);
+		revision++;
+		bodies.set(revision, files["character.yaml"]?.content ?? "");
+		return { ...draft, currentRevision: revision };
+	});
+	api.draftFile = async () => new TextEncoder().encode(bodies.get(revision));
+	api.draftListRevisions = async () =>
+		[...bodies.keys()].reverse().map((revision) => ({ revision, createdAt: draft.updatedAt }));
+	api.draftRestoreRevision = async (_id, expected, source) => {
+		expect(expected).toBe(revision);
+		revision++;
+		bodies.set(revision, bodies.get(source)!);
+		return { ...draft, currentRevision: revision };
+	};
+	await workflow.open(draft);
+	workflow.edit("character.yaml", "first edit");
+	await workflow.flush();
+	workflow.edit("character.yaml", "second edit");
+	await workflow.flush();
+	await workflow.undo();
+	expect(workflow.texts()["character.yaml"]).toBe("first edit");
+	expect(workflow.canRedo()).toBe(1);
+	await workflow.undo(true);
+	expect(workflow.texts()["character.yaml"]).toBe("second edit");
+	await workflow.undo();
+	workflow.edit("character.yaml", "new branch");
+	await workflow.flush();
+	expect(workflow.canRedo()).toBe(0);
+	await workflow.undo();
+	expect(workflow.texts()["character.yaml"]).toBe("first edit");
+});
+
+it("drops pruned undo and redo targets before restoring another revision", async () => {
+	let revision = 3;
+	const { workflow, api } = setup(async () => ({ ...draft, currentRevision: ++revision }));
+	api.draftListRevisions = async () =>
+		[3, 2, 1].map((revision) => ({ revision, createdAt: draft.updatedAt }));
+	api.draftRestoreRevision = vi.fn(async () => ({ ...draft, currentRevision: ++revision }));
+	await workflow.open({ ...draft, currentRevision: 3 });
+	await workflow.undo();
+	expect(workflow.canRedo()).toBe(1);
+	workflow.retainHistory([4]);
+	expect(workflow.canUndo()).toBe(0);
+	expect(workflow.canRedo()).toBe(0);
+	await workflow.undo();
+	expect(api.draftRestoreRevision).toHaveBeenCalledTimes(1);
+});

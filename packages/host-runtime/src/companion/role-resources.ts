@@ -25,7 +25,7 @@ const RoleSkillResourceMetadata = z.strictObject({
 	headings: z.array(z.string().min(1).max(240)).min(1).max(30),
 	when: z.strictObject({ state: StateRules.default({}) }).default({ state: {} }),
 });
-const RoleSkillMetadata = z.strictObject({
+export const RoleSkillMetadata = z.strictObject({
 	name: z
 		.string()
 		.min(1)

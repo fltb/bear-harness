@@ -139,10 +139,10 @@ test("correction accepts before completion and Stop cancels its real provider re
 		await expect(assistant.getByText("E2E_CORRECTION_ORIGINAL", { exact: true })).toHaveCount(1);
 		await thread
 			.getByRole("article", { name: "极昼" })
-			.getByRole("button", { name: "这不像极昼" })
+			.getByRole("button", { name: "纠正回复" })
 			.click();
 		const accepted = page.waitForResponse("**/rpc/message.correct");
-		await page.getByRole("button", { name: "语气不像他" }).click();
+		await page.getByRole("button", { name: "语气不合适" }).click();
 		expect(await (await accepted).json()).toMatchObject({ ok: true });
 		await hold.entered();
 		await expect(page.getByTestId("conversation-activity")).toBeVisible();
@@ -434,9 +434,9 @@ test("correction accepts an answer after native skill and state tool calls", asy
 	const originalId = before.findLast((entry) => entry.role === "assistant")?.id;
 	expect(originalId).toBeDefined();
 	expect(before.filter((entry) => entry.role === "toolResult")).toHaveLength(2);
-	await assistant.getByRole("button", { name: "这不像极昼" }).click();
+	await assistant.getByRole("button", { name: "纠正回复" }).click();
 	const accepted = page.waitForResponse("**/rpc/message.correct");
-	await page.getByRole("button", { name: "语气不像他" }).click();
+	await page.getByRole("button", { name: "语气不合适" }).click();
 	expect(await (await accepted).json()).toMatchObject({ ok: true });
 	await expect
 		.poll(async () => {
@@ -453,5 +453,5 @@ test("correction accepts an answer after native skill and state tool calls", asy
 		prompt,
 	]);
 	expect(corrected.filter((entry) => entry.role === "toolResult")).toHaveLength(2);
-	expect(thread.getByText("语气不像他", { exact: true })).toHaveCount(0);
+	expect(thread.getByText("语气不合适", { exact: true })).toHaveCount(0);
 });

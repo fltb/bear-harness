@@ -35,6 +35,8 @@ interface CharacterApiContext {
 export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 	const { client, queryClient } = c;
 	const api: CharacterApi = {
+		trial: (input) => invoke(client, () => c.hostClient.character.trial(input)),
+		trialEvents: (signal) => c.hostClient.live.subscribe(signal),
 		inspectMemory: (request) => invoke(client, () => c.hostClient.memory.inspect(request)),
 		memoryGet: (characterId) =>
 			invoke(client, () => c.hostClient.character.memoryGet({ characterId })),
@@ -182,14 +184,105 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 		},
 		draftCreate: async (params) =>
 			(await invoke(client, () => client.character.draftCreate(params))).draft,
-		draftList: async () => (await invoke(client, () => client.character.draftList({}))).drafts,
-		draftFile: async (id, path) => {
+		draftList: async (characterId) =>
+			(
+				await invoke(client, () =>
+					client.character.draftList({ limit: 50, ...(characterId ? { characterId } : {}) }),
+				)
+			).drafts,
+		draftListPage: async (cursor) =>
+			invoke(client, () =>
+				client.character.draftList({ limit: 50, ...(cursor ? { cursor } : {}) }),
+			),
+		authoringSchema: async () => invoke(client, () => client.character.authoringSchema({})),
+		draftReview: async (id, expectedRevision) =>
+			invoke(client, () => client.character.draftReview({ id, expectedRevision })),
+		draftDiff: async (id, expectedRevision, path) =>
+			invoke(client, () => client.character.draftDiff({ id, expectedRevision, path })),
+		draftManage: async (input) => invoke(client, () => client.character.draftManage(input)),
+		draftExport: async (id, expectedRevision) => {
+			const chunks: Uint8Array[] = [];
+			let offset = 0;
+			let hash: string | undefined;
+			while (true) {
+				const part = await invoke(client, () =>
+					client.character.draftExport({ id, expectedRevision, offset }),
+				);
+				if (hash && hash !== part.sha256) throw new Error("character_draft_revision_mismatch");
+				hash = part.sha256;
+				const bytes = Uint8Array.from(atob(part.base64), (c) => c.charCodeAt(0));
+				chunks.push(bytes);
+				offset += bytes.length;
+				if (offset >= part.totalBytes) break;
+				if (!bytes.length) throw new Error("character_draft_file_corrupt");
+			}
+			const output = new Uint8Array(offset);
+			let position = 0;
+			for (const part of chunks) {
+				output.set(part, position);
+				position += part.length;
+			}
+			return output;
+		},
+		draftUploadFile: async (id, expectedRevision, path, file, options) => {
+			options?.signal?.throwIfAborted();
+			const begun = await invoke(client, () =>
+				client.character.draftTransfer({
+					action: "begin",
+					id,
+					expectedRevision,
+					path,
+					size: file.size,
+				}),
+			);
+			if (!begun.uploadId) throw new Error("character_draft_upload_incomplete");
+			const uploadId = begun.uploadId;
+			try {
+				options?.onProgress?.(0);
+				for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
+					options?.signal?.throwIfAborted();
+					const bytes = new Uint8Array(
+						await file.slice(offset, offset + 1024 * 1024).arrayBuffer(),
+					);
+					let binary = "";
+					for (let start = 0; start < bytes.length; start += 16384)
+						binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+					await invoke(client, () =>
+						client.character.draftTransfer({
+							action: "append",
+							id,
+							uploadId,
+							offset,
+							base64: btoa(binary),
+						}),
+					);
+					options?.onProgress?.(Math.min(offset + bytes.length, file.size));
+				}
+				options?.signal?.throwIfAborted();
+				const result = await invoke(client, () =>
+					client.character.draftTransfer({ action: "finish", id, uploadId, expectedRevision }),
+				);
+				if (!result.draft) throw new Error("character_draft_upload_incomplete");
+				return result.draft;
+			} catch (error) {
+				await invoke(client, () =>
+					client.character.draftTransfer({ action: "cancel", id, uploadId }),
+				).catch(() => undefined);
+				throw error;
+			}
+		},
+		draftFile: async (id, path, expectedSha256) => {
 			const pieces: Uint8Array[] = [];
 			let offset = 0;
 			let hash: string | undefined;
 			while (true) {
 				const piece = await invoke(client, () =>
-					client.character.draftFileGet({ id, path, offset }),
+					client.character.draftFileGet({
+						id,
+						path,
+						offset,
+						...(expectedSha256 ? { expectedSha256 } : {}),
+					}),
 				);
 				if (hash && hash !== piece.sha256) throw new Error("character_draft_revision_mismatch");
 				hash = piece.sha256;
@@ -224,12 +317,15 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 					client.character.draftUploadAssets({ id, expectedRevision, assets }),
 				)
 			).draft,
-		draftListRevisions: async (id) =>
+		draftListRevisions: async (id, before) =>
 			(
 				await refreshRpcQuery({
 					client: queryClient,
-					key: ["character", "draftRevisions", id],
-					request: () => invoke(client, () => client.character.draftListRevisions({ id })),
+					key: ["character", "draftRevisions", id, before],
+					request: () =>
+						invoke(client, () =>
+							client.character.draftListRevisions({ id, ...(before ? { before } : {}) }),
+						),
 				})
 			).revisions,
 		draftRestoreRevision: async (id, expectedRevision, sourceRevision) =>
@@ -240,9 +336,15 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			).draft,
 		draftValidate: async (id, expectedRevision) =>
 			(await invoke(client, () => client.character.draftValidate({ id, expectedRevision }))).draft,
-		draftPublish: async (id, expectedRevision) => {
+		draftPublish: async (id, expectedRevision, migrationToken) => {
 			const draft = (
-				await invoke(client, () => client.character.draftPublish({ id, expectedRevision }))
+				await invoke(client, () =>
+					client.character.draftPublish({
+						id,
+						expectedRevision,
+						...(migrationToken ? { migrationToken } : {}),
+					}),
+				)
 			).draft;
 			await Promise.all([
 				c.resyncOnboarding(),

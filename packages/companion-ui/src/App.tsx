@@ -328,6 +328,10 @@ function DesktopFrame(props: { platform?: string }) {
 			<Show when={studioOpen()}>
 				<CharacterStudio
 					initialCharacterId={editCharacterId()}
+					onOpenSettings={() => {
+						setStudioOpen(false);
+						workflow.openBackstage("settings");
+					}}
 					onClose={() => setStudioOpen(false)}
 				/>
 			</Show>

@@ -1,4 +1,6 @@
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { recoverCharacterMigration } from "../companion/character-state-migration.js";
 import {
 	COMPANION_SCHEMA_SQL,
 	CompanionDatabase,
@@ -42,6 +44,7 @@ export class CompanionStorageRegistry {
 		try {
 			database.initialize(COMPANION_SCHEMA_SQL);
 			database.ensureRuntimeIdentity();
+			recoverCharacterMigration(database.orm, paths.root, join(this.layout.charactersRoot, id), id);
 		} catch (error) {
 			database.close();
 			throw error;

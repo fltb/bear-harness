@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
@@ -593,8 +593,8 @@ test("configured live model answers through the native conversation journey", as
 		.getByRole("article", { name: "极昼" })
 		.filter({ hasText: "LIVE_EDITED" });
 	const leafBeforeCorrection = (await open(source.conversationId)).branch.activeLeafId;
-	await editedAssistant.getByRole("button", { name: "这不像极昼" }).click();
-	await page.getByRole("button", { name: "语气不像他" }).click();
+	await editedAssistant.getByRole("button", { name: "纠正回复" }).click();
+	await page.getByRole("button", { name: "语气不合适" }).click();
 	await expect
 		.poll(async () => (await open(source.conversationId)).branch.activeLeafId, {
 			timeout: liveReplyTimeout,
@@ -1059,4 +1059,113 @@ test("both configured release models survive ten natural mixed-content turns", a
 		}
 	}
 	expect(pageErrors).toEqual([]);
+});
+
+test("configured live model answers an isolated Studio trial", async ({ page }, testInfo) => {
+	test.skip(
+		!enabled || !providerId || !modelId || !credentialsAvailable,
+		"Requires a configured live model",
+	);
+	test.setTimeout(liveReplyTimeout);
+	await page.goto("/");
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const rpc: LiveRpc = async <T>(channel: string, data: unknown): Promise<T> => {
+		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
+			headers,
+			data: characterRequest(channel, data, "jizhou"),
+		});
+		const envelope = await response.json();
+		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
+		return envelope.data as T;
+	};
+	let selectedApiKey = apiKey;
+	if (usePiConfig) {
+		const selected = selectedPiProviderConfig();
+		selectedApiKey = selected.apiKey;
+		await rpc("provider.importPiConfig", { configJson: selected.configJson });
+	} else if (customBaseUrl)
+		await rpc("provider.customUpsert", {
+			providerId,
+			name: "Studio live smoke",
+			baseUrl: customBaseUrl,
+			models: [{ id: modelId }],
+		});
+	await setSelectedApiKey(rpc, selectedApiKey);
+	await rpc("model.enable", {
+		providerId: configuredProviderId,
+		modelId,
+		label: `Studio ${modelId}`,
+	});
+	await completeLiveOnboarding(rpc, "Studio");
+	const { draft } = await rpc<{ draft: { id: string; currentRevision: number } }>(
+		"character.draftCreate",
+		{ characterId: "jizhou" },
+	);
+	const trial = await rpc<{ trialId: string }>("character.trial", {
+		action: "start",
+		id: draft.id,
+		expectedRevision: draft.currentRevision,
+		providerId: configuredProviderId,
+		modelId,
+	});
+	const prompts = ["你今晚在忙什么？", "请用 host_state 看看我们现在的状态，再告诉我。"];
+	try {
+		for (const text of prompts) {
+			await rpc("character.trial", {
+				action: "send",
+				trialId: trial.trialId,
+				text,
+				clientMessageId: crypto.randomUUID(),
+			});
+			await expect
+				.poll(
+					async () => {
+						const result = await rpc<{ detail: { live: { isStreaming: boolean } } }>(
+							"character.trial",
+							{ action: "get", trialId: trial.trialId },
+						);
+						return result.detail.live.isStreaming;
+					},
+					{ timeout: liveReplyTimeout / 2 },
+				)
+				.toBe(false);
+		}
+		const result = await rpc<{
+			detail: {
+				branch: {
+					entries: Array<{
+						type: string;
+						message?: { role: string; content: unknown; toolName?: string };
+					}>;
+				};
+			};
+		}>("character.trial", { action: "get", trialId: trial.trialId });
+		const replies = result.detail.branch.entries.filter(
+			(entry) => entry.type === "message" && entry.message?.role === "assistant",
+		);
+		expect(replies.length).toBeGreaterThanOrEqual(2);
+		expect(
+			result.detail.branch.entries.some(
+				(entry) => entry.message?.role === "toolResult" && entry.message.toolName === "host_state",
+			),
+		).toBe(true);
+		const evidence = testInfo.outputPath("studio-live-raw.json");
+		writeFileSync(
+			evidence,
+			JSON.stringify(
+				{ provider: configuredProviderId, model: modelId, prompts, ...result },
+				null,
+				2,
+			),
+		);
+		await testInfo.attach("studio-live-raw", { path: evidence, contentType: "application/json" });
+	} finally {
+		await rpc("character.trial", { action: "close", trialId: trial.trialId });
+		await rpc("character.draftManage", {
+			action: "delete",
+			id: draft.id,
+			expectedRevision: draft.currentRevision,
+		});
+	}
 });

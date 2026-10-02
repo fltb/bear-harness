@@ -862,3 +862,51 @@
 .studio-error p {
 	@apply whitespace-pre-wrap break-words;
 }
+
+.studio-schema-field {
+	@apply grid min-w-0 gap-3;
+}
+.studio-collection-item {
+	@apply my-3 grid min-w-0 gap-4 rounded-lg border p-4;
+	border-color: var(--sys-border);
+}
+.studio-preview-dialog,
+.studio-review-dialog {
+	@apply fixed inset-4 overflow-auto rounded-xl border p-6 shadow-xl;
+	z-index: 120;
+	border-color: var(--sys-border);
+	background: var(--surface-panel);
+}
+.studio-review,
+.studio-diff {
+	@apply grid min-w-0 gap-4;
+}
+.studio-diff textarea {
+	@apply w-full rounded-lg border p-3 font-mono text-sm;
+	border-color: var(--sys-border);
+	background: var(--surface-panel);
+}
+.studio-asset-preview {
+	@apply my-4 max-w-full overflow-auto;
+}
+.studio-asset-preview img,
+.studio-asset-preview video {
+	@apply max-h-96 max-w-full object-contain;
+}
+.studio-asset-preview[data-expanded="true"] img {
+	@apply max-h-none max-w-none;
+}
+.studio-directory-toggle {
+	@apply hidden;
+}
+.studio-issue {
+	@apply rounded-lg border p-3;
+	border-color: var(--sys-border);
+}
+.studio-trial-messages {
+	@apply my-6 grid gap-4;
+}
+.studio-trial-messages article {
+	@apply min-w-0 rounded-lg border p-4;
+	border-color: var(--sys-border);
+}

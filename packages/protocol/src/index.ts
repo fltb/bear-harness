@@ -446,3 +446,20 @@ export type RunnerSaveRequest = z.infer<typeof schema.RunnerSaveRequest>;
 export type RunnerSaveResponse = z.infer<typeof schema.RunnerSaveResponse>;
 export type RunnerIdRequest = z.infer<typeof schema.RunnerIdRequest>;
 export type RunnerTestResponse = z.infer<typeof schema.RunnerTestResponse>;
+
+export type CharacterDraftListRequest = z.infer<typeof schema.CharacterDraftListRequest>;
+export type CharacterAuthoringSchemaResponse = z.infer<
+	typeof schema.CharacterAuthoringSchemaResponse
+>;
+export type CharacterDraftReviewRequest = z.infer<typeof schema.CharacterDraftReviewRequest>;
+export type CharacterDraftReviewResponse = z.infer<typeof schema.CharacterDraftReviewResponse>;
+export type CharacterDraftDiffRequest = z.infer<typeof schema.CharacterDraftDiffRequest>;
+export type CharacterDraftDiffResponse = z.infer<typeof schema.CharacterDraftDiffResponse>;
+export type CharacterDraftManageRequest = z.infer<typeof schema.CharacterDraftManageRequest>;
+export type CharacterDraftManageResponse = z.infer<typeof schema.CharacterDraftManageResponse>;
+export type CharacterDraftExportRequest = z.infer<typeof schema.CharacterDraftExportRequest>;
+export type CharacterDraftTransferRequest = z.infer<typeof schema.CharacterDraftTransferRequest>;
+export type CharacterDraftTransferResponse = z.infer<typeof schema.CharacterDraftTransferResponse>;
+
+export type CharacterTrialRequest = z.infer<typeof schema.CharacterTrialRequest>;
+export type CharacterTrialResponse = z.infer<typeof schema.CharacterTrialResponse>;

@@ -65,23 +65,6 @@ CREATE TABLE executor_profiles (
 	config_json TEXT NOT NULL DEFAULT '{}',
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE character_drafts (
-	id TEXT PRIMARY KEY,
-	base_package_id TEXT,
-	status TEXT NOT NULL DEFAULT 'draft'
-		CHECK (status IN ('draft','validating','ready_to_publish','published')),
-	locale TEXT NOT NULL DEFAULT 'zh-CN',
-	current_revision INTEGER NOT NULL DEFAULT 1,
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE character_draft_revisions (
-	draft_id TEXT NOT NULL REFERENCES character_drafts(id) ON DELETE CASCADE,
-	revision INTEGER NOT NULL,
-	files_json TEXT NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	PRIMARY KEY (draft_id, revision)
-);
 INSERT INTO app_settings (id) VALUES (1);
 INSERT INTO executor_profiles (id, profile_type, config_json)
 	VALUES ('pi-default', 'pi', '{}');

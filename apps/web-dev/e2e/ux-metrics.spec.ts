@@ -189,6 +189,12 @@ for (const viewport of [
 			await ensureReadyForConversation(page);
 			await prepareVisualState(page, state);
 			const masks = [];
+			if (state === "run" || state === "artifact") {
+				masks.push(
+					page.getByText(new RegExp(`^${zhCN.work.timeline.origin}:`)),
+					page.getByText(new RegExp(`^${zhCN.work.activity.finishedAt} `)),
+				);
+			}
 			if (state === "artifact") {
 				const dialog = page.getByRole("dialog", { name: "e2e-report.txt" });
 				const provenance = dialog.getByRole("region", { name: zhCN.work.result.provenance });

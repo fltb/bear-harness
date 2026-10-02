@@ -1,3 +1,4 @@
+import type * as Wire from "@bear-harness/protocol";
 import type {
 	LocalEmbeddingAcquisitionState,
 	MemoryInspectRequest,
@@ -207,6 +208,8 @@ export type ExternalAgentApi = ReturnType<
 >;
 
 export interface CharacterApi {
+	trial(input: Wire.CharacterTrialRequest): Promise<Wire.CharacterTrialResponse>;
+	trialEvents(signal: AbortSignal): Promise<AsyncIterable<Wire.LivePush>>;
 	memoryGet(characterId: string): Promise<{ enabled: boolean }>;
 	memorySet(characterId: string, enabled: boolean): Promise<{ enabled: boolean }>;
 	inspectMemory(request: MemoryInspectRequest): Promise<MemoryInspectResponse>;
@@ -252,8 +255,25 @@ export interface CharacterApi {
 		name?: string;
 		locale?: string;
 	}): Promise<CharacterDraft>;
-	draftList(): Promise<Array<Omit<CharacterDraft, "files">>>;
-	draftFile(id: string, path: string): Promise<Uint8Array>;
+	draftList(characterId?: string): Promise<Array<Omit<CharacterDraft, "files">>>;
+	draftListPage(cursor?: string): Promise<Wire.CharacterDraftListResponse>;
+	authoringSchema(): Promise<Wire.CharacterAuthoringSchemaResponse>;
+	draftReview(id: string, expectedRevision: number): Promise<Wire.CharacterDraftReviewResponse>;
+	draftDiff(
+		id: string,
+		expectedRevision: number,
+		path: string,
+	): Promise<Wire.CharacterDraftDiffResponse>;
+	draftManage(input: Wire.CharacterDraftManageRequest): Promise<Wire.CharacterDraftManageResponse>;
+	draftExport(id: string, expectedRevision: number): Promise<Uint8Array>;
+	draftUploadFile(
+		id: string,
+		expectedRevision: number,
+		path: string,
+		file: File,
+		options?: { signal?: AbortSignal; onProgress?(bytes: number): void },
+	): Promise<CharacterDraft>;
+	draftFile(id: string, path: string, expectedSha256?: string): Promise<Uint8Array>;
 	draftGet(id: string): Promise<CharacterDraft>;
 	draftPatch(
 		id: string,
@@ -265,14 +285,18 @@ export interface CharacterApi {
 		expectedRevision: number,
 		assets: Array<{ path: string; mime: string; base64: string }>,
 	): Promise<CharacterDraft>;
-	draftListRevisions(id: string): Promise<CharacterDraftRevision[]>;
+	draftListRevisions(id: string, before?: number): Promise<CharacterDraftRevision[]>;
 	draftRestoreRevision(
 		id: string,
 		expectedRevision: number,
 		sourceRevision: number,
 	): Promise<CharacterDraft>;
 	draftValidate(id: string, expectedRevision: number): Promise<CharacterDraft>;
-	draftPublish(id: string, expectedRevision: number): Promise<CharacterDraft>;
+	draftPublish(
+		id: string,
+		expectedRevision: number,
+		migrationToken?: string,
+	): Promise<CharacterDraft>;
 }
 
 export interface CanonApi {

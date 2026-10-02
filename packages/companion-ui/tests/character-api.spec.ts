@@ -108,6 +108,8 @@ function createCharacterHarness() {
 	};
 	const api = createCharacterApi({
 		client,
+		hostClient: client,
+		selectCharacter: async () => {},
 		queryClient,
 		...callbacks,
 		currentCharacterId: () => characterSummary.id,
@@ -288,4 +290,144 @@ describe("canon store API", () => {
 		});
 		expect(refreshSources).not.toHaveBeenCalled();
 	});
+});
+
+it("transfers large draft assets with revision checks, cancels failed uploads and joins immutable export chunks", async () => {
+	const { api, client } = createCharacterHarness();
+	const transfer = vi.fn(async (input: { action: string }) =>
+		ok(
+			input.action === "begin"
+				? { uploadId: "upload" }
+				: input.action === "finish"
+					? { draft }
+					: {},
+		),
+	);
+	client.character.draftTransfer = transfer;
+	const bytes = new Uint8Array(1024 * 1024 + 3).fill(65);
+	const file = {
+		size: bytes.length,
+		slice: (from: number, to: number) => ({
+			arrayBuffer: async () => bytes.slice(from, to).buffer,
+		}),
+	} as File;
+	expect(await api.draftUploadFile(draft.id, 3, "assets/large.png", file)).toEqual(draft);
+	const appended = transfer.mock.calls
+		.map(([input]) => input)
+		.filter((input) => input.action === "append");
+	expect(appended).toHaveLength(2);
+	expect(appended[1]).toMatchObject({ offset: 1024 * 1024, base64: btoa("AAA") });
+	transfer.mockImplementation(async (input) => {
+		if (input.action === "append") throw new Error("Disconnected");
+		return ok(input.action === "begin" ? { uploadId: "failed" } : {});
+	});
+	await expect(api.draftUploadFile(draft.id, 3, "assets/large.png", file)).rejects.toThrow(
+		"Disconnected",
+	);
+	expect(transfer).toHaveBeenLastCalledWith({ action: "cancel", id: draft.id, uploadId: "failed" });
+	const exportPart = vi.fn(async ({ offset }: { offset: number }) =>
+		ok({ base64: btoa(offset === 0 ? "PK" : "ZIP"), totalBytes: 5, sha256: "same" }),
+	);
+	client.character.draftExport = exportPart;
+	expect(new TextDecoder().decode(await api.draftExport(draft.id, 3))).toBe("PKZIP");
+	expect(exportPart).toHaveBeenLastCalledWith({ id: draft.id, expectedRevision: 3, offset: 2 });
+	exportPart.mockImplementation(async ({ offset }) =>
+		ok({ base64: btoa("AA"), totalBytes: 5, sha256: offset ? "changed" : "first" }),
+	);
+	await expect(api.draftExport(draft.id, 3)).rejects.toThrow("character_draft_revision_mismatch");
+	exportPart.mockImplementation(async () => ok({ base64: "", totalBytes: 5, sha256: "same" }));
+	await expect(api.draftExport(draft.id, 3)).rejects.toThrow("character_draft_file_corrupt");
+});
+
+it("routes authoring review, migration approval, pagination and trial events to the Host contracts", async () => {
+	const { api, client, callbacks } = createCharacterHarness();
+	Object.assign(client.character, {
+		draftList: vi.fn(() => ok({ drafts: [draft], nextCursor: "next" })),
+		authoringSchema: vi.fn(() => ok({ manifest: { type: "object" }, skill: { type: "object" } })),
+		draftReview: vi.fn(() => ok({ issues: [], changes: [] })),
+		draftDiff: vi.fn(() => ok({ before: "old", after: "new", truncated: false })),
+		draftManage: vi.fn(() => ok({ draft })),
+		trial: vi.fn(() => ok({ trialId: "trial" })),
+	});
+	expect(await api.draftList("character-one")).toEqual([draft]);
+	await api.draftList();
+	await api.draftListPage("next");
+	await api.draftListPage();
+	expect(client.character.draftList).toHaveBeenCalledWith({ cursor: "next", limit: 50 });
+	expect(await api.authoringSchema()).toHaveProperty("manifest");
+	await api.draftReview(draft.id, 3);
+	await api.draftDiff(draft.id, 3, "character.yaml");
+	expect(client.character.draftDiff).toHaveBeenCalledWith({
+		id: draft.id,
+		expectedRevision: 3,
+		path: "character.yaml",
+	});
+	await api.draftManage({ action: "prune", id: draft.id, expectedRevision: 3, keep: 20 });
+	await api.draftCreate({
+		kind: "new",
+		characterId: "new-character",
+		name: "New",
+		locale: "en-US",
+	});
+	await api.draftPatch(draft.id, 3, { "canon/a.md": { encoding: "utf8", content: "Reference" } });
+	await api.draftUploadAssets(draft.id, 3, { "assets/a.png": "aW1hZ2U=" });
+	await api.draftGet(draft.id);
+	await api.draftListRevisions(draft.id, 2);
+	await api.draftRestoreRevision(draft.id, 3, 2);
+	await api.draftValidate(draft.id, 3);
+	await api.draftPublish(draft.id, 3, "review-token");
+	expect(client.character.draftPublish).toHaveBeenCalledWith({
+		id: draft.id,
+		expectedRevision: 3,
+		migrationToken: "review-token",
+	});
+	expect(callbacks.refreshSnapshot).toHaveBeenCalled();
+	await api.trial({ action: "close", trialId: "trial" });
+	expect(client.character.trial).toHaveBeenCalledWith({ action: "close", trialId: "trial" });
+	const controller = new AbortController();
+	await api.trialEvents(controller.signal);
+	controller.abort();
+	const fileGet = vi.fn(async ({ offset }: { offset: number }) =>
+		ok({ base64: btoa(offset ? "llo" : "He"), totalBytes: 5, sha256: "same" }),
+	);
+	client.character.draftFileGet = fileGet;
+	expect(new TextDecoder().decode(await api.draftFile(draft.id, "canon/a.md"))).toBe("Hello");
+	fileGet.mockImplementation(async () => ok({ base64: "", totalBytes: 1, sha256: "same" }));
+	await expect(api.draftFile(draft.id, "canon/a.md")).rejects.toThrow(
+		"character_draft_file_corrupt",
+	);
+	fileGet.mockImplementation(async ({ offset }) =>
+		ok({ base64: btoa("a"), totalBytes: 2, sha256: offset ? "new" : "old" }),
+	);
+	await expect(api.draftFile(draft.id, "canon/a.md")).rejects.toThrow(
+		"character_draft_revision_mismatch",
+	);
+});
+
+it("reports acknowledged upload bytes and cancels before committing the next chunk", async () => {
+	const { api, client } = createCharacterHarness();
+	const controller = new AbortController();
+	const progress: number[] = [];
+	const transfer = vi.fn(async (input: { action: string }) =>
+		ok(input.action === "begin" ? { uploadId: "cancelled" } : {}),
+	);
+	client.character.draftTransfer = transfer;
+	const bytes = new Uint8Array(1024 * 1024 + 1);
+	const file = {
+		size: bytes.length,
+		slice: (from: number, to: number) => ({
+			arrayBuffer: async () => bytes.slice(from, to).buffer,
+		}),
+	} as File;
+	await expect(
+		api.draftUploadFile(draft.id, 3, "assets/large.png", file, {
+			signal: controller.signal,
+			onProgress: (bytes) => {
+				progress.push(bytes);
+				if (bytes) controller.abort();
+			},
+		}),
+	).rejects.toMatchObject({ name: "AbortError" });
+	expect(progress).toEqual([0, 1024 * 1024]);
+	expect(transfer.mock.calls.map(([input]) => input.action)).toEqual(["begin", "append", "cancel"]);
 });

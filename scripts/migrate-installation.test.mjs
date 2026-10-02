@@ -125,7 +125,7 @@ test("rebuilds legacy databases without losing drafts, credentials, or Catalog o
 			"ALTER TABLE app_settings ADD COLUMN first_run_stage TEXT DEFAULT 'role'; ALTER TABLE executor_profiles ADD COLUMN capability_json TEXT DEFAULT '{}'; PRAGMA user_version=0",
 		);
 		system.connection.exec(
-			"INSERT INTO character_drafts(id) VALUES('draft-a'); INSERT INTO character_draft_revisions(draft_id,revision,files_json) VALUES('draft-a',1,'{}')",
+			"CREATE TABLE character_drafts(id TEXT PRIMARY KEY); CREATE TABLE character_draft_revisions(draft_id TEXT,revision INTEGER,files_json TEXT); INSERT INTO character_drafts(id) VALUES('draft-a'); INSERT INTO character_draft_revisions(draft_id,revision,files_json) VALUES('draft-a',1,'{}')",
 		);
 		system.connection
 			.prepare(
@@ -140,8 +140,8 @@ test("rebuilds legacy databases without losing drafts, credentials, or Catalog o
 		);
 		characterDb.close();
 		const receipt = migrateInstallation(source, destination, resolve("config/characters"));
-		assert.equal(receipt.system.character_drafts, 1);
-		assert.equal(receipt.system.character_draft_revisions, 1);
+		assert.equal(receipt.system["retired:character_drafts"], 1);
+		assert.equal(receipt.system["retired:character_draft_revisions"], 1);
 		assert.equal(receipt.characters.jizhou.counts.conversations, 1);
 		const check = new Database(join(destination, "system"), { fileName: "settings.db" });
 		try {

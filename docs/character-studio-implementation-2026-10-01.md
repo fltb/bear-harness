@@ -1,5 +1,7 @@
 # Character Studio 首批实现与验证
 
+> 历史记录：下列“仍需推进”反映 10 月 1 日状态；10 月 2 日的完成项与剩余发布限制见 [后续实现记录](character-studio-implementation-2026-10-02.md)。
+
 日期：2026-10-01。基线：`2ab4276`。结论：首批真实编辑流程可用于开发验证；完整 Studio 尚未验收，不发布版本或 APK。
 
 此前的角色包 v2 迁移、Canon 向量检索与共享 embedding 已单独提交并推送到 `origin/main`。本批实现进入现有应用，不使用静态原型充当成品。包格式仍以源码、`docs/character-package-authoring.md` 和 v2 定义为准，不恢复 Canon manifest。

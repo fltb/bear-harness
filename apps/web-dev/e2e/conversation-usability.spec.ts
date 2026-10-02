@@ -134,7 +134,7 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 
 	const completedReply = assistant.filter({ hasText: "HOLD_ONE HOLD_TWO" });
 	const copyAction = completedReply.getByRole("button", { name: zhCN.messages.copy });
-	const correctionAction = page.getByRole("button", { name: "这不像极昼" });
+	const correctionAction = page.getByRole("button", { name: "纠正回复" });
 	await expect(copyAction).toHaveCSS("opacity", "1");
 	for (const action of [copyAction, correctionAction]) {
 		const box = await action.boundingBox();

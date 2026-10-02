@@ -359,6 +359,18 @@ export class SystemDatabase extends Database {
 			config_json, '$.canonicalPath', '$.version', '$.sha256', '$.codeModeHostPath', '$.codeModeHostSha256')
 			WHERE profile_type = 'codex' AND (json_type(config_json, '$.canonicalPath') IS NOT NULL
 			OR json_type(config_json, '$.sha256') IS NOT NULL)`);
+		// Draft authoring now lives below its character. Never discard populated retired storage.
+		for (const name of ["character_draft_revisions", "character_drafts"]) {
+			if (
+				!this.connection
+					.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+					.get(name)
+			)
+				continue;
+			if ((this.connection.prepare(`SELECT count(*) AS n FROM ${name}`).get() as { n: number }).n)
+				throw new Error("Export obsolete character draft tables before opening this installation");
+			this.connection.exec(`DROP TABLE ${name}`);
+		}
 		// Window selection has no installation-wide persistence or routing authority.
 		this.connection.exec("DROP TABLE IF EXISTS active_character");
 	}

@@ -27,8 +27,6 @@ const SYSTEM_TABLES = [
 	"configured_models",
 	"provider_removal_journal",
 	"executor_profiles",
-	"character_drafts",
-	"character_draft_revisions",
 ] as const;
 
 const COMPANION_TABLES = [
@@ -77,7 +75,6 @@ const SYSTEM_JSON_STORAGE: Readonly<Record<string, readonly string[]>> = {
 		"model_download_mirror",
 	],
 	executor_profiles: ["config_json"],
-	character_draft_revisions: ["files_json"],
 };
 
 const COMPANION_JSON_STORAGE: Readonly<Record<string, readonly string[]>> = {

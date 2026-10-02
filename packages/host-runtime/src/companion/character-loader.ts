@@ -1184,6 +1184,7 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 		id: string,
 		expected: string,
 		files: Array<{ path: string; base64: string }>,
+		stateMigrationValidated = false,
 	): CharacterPackage {
 		const current = this.load(id);
 		if (!current) throw { kind: "conflict", reason: "character_package_not_found" };
@@ -1197,13 +1198,14 @@ A failed memory tool is unavailable evidence, not proof that no memory exists or
 			throw { kind: "conflict", reason: "character_package_revision_mismatch" };
 		const next = this.validate(files);
 		if (next.id !== id) throw { kind: "invalid_request", reason: "character_id_immutable" };
-		if (JSON.stringify(current.state) !== JSON.stringify(next.state))
+		if (!stateMigrationValidated && JSON.stringify(current.state) !== JSON.stringify(next.state))
 			throw { kind: "conflict", reason: "character_state_schema_change_requires_migration" };
 		if (
-			current.scenes.some((scene) => !next.scenes.some((item) => item.id === scene.id)) ||
-			current.visual.expressions.some(
-				(expression) => !next.visual.expressions.some((item) => item.id === expression.id),
-			)
+			!stateMigrationValidated &&
+			(current.scenes.some((scene) => !next.scenes.some((item) => item.id === scene.id)) ||
+				current.visual.expressions.some(
+					(expression) => !next.visual.expressions.some((item) => item.id === expression.id),
+				))
 		)
 			throw { kind: "conflict", reason: "character_display_removal_requires_migration" };
 		replaceDurableFileSync({

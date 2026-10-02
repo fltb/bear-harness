@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"main": "dist/main/index.js",
-	"description": "Bear Harness desktop app — SolidJS renderer on an Electron shell.",
+	"description": "Bear Harness desktop app \u2014 SolidJS renderer on an Electron shell.",
 	"homepage": "https://github.com/fltb/bear-harness",
 	"author": "fltb",
 	"scripts": {
@@ -40,7 +40,7 @@
 		"@rsbuild/plugin-tailwindcss": "2.0.3",
 		"@types/node": "24.13.3",
 		"@vitest/coverage-v8": "4.1.11",
-		"electron": "43.4.0",
+		"electron": "43.7.7",
 		"electron-builder": "26.15.3",
 		"esbuild": "0.28.2",
 		"playwright": "1.62.1",

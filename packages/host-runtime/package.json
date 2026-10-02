@@ -37,7 +37,8 @@
 		"undici": "^7.0.0",
 		"yaml": "2.9.0",
 		"yauzl": "^3.4.0",
-		"@agentclientprotocol/codex-acp": "^1.2.0"
+		"@agentclientprotocol/codex-acp": "^1.2.0",
+		"fflate": "^0.8.3"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
@@ -45,7 +46,6 @@
 		"@types/yauzl": "^3.4.0",
 		"@vitest/coverage-v8": "4.1.11",
 		"drizzle-kit": "^1.0.0-rc.4",
-		"fflate": "^0.8.3",
 		"typescript": "7.0.2",
 		"vitest": "4.1.11"
 	}

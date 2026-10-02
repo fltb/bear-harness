@@ -108,7 +108,12 @@ function convertDatabase(path, schema, transform, retired) {
 		for (const table of tables(old)) {
 			if (targets.includes(table) || table.startsWith("canon_chunk_vectors")) continue;
 			const count = old.prepare(`SELECT count(*) AS n FROM ${quote(table)}`).get().n;
-			assert(retired.has(table) || count === 0, `Unmapped populated table: ${table}`);
+			assert(
+				retired.has(table) ||
+					["character_drafts", "character_draft_revisions"].includes(table) ||
+					count === 0,
+				`Unmapped populated table: ${table}`,
+			);
 			counts[`retired:${table}`] = count;
 		}
 		next.connection.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE");

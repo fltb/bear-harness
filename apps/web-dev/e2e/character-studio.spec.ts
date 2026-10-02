@@ -13,10 +13,7 @@ test("Studio creates and resumes a complete draft, restores invalid YAML and app
 }) => {
 	test.setTimeout(90_000);
 	await page.goto("/");
-	await page
-		.getByRole("dialog", { name: zhCN.licenseNotice.dialogLabel, exact: true })
-		.getByRole("button", { name: copy.library, exact: true })
-		.click();
+	await page.getByRole("button", { name: copy.library, exact: true }).click();
 	const studio = page.getByRole("region", { name: copy.library, exact: true });
 	await expect(studio).toBeVisible();
 	await studio.getByRole("button", { name: copy.newRole, exact: true }).click();
@@ -42,10 +39,7 @@ test("Studio creates and resumes a complete draft, restores invalid YAML and app
 	await studio.getByRole("button", { name: copy.backChat, exact: true }).click();
 	await expect(studio).toHaveCount(0);
 	await page.reload();
-	await page
-		.getByRole("dialog", { name: zhCN.licenseNotice.dialogLabel, exact: true })
-		.getByRole("button", { name: copy.library, exact: true })
-		.click();
+	await page.getByRole("button", { name: copy.library, exact: true }).click();
 	await studio.getByRole("button", { name: copy.resume, exact: true }).click();
 	await studio.getByRole("button", { name: "canon/radio.md", exact: true }).click();
 	await expect(studio.getByLabel(copy.source, { exact: true })).toHaveValue(/旧货市场/);
@@ -55,8 +49,11 @@ test("Studio creates and resumes a complete draft, restores invalid YAML and app
 	await studio.getByRole("button", { name: copy.save, exact: true }).click();
 	await expect(studio.getByText(copy.saved, { exact: true })).toBeVisible();
 	await studio.getByRole("button", { name: copy.apply, exact: true }).click();
-	await expect(studio.getByRole("alert")).toBeVisible();
-	await expect(page.getByRole("dialog")).toHaveCount(0);
+	await expect(page.getByRole("dialog").getByRole("heading", { name: copy.issues })).toBeVisible();
+	await page
+		.getByRole("dialog")
+		.getByRole("button", { name: zhCN.messages.cancel, exact: true })
+		.click();
 	await studio.getByText(copy.history, { exact: true }).click();
 	await studio
 		.getByRole("group", { name: `#${restoreRevision}`, exact: true })
@@ -64,10 +61,14 @@ test("Studio creates and resumes a complete draft, restores invalid YAML and app
 		.click();
 	await expect(studio.getByLabel(copy.source, { exact: true })).toHaveValue(original);
 	await page.setViewportSize({ width: 390, height: 844 });
+	await studio.getByRole("button", { name: copy.contents, exact: true }).click();
 	await studio.getByRole("button", { name: copy.commonFields, exact: true }).click();
 	await expect(studio.getByLabel(`${copy.identity} ${copy.required}`, { exact: true })).toHaveValue(
 		/阿林/,
 	);
+	await expect(
+		studio.getByLabel(`${copy.name} ${copy.required}`, { exact: true }),
+	).toBeInViewport();
 	await page.screenshot({ path: "/tmp/bear-studio-mobile.png", fullPage: true });
 	await studio.getByRole("button", { name: copy.apply, exact: true }).click();
 	await page
@@ -84,7 +85,7 @@ test("Studio creates and resumes a complete draft, restores invalid YAML and app
 	await studio
 		.getByRole("article")
 		.filter({ has: page.getByRole("heading", { name: "Studio 测试角色", exact: true }) })
-		.getByRole("button", { name: copy.edit, exact: true })
+		.getByRole("button", { name: new RegExp(`^(${copy.edit}|${copy.resume})$`) })
 		.click();
 	await expect(studio.getByRole("button", { name: "canon/radio.md", exact: true })).toBeVisible();
 	await page.screenshot({ path: "/tmp/bear-studio-desktop.png", fullPage: true });
@@ -169,4 +170,55 @@ test("Studio copies installed content and uploads, downloads and removes an asse
 	await studio.getByRole("button", { name: copy.backLibrary, exact: true }).click();
 	await expect(studio.getByRole("heading", { name: "复制测试", exact: true })).toHaveCount(0);
 	await expect(studio.getByRole("heading", { name: "极昼", exact: true })).toBeVisible();
+});
+
+test("Studio edits real advanced fields, previews package assets, exports ZIP and runs an isolated Pi trial", async ({
+	page,
+}) => {
+	test.setTimeout(90_000);
+	await ensureReadyForConversation(page);
+	const originalConversation = await activeConversationId(page);
+	await page.getByRole("button", { name: copy.library, exact: true }).click();
+	const studio = page.getByRole("region", { name: copy.library, exact: true });
+	await studio
+		.getByRole("article")
+		.filter({ has: page.getByRole("heading", { name: "极昼", exact: true }) })
+		.getByRole("button", { name: new RegExp(`^(${copy.edit}|${copy.resume})$`) })
+		.click();
+	await studio
+		.getByRole("button", { name: `${copy.sections.scenes} · scenes`, exact: true })
+		.click();
+	const sceneLabel = studio.getByRole("textbox", { name: /scenes\.0\.label/ });
+	await sceneLabel.fill("Studio scene label");
+	await studio.getByRole("button", { name: copy.save, exact: true }).click();
+	await studio.getByRole("button", { name: "character.yaml", exact: true }).click();
+	await expect(studio.getByLabel(copy.source, { exact: true })).toHaveValue(/Studio scene label/);
+	await studio.getByRole("button", { name: copy.preview, exact: true }).click();
+	const preview = page.getByRole("dialog", { name: copy.preview, exact: true });
+	await expect(preview.getByRole("img", { name: "Studio scene label", exact: true })).toBeVisible();
+	await preview.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+	const download = page.waitForEvent("download");
+	await studio.getByRole("button", { name: copy.exportZip, exact: true }).click();
+	expect((await download).suggestedFilename()).toBe("jizhou.zip");
+	await studio.getByRole("button", { name: copy.trial, exact: true }).click();
+	const trial = page.getByRole("dialog", { name: copy.trial, exact: true });
+	await trial.getByRole("button", { name: copy.trialStart, exact: true }).click();
+	const hold = providerHold(page);
+	try {
+		await trial.getByLabel(copy.trialMessage, { exact: true }).fill(`E2E_WAIT_TEXT_${hold.id}`);
+		await trial.getByRole("button", { name: copy.trialSend, exact: true }).click();
+		await hold.entered();
+		await expect(trial.getByRole("button", { name: copy.trialStop, exact: true })).toBeEnabled();
+		await hold.release();
+		await expect(trial.getByText(`E2E_WAIT_DONE_${hold.id}`, { exact: true })).toBeVisible();
+		await trial.getByRole("button", { name: copy.trialReset, exact: true }).click();
+		await expect(trial.getByText(`E2E_WAIT_DONE_${hold.id}`, { exact: true })).toHaveCount(0);
+		await trial.getByRole("button", { name: zhCN.backstage.close, exact: true }).click();
+		await studio.getByRole("button", { name: copy.backLibrary, exact: true }).click();
+		await studio.getByRole("button", { name: copy.backChat, exact: true }).click();
+		await activeConversationId(page, originalConversation);
+		await expect(page.getByText(`E2E_WAIT_DONE_${hold.id}`, { exact: true })).toHaveCount(0);
+	} finally {
+		await hold.release();
+	}
 });

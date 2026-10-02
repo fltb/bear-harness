@@ -86,6 +86,7 @@ export interface PiRuntimeOptions {
 	sessionEvent?(sessionId: string, event: AgentSessionEvent, version: PiProjectionVersion): void;
 	sessionActivity?(event: SessionActivity): void;
 	systemPrompt?: string;
+	toolAllowlist?: readonly string[];
 }
 
 type OpenSession = { session: AgentSession; unsubscribe: () => void; titleAbort?: AbortController };
@@ -878,7 +879,11 @@ export class PiRuntime {
 					pi.on("model_select", (event) => {
 						if (!session) return; // Initial creation already filters tools below.
 						const names = session.getActiveToolNames().filter((name) => name !== "web_search");
-						if (modelSupportsNativeWebSearch(event.model)) names.push("web_search");
+						if (
+							modelSupportsNativeWebSearch(event.model) &&
+							(!this.options.toolAllowlist || this.options.toolAllowlist.includes("web_search"))
+						)
+							names.push("web_search");
 						session.setActiveToolsByName(names);
 					});
 					pi.on("tool_result", (event) => {
@@ -988,7 +993,9 @@ export class PiRuntime {
 			if (tool.name in tools)
 				throw new Error(`role plugin tool conflicts with Host tool: ${tool.name}`);
 		}
-		const allTools = [...Object.values(tools), ...pluginTools];
+		const allTools = [...Object.values(tools), ...pluginTools].filter(
+			(tool) => !this.options.toolAllowlist || this.options.toolAllowlist.includes(tool.name),
+		);
 		const thinkingLevel = manager
 			.getEntries()
 			.some(

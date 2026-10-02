@@ -19,6 +19,12 @@ import {
 	type CharacterPackage,
 	type CharacterPackageOrigin,
 } from "./companion/character-loader.js";
+import { packageDigest } from "./companion/character-package-files.js";
+import {
+	commitCharacterMigration,
+	planCharacterMigration,
+} from "./companion/character-state-migration.js";
+import { CharacterTrialService } from "./companion/character-trial-service.js";
 import {
 	type HostCompositionContext,
 	type HostUpdateService,
@@ -107,6 +113,7 @@ export class HostRuntime {
 	private readonly characterLoader: CharacterLoader;
 	private readonly appSettings: AppSettingsStore;
 	private readonly drafts: CharacterDraftService;
+	private readonly trials: CharacterTrialService;
 	private readonly models: SystemModelRegistry;
 	private readonly systemInvalidations = new InvalidationHub();
 	private readonly sharedEmbedding: SharedEmbeddingRuntime;
@@ -174,6 +181,12 @@ export class HostRuntime {
 			options.nativeProviders,
 		);
 		this.drafts = new CharacterDraftService(this.storage.layout, this.characterLoader);
+		this.trials = new CharacterTrialService(
+			this.drafts,
+			this.providers,
+			() => this.sharedEmbedding.getCanon(),
+			(event) => this.publish(event),
+		);
 		const defaultCharacter = this.characterLoader.load(options.productConfig.defaultCharacterId);
 		if (!defaultCharacter) throw new Error("default character package missing");
 		this.characterLoader.seed(systemDb, defaultCharacter);
@@ -216,7 +229,27 @@ export class HostRuntime {
 			providers: this.providers,
 			characterLoader: this.characterLoader,
 			drafts: this.drafts,
-			publishDraft: async (id: string, revision: number) => {
+			trials: this.trials,
+			reviewDraft: (id: string, revision: number) => {
+				const review = this.drafts.review(id, revision);
+				if (review.issues.length) return review;
+				const source = this.drafts.trialSource(id, revision);
+				if (!this.storage.hasCompanionRuntime(source.draft.characterId)) return review;
+				const existing = this.storage.peek(source.draft.characterId);
+				const handle = existing ?? this.storage.open(source.draft.characterId);
+				try {
+					return {
+						...review,
+						migration: planCharacterMigration(
+							handle.database.orm,
+							this.characterLoader.validate(source.files),
+						).review,
+					};
+				} finally {
+					if (!existing) this.storage.release(handle);
+				}
+			},
+			publishDraft: async (id: string, revision: number, migrationToken?: string) => {
 				const draft = this.drafts.validate(id, revision);
 				return this.registry.replaceIdle(
 					draft.characterId,
@@ -224,7 +257,31 @@ export class HostRuntime {
 						resource.runtime.pi.assertIdleForPackageEdit();
 						resource.runtime.externalAgentRuns.assertRuntimeDeletable();
 					},
-					() => this.drafts.publish(id, revision),
+					() => {
+						const source = this.drafts.trialSource(id, revision);
+						const next = this.characterLoader.validate(source.files);
+						const handle = this.storage.open(draft.characterId);
+						try {
+							const plan = planCharacterMigration(handle.database.orm, next);
+							if (plan.review.changes.length && migrationToken !== plan.review.token)
+								throw { kind: "conflict", reason: "character_state_migration_review_required" };
+							return commitCharacterMigration(
+								handle.database.orm,
+								handle.paths.root,
+								join(this.storage.layout.charactersRoot, draft.characterId),
+								draft.characterId,
+								packageDigest(
+									Object.fromEntries(
+										source.files.map((file) => [file.path, Buffer.from(file.base64, "base64")]),
+									),
+								),
+								plan,
+								() => this.drafts.publish(id, revision, true),
+							);
+						} finally {
+							this.storage.release(handle);
+						}
+					},
 				);
 			},
 			artifactPresenter: options.artifactPresenter,
@@ -344,19 +401,23 @@ export class HostRuntime {
 	}
 	async deleteCharacterRuntime(characterId: string): Promise<{ deleted: boolean }> {
 		if (this.closed) throw { kind: "unavailable", reason: "host_closed" };
-		const deleted = await this.registry.deleteRuntime(characterId, () => {
-			// Recheck cold runtimes and deletion requests that arrived during an ordinary
-			// close. The registry still fences admissions while this temporary DB is open.
-			if (this.storage.hasCompanionRuntime(characterId)) {
-				const storage = this.storage.open(characterId);
-				try {
-					assertRuntimeDeletable(storage.database.orm);
-				} finally {
-					this.storage.release(storage);
+		const trialClosing = this.trials.closeCharacter(characterId);
+		const deleted = await this.registry
+			.deleteRuntime(characterId, async () => {
+				await trialClosing;
+				// Recheck cold runtimes and deletion requests that arrived during an ordinary
+				// close. The registry still fences admissions while this temporary DB is open.
+				if (this.storage.hasCompanionRuntime(characterId)) {
+					const storage = this.storage.open(characterId);
+					try {
+						assertRuntimeDeletable(storage.database.orm);
+					} finally {
+						this.storage.release(storage);
+					}
 				}
-			}
-			return this.storage.deleteCompanionRuntime(characterId);
-		});
+				return this.storage.deleteCompanionRuntime(characterId);
+			})
+			.finally(() => this.trials.allowCharacter(characterId));
 		this.systemInvalidations.invalidate(
 			CacheKey.characterRuntime(characterId),
 			CacheKey.characters(),
@@ -440,7 +501,7 @@ export class HostRuntime {
 		// Stop producers immediately; admitted work may need this cancellation to finish.
 		const shutdown = this.registry.shutdown();
 		const acquisition = this.localEmbeddingAcquisition.close();
-		const stopping = Promise.allSettled([shutdown, acquisition]);
+		const stopping = Promise.allSettled([shutdown, acquisition, this.trials.close()]);
 		await Promise.allSettled([
 			this.startPromise,
 			...this.systemRequests,

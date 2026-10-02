@@ -62,7 +62,6 @@
 	"allowScripts": {
 		"@google/genai@1.52.0": true,
 		"electron-winstaller@5.4.0": true,
-		"electron@43.4.0": true,
 		"esbuild@0.28.1": true,
 		"esbuild@0.28.2": true,
 		"esbuild@0.25.12": true,
@@ -71,6 +70,7 @@
 		"node-llama-cpp@3.16.2": true,
 		"protobufjs@7.6.5": true,
 		"protobufjs@7.6.6": true,
-		"tesseract.js": false
+		"tesseract.js": false,
+		"electron@43.7.7": true
 	}
 }
