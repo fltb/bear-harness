@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -20,9 +20,12 @@ async function sha256(path) {
 }
 before(
 	async () => {
+		const preparationStarted = performance.now();
 		directory = await mkdtemp(join(tmpdir(), "bear-native-contract-"));
 		await mkdir(cache, { recursive: true });
-		let path = process.env.BEAR_UPSTREAM_MODEL ?? join(cache, "embeddinggemma-300m-qat-Q8_0.gguf");
+		const cachedPath =
+			process.env.BEAR_UPSTREAM_MODEL ?? join(cache, "embeddinggemma-300m-qat-Q8_0.gguf");
+		let path = cachedPath;
 		try {
 			await access(path);
 		} catch (error) {
@@ -33,7 +36,21 @@ before(
 				{ directory: cache, download: "auto", cli: false },
 			);
 		}
+		console.log(
+			`native timing: model cache/download ${((performance.now() - preparationStarted) / 1000).toFixed(2)}s`,
+		);
+		const hashStarted = performance.now();
 		assert.equal(await sha256(path), modelHash, "Embedding fixture integrity");
+		// resolveModelFile prefixes the downloaded filename. Keep the verified
+		// bytes at the exact path checked above so a cache hit needs no HF lookup.
+		if (path !== cachedPath) {
+			await rename(path, cachedPath);
+			path = cachedPath;
+		}
+		console.log(
+			`native timing: model SHA256 ${((performance.now() - hashStarted) / 1000).toFixed(2)}s`,
+		);
+		const warmupStarted = performance.now();
 		service = new LocalEmbeddingService({
 			provider: "local",
 			modelPath: path,
@@ -42,6 +59,9 @@ before(
 		});
 		service.startWarmup();
 		await service.waitForReady();
+		console.log(
+			`native timing: model warmup ${((performance.now() - warmupStarted) / 1000).toFixed(2)}s`,
+		);
 	},
 	{ timeout: 600_000 },
 );

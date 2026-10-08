@@ -87,23 +87,22 @@ describe("validate-product-config", () => {
 
 	it("runs attribution generation before compiling main in build staging", () => {
 		const buildSource = readFileSync(join(desktopRoot, "scripts/build.mjs"), "utf8");
-		const compileMarker = 'run(npxCommand, ["--no-install", "tsc", "-p", "tsconfig.main.json"])';
-		const validation = buildSource.indexOf('run("node", ["scripts/validate-product-config.mjs"])');
+		const compileMarker =
+			'run(process.execPath, [npmCli, "exec", "--no", "--", "tsc", "-p", "tsconfig.main.json"])';
+		const validation = buildSource.indexOf(
+			'run(process.execPath, ["scripts/validate-product-config.mjs"])',
+		);
 		const compile = buildSource.indexOf(compileMarker);
 		expect(validation).toBeGreaterThan(buildSource.indexOf('rmSync(resolve(desktop, "dist")'));
 		expect(validation).toBeLessThan(compile);
 	});
 
-	it("uses Windows command shims when build staging launches npm and npx", () => {
+	it("launches build tools through the selected Node without shell interpolation", () => {
 		const buildSource = readFileSync(join(desktopRoot, "scripts/build.mjs"), "utf8");
-		expect(buildSource).toContain(
-			'const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"',
-		);
-		expect(buildSource).toContain(
-			'const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx"',
-		);
+		expect(buildSource).toContain("const npmCli = process.env.npm_execpath");
+		expect(buildSource).toContain("run(process.execPath,");
 		expect(buildSource).toContain("if (result.error) throw result.error");
-		expect(buildSource).toContain('shell: process.platform === "win32"');
+		expect(buildSource).not.toContain("shell:");
 	});
 
 	it("launches the Crashpad smoke with the resolved Electron binary", () => {

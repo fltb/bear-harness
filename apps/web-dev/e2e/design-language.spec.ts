@@ -2,20 +2,20 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation, sendMessage } from "./helpers";
 
-for (const width of [390, 854, 1280, 1920]) {
-	test(`scene-facing design remains readable and separated at ${width}px`, async ({
-		page,
-	}, info) => {
-		test.setTimeout(60_000);
+test("scene-facing design remains readable and separated across four widths", async ({
+	page,
+}, info) => {
+	test.setTimeout(60_000);
+	await ensureReadyForConversation(page);
+	await sendMessage(page, "你好");
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await expect(thread).toBeVisible();
+	await expect
+		.poll(() => thread.getByRole("article", { name: "极昼", exact: true }).count())
+		.toBeGreaterThan(0);
+	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
+	for (const width of [390, 854, 1280, 1920]) {
 		await page.setViewportSize({ width, height: 900 });
-		await ensureReadyForConversation(page);
-		await sendMessage(page, "你好");
-		const thread = page.getByRole("region", { name: zhCN.messages.conversation });
-		await expect(thread).toBeVisible();
-		await expect
-			.poll(() => thread.getByRole("article", { name: "极昼", exact: true }).count())
-			.toBeGreaterThan(0);
-		await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeHidden();
 		const surface = await thread.evaluate((element) => {
 			const style = getComputedStyle(element);
 			return {
@@ -60,5 +60,5 @@ for (const width of [390, 854, 1280, 1920]) {
 			await page.evaluate(() => document.body.scrollWidth - window.innerWidth),
 		).toBeLessThanOrEqual(1);
 		await page.screenshot({ path: info.outputPath(`conversation-${width}.png`) });
-	});
-}
+	}
+});

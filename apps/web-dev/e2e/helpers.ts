@@ -330,10 +330,21 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 	expect(await response.json()).toMatchObject({ ok: true });
 }
 
+const pendingHolds = new WeakMap<Page, Array<() => Promise<void>>>();
+export async function releaseProviderHolds(page: Page) {
+	const releases = pendingHolds.get(page) ?? [];
+	pendingHolds.delete(page);
+	await Promise.all(releases.map((release) => release()));
+}
+
 /** Hold an authored provider response, never a Host lifecycle or executor event. */
 export function providerHold(page: Page) {
 	const id = crypto.randomUUID();
 	const url = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/control/holds/${id}`;
+	const release = async () => {
+		await expect(await page.request.post(url, { timeout: 5_000 })).toBeOK();
+	};
+	pendingHolds.set(page, [...(pendingHolds.get(page) ?? []), release]);
 	return {
 		id,
 		async entered() {
@@ -348,9 +359,7 @@ export function providerHold(page: Page) {
 				.poll(async () => (await (await page.request.get(url)).json()).cancelled)
 				.toBe(true);
 		},
-		async release() {
-			await expect(await page.request.post(url, { timeout: 5_000 })).toBeOK();
-		},
+		release,
 	};
 }
 

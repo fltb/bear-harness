@@ -39,12 +39,14 @@ const SOURCE_URLS = [
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
 const staging = resolve(desktopRoot, "dist/.windows-runtime");
-const archive = join(staging, ASSET);
+const downloadCache = resolve(desktopRoot, "../../.cache/ci/portable-git");
+const archive = join(downloadCache, ASSET);
 const gitRoot = join(staging, "git");
 const noticesRoot = join(staging, "notices");
 
 if (process.platform !== "win32") process.exit(0);
 mkdirSync(staging, { recursive: true });
+mkdirSync(downloadCache, { recursive: true });
 if (!existsSync(archive)) await downloadArchive();
 const actualArchiveDigest = sha256File(archive);
 if (actualArchiveDigest !== ARCHIVE_SHA256) {

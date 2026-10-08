@@ -25,7 +25,8 @@ const codexAuthFile =
 	process.env.BEAR_E2E_USE_CODEX_SESSION === "1"
 		? (process.env.BEAR_E2E_CODEX_AUTH_FILE ?? resolve(homedir(), ".codex", "auth.json"))
 		: "";
-const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");
+const outputDir = process.env.BEAR_E2E_OUTPUT_DIR ?? resolve(here, "../../test-results/web-dev");
+const lastRunFile = resolve(outputDir, ".last-run.json");
 process.env.BEAR_WEB_DEV_DATA_DIR = dataDirectory;
 process.env.BEAR_WEB_DEV_DATA_SCOPE = dataScope;
 process.env.BEAR_WEB_DEV_DATA_CLEANUP = cleanupPolicy;
@@ -37,8 +38,12 @@ export default defineConfig({
 	testIgnore: hostedRunnerProfile ? ["ux-metrics.spec.ts"] : [],
 	timeout: 30_000,
 	workers: 1,
-	reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
-	outputDir: resolve(here, "../../test-results/web-dev"),
+	reporter: [
+		...(process.env.CI ? [["github"] as const] : []),
+		["list"],
+		...(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE ? [["json"] as const] : []),
+	],
+	outputDir,
 	snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
 	forbidOnly: true,
 	retries: 0,

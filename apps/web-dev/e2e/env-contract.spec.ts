@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "playwright/test";
+import { ensureReadyForConversation } from "./helpers";
 
 test("documents every environment variable required to provision a custom provider", () => {
 	const example = readFileSync(resolve(import.meta.dirname, "../../../.env.example"), "utf8");
@@ -29,8 +30,8 @@ test("documents Provider credentials independently from endpoint overrides", () 
 	}
 });
 
-test("provisions the custom provider from WebDev environment variables", async ({ page }) => {
-	await page.goto("/");
+test("exposes the provider configured through system onboarding", async ({ page }) => {
+	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const response = await page.request.post("/rpc/provider.list", {
 		headers: { "x-bear-web-dev-token": bootstrap.token },

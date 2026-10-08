@@ -1,3 +1,10 @@
+const phaseStarted = performance.now();
+process.on("exit", (code) =>
+	console.log(
+		`package verification: package-mac.mjs ${((performance.now() - phaseStarted) / 1000).toFixed(2)}s exit=${code}`,
+	),
+);
+
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";

@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+const phaseStarted = performance.now();
+process.on("exit", (code) =>
+	console.log(
+		`package verification: verify-native-bindings.mjs ${((performance.now() - phaseStarted) / 1000).toFixed(2)}s exit=${code}`,
+	),
+);
+
 /**
  * Proves a packaged Electron application contains exactly the target
  * node-llama-cpp binding outside ASAR, where Node can load native binaries.

@@ -28,7 +28,7 @@ const graphical = (command) =>
 // Check commands mirror .github/workflows/ci.yml. Runner installation, artifact
 // upload/download, and clean-commit release attestations belong to GitHub Actions.
 const jobs = {
-	preflight: [run("lint"), run("typecheck")],
+	preflight: [run("build:packages"), run("lint"), run("typecheck")],
 	quality: [
 		...(process.platform === "linux"
 			? [
@@ -59,22 +59,25 @@ const jobs = {
 	"upstream-brand": [node("apps/desktop/scripts/check-upstream-brand.mjs")],
 	security: [npm("audit", "--audit-level=high"), npm("audit", "signatures")],
 	recovery: [run("build:packages"), run("test:release:recovery")],
-	e2e: [run("build:packages"), run("build"), graphical(run("test:e2e:electron:built"))],
+	e2e: [
+		run("build:packages"),
+		run("build", "--workspace", "@bear-harness/desktop", "--", "--shared-built"),
+		graphical(run("test:e2e:electron:built")),
+	],
 	"web-e2e": [
 		run("build:packages"),
-		npm("exec", "--no", "--", "playwright", "install", "chromium"),
+		npm("exec", "--no", "--", "playwright", "install", "chromium", "--no-shell"),
 		run("test:e2e:web:required"),
 	],
 	package: target
 		? [
 				run("build:packages"),
-				run("build"),
-				graphical(run("test:diagnostics:crash")),
 				run("test:upstream:native"),
+				run("build", "--workspace", "@bear-harness/desktop", "--", "--shared-built"),
+				graphical(run("test:diagnostics:crash")),
 				run(target.script),
 				node("scripts/verify-package.mjs", target.name, target.arch, ...target.extensions),
 				...(process.platform === "darwin" ? [{ verifyMacArchitecture: true }] : []),
-				node("apps/desktop/scripts/verify-native-bindings.mjs", target.name, target.arch),
 				...(process.platform === "linux"
 					? [node("apps/desktop/scripts/verify-linux-artifacts.mjs")]
 					: []),
@@ -159,6 +162,8 @@ for (const name of names) {
 const env = {
 	...process.env,
 	BEAR_E2E_PROFILE: "hosted",
+	BEAR_SHARED_BUILT: "1",
+	BEAR_E2E_SHARDS: "2",
 	BEAR_E2E_WEB_PORT: process.env.BEAR_E2E_WEB_PORT ?? "33200",
 	BEAR_E2E_HOST_PORT: process.env.BEAR_E2E_HOST_PORT ?? "33201",
 	BEAR_E2E_PROVIDER_PORT: process.env.BEAR_E2E_PROVIDER_PORT ?? "33211",

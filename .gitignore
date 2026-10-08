@@ -145,3 +145,4 @@ coverage/
 
 # Downloaded integrity-checked native contract fixture
 .cache/upstream/
+.cache/ci/

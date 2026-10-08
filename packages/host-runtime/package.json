@@ -10,14 +10,14 @@
 		}
 	},
 	"scripts": {
-		"prebuild": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build",
+		"prebuild": "node ../../scripts/build-workspaces.mjs tdai-core protocol",
 		"build": "tsc -p tsconfig.json && node scripts/check-esm-runtime.mjs",
 		"db:generate": "drizzle-kit generate",
-		"pretypecheck": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build",
+		"pretypecheck": "node ../../scripts/build-workspaces.mjs tdai-core protocol",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:unit": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run",
-		"test:release:recovery": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run tests/bootstrap-recovery.spec.ts tests/durable-file-transaction.spec.ts tests/character-import.spec.ts tests/companion-state-store.spec.ts tests/session-catalog.spec.ts",
-		"test:coverage": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run --coverage"
+		"test:unit": "node ../../scripts/build-workspaces.mjs tdai-core protocol && vitest run",
+		"test:release:recovery": "node ../../scripts/build-workspaces.mjs tdai-core protocol && vitest run tests/bootstrap-recovery.spec.ts tests/durable-file-transaction.spec.ts tests/character-import.spec.ts tests/companion-state-store.spec.ts tests/session-catalog.spec.ts",
+		"test:coverage": "node ../../scripts/build-workspaces.mjs tdai-core protocol && vitest run --coverage"
 	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "1.7.0",

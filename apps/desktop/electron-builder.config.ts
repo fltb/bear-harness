@@ -135,7 +135,40 @@ export function extraResourcesFor(platform: NodeJS.Platform = process.platform) 
 	];
 }
 
+const phaseStarts = new Map<string, number>();
+function phaseStart(name: string) {
+	phaseStarts.set(name, performance.now());
+	console.log(`package phase started: ${name}`);
+}
+function phaseEnd(name: string) {
+	const started = phaseStarts.get(name);
+	if (started !== undefined)
+		console.log(
+			`package phase finished: ${name} ${((performance.now() - started) / 1000).toFixed(2)}s`,
+		);
+}
+
+// Windows ZIP/NSIS default to 7z levels 7/9. Level 5 keeps compression
+// while avoiding the expensive final compression passes (see CI benchmark).
+if (process.platform === "win32") process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= "5";
+
 const config: Configuration = {
+	beforePack: async () => {
+		phaseStart("prepare Electron");
+	},
+	afterExtract: async () => {
+		phaseEnd("prepare Electron");
+		phaseStart("assemble application");
+	},
+	afterPack: async () => {
+		phaseEnd("assemble application");
+	},
+	artifactBuildStarted: async (event) => {
+		phaseStart(event.file);
+	},
+	artifactBuildCompleted: async (event) => {
+		if (event.file) phaseEnd(event.file);
+	},
 	appId: productConfig.appId,
 	productName: productConfig.productName,
 	executableName: productConfig.executableName,

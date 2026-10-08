@@ -9,20 +9,14 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const repoEnv = resolve(repoRoot, ".env");
 if (existsSync(repoEnv)) process.loadEnvFile(repoEnv);
 const soak = Number(process.env.BEAR_E2E_SOAK_MINUTES ?? "0") > 0;
-if (!soak)
-	for (const workspace of [
-		"@bear-harness/product-config",
-		"@bear-harness/protocol",
-		"@bear-harness/companion-client",
-		"@bear-harness/host-runtime",
-		"@bear-harness/companion-ui",
-	]) {
-		const result = spawnSync("npm", ["run", "build", "--workspace", workspace], {
-			cwd: repoRoot,
-			stdio: "inherit",
-		});
-		if (result.status !== 0) process.exit(result.status ?? 1);
-	}
+if (!soak) {
+	const result = spawnSync(process.execPath, ["scripts/build-workspaces.mjs"], {
+		cwd: repoRoot,
+		stdio: "inherit",
+	});
+	if (result.error) throw result.error;
+	if (result.status !== 0) process.exit(result.status ?? 1);
+}
 const children = new Set();
 const childFatal = new WeakSet();
 let shuttingDown = false;
@@ -118,8 +112,8 @@ async function start() {
 	});
 	const web = await launchWithRetry({
 		startPort: baseWebPort,
-		command: "npx",
-		args: webLaunchArguments(soak),
+		command: process.execPath,
+		args: [process.env.npm_execpath, "exec", "--no", "--", ...webLaunchArguments(soak).slice(1)],
 		env: {
 			BEAR_WEB_DEV_HOST_PORT: String(host.port),
 			...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),

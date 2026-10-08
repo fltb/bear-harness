@@ -17,6 +17,8 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-24.04
+    env:
+      BEAR_SHARED_BUILT: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -25,7 +27,8 @@ jobs:
           cache: npm
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund --prefer-offline
+      - run: npm run build:packages
       - run: npm run lint
       - run: npm run typecheck
       - run: node scripts/release-attestation.mjs preflight
@@ -38,6 +41,8 @@ jobs:
   quality:
     needs: [preflight]
     runs-on: ubuntu-24.04
+    env:
+      BEAR_SHARED_BUILT: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -71,7 +76,7 @@ jobs:
           NODE
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
       - run: npm run test:unit:remaining
       - run: npm run test:upstream
@@ -134,10 +139,7 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - name: Select the declared npm version
-        run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+          package-manager-cache: false
       - run: node apps/desktop/scripts/check-upstream-brand.mjs
 
   security:
@@ -150,13 +152,15 @@ jobs:
           cache: npm
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm audit --audit-level=high
       - run: npm audit signatures
 
   recovery:
     needs: [preflight]
     runs-on: ubuntu-24.04
+    env:
+      BEAR_SHARED_BUILT: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -165,7 +169,7 @@ jobs:
           cache: npm
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
       - run: npm run test:release:recovery
       - run: node scripts/release-attestation.mjs recovery
@@ -178,6 +182,9 @@ jobs:
   e2e:
     needs: [preflight]
     runs-on: ubuntu-24.04
+    env:
+      BEAR_SHARED_BUILT: "1"
+      electron_config_cache: ${{ github.workspace }}/.cache/ci/electron
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -186,9 +193,15 @@ jobs:
           cache: npm
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - name: Cache Electron download
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ env.electron_config_cache }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
-      - run: npm run build
+      - run: npm run build --workspace @bear-harness/desktop -- --shared-built
       - name: Install Electron runtime libraries
         run: |
           sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
@@ -233,6 +246,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       BEAR_E2E_PROFILE: hosted
+      BEAR_SHARED_BUILT: "1"
+      BEAR_E2E_SHARDS: "2"
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ci/playwright
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -248,9 +264,15 @@ jobs:
           bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / -- /bin/true
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
-      - run: npx --no-install playwright install chromium
+      - name: Cache Chromium download
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: chromium-${{ runner.os }}-${{ runner.arch }}-
+      - run: npx --no-install playwright install chromium --no-shell
       - name: Run required Web E2E
         id: web_e2e
         shell: bash
@@ -328,7 +350,10 @@ jobs:
               apps/desktop/release/*.AppImage
               apps/desktop/release/*.deb
     env:
+      BEAR_SHARED_BUILT: "1"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      electron_config_cache: ${{ github.workspace }}/.cache/ci/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/ci/electron-builder
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -337,14 +362,28 @@ jobs:
           cache: npm
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
-      - run: npm ci
+      - name: Cache packaging downloads
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ env.electron_config_cache }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+            .cache/ci/portable-git/
+          key: package-downloads-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json', 'config/upstream-binaries.json') }}
+          restore-keys: package-downloads-${{ runner.os }}-${{ matrix.arch }}-
+      - name: Cache verified embedding fixture
+        uses: actions/cache@v6.1.0
+        with:
+          path: .cache/upstream/
+          key: native-fixture-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/upstream-native.test.mjs') }}
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
       - run: npm run test:upstream:native
       - name: Build application
         shell: bash
         run: |
           set -o pipefail
-          npm run build 2>&1 | tee package-build.log
+          npm run build --workspace @bear-harness/desktop -- --shared-built 2>&1 | tee package-build.log
       - name: Publish package build failure
         if: failure()
         shell: bash
@@ -445,9 +484,6 @@ jobs:
             lipo -archs "$EXE" | grep -qx "x86_64"
             lipo -archs "$FRAMEWORK" | grep -qx "x86_64"
           fi
-      - name: Verify native llama binding
-        shell: bash
-        run: node apps/desktop/scripts/verify-native-bindings.mjs ${{ matrix.os-name }} ${{ matrix.arch }}
       - name: Verify Windows x64 PE machine
         if: matrix.os-name == 'win'
         run: node apps/desktop/scripts/verify-windows-pe.mjs
@@ -532,6 +568,8 @@ jobs:
         with:
           name: bear-harness-${{ matrix.os-name }}-${{ matrix.arch }}
           path: ${{ matrix.upload-glob }}
+          # These installers/archives are already compressed.
+          compression-level: 0
           if-no-files-found: error
 
   release-gate:
@@ -542,7 +580,7 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          package-manager-cache: false
       - uses: actions/download-artifact@v8.0.2
         with:
           pattern: release-attestation-*

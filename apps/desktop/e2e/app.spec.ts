@@ -21,6 +21,7 @@ test("source build loads from file:// with official identity and isolated diagno
 	const testInfo = test.info();
 	const { app: electronApp, tempRoot } = await test.step("launch source Electron", () =>
 		launchSourceApp({}));
+	let completed = false;
 	try {
 		await electronApp
 			.context()
@@ -70,6 +71,7 @@ test("source build loads from file:// with official identity and isolated diagno
 		await expect
 			.poll(() => presenceAsset.evaluate((image: HTMLImageElement) => image.naturalWidth))
 			.toBeGreaterThan(0);
+		completed = true;
 	} finally {
 		try {
 			const logsDir = join(tempRoot, "logs");
@@ -83,12 +85,19 @@ test("source build loads from file:// with official identity and isolated diagno
 					});
 				}
 			}
-			const tracePath = testInfo.outputPath("electron-trace.zip");
-			await electronApp.context().tracing.stop({ path: tracePath });
-			await testInfo.attach("electron-trace", { path: tracePath, contentType: "application/zip" });
+			if (!completed) {
+				const tracePath = testInfo.outputPath("electron-trace.zip");
+				await electronApp.context().tracing.stop({ path: tracePath });
+				await testInfo.attach("electron-trace", {
+					path: tracePath,
+					contentType: "application/zip",
+				});
+			} else {
+				await electronApp.context().tracing.stop();
+			}
 		} finally {
 			await test.step("close source Electron", () => electronApp.close());
-			if (testInfo.status === testInfo.expectedStatus) {
+			if (completed) {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
 		}

@@ -1,29 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-for (const workspace of [
-	"@bear-harness/product-config",
-	"@bear-harness/protocol",
-	"@bear-harness/companion-client",
-	"@bear-harness/host-runtime",
-	"@bear-harness/companion-ui",
-]) {
-	const result = spawnSync(npmCommand, ["run", "build", "--workspace", workspace], {
-		cwd: repoRoot,
-		stdio: "inherit",
-		shell: process.platform === "win32",
-	});
+const root = resolve(import.meta.dirname, "../../..");
+function run(args, cwd) {
+	const started = performance.now();
+	const result = spawnSync(process.execPath, args, { cwd, stdio: "inherit" });
 	if (result.error) throw result.error;
 	if (result.status !== 0) process.exit(result.status ?? 1);
+	console.log(`web build: ${args.join(" ")} ${((performance.now() - started) / 1000).toFixed(2)}s`);
 }
-
-const result = spawnSync(npxCommand, ["--no-install", "rsbuild", "build"], {
-	stdio: "inherit",
-	shell: process.platform === "win32",
-});
-if (result.error) throw result.error;
-if (result.status !== 0) process.exit(result.status ?? 1);
+run(["scripts/build-workspaces.mjs"], root);
+run(
+	[process.env.npm_execpath, "exec", "--no", "--", "rsbuild", "build"],
+	resolve(root, "apps/web-dev"),
+);

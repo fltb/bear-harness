@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { ensureReadyForConversation } from "./helpers";
+import { ensureReadyForConversation, providerHold, releaseProviderHolds } from "./helpers";
+
+test.afterEach(async ({ page }) => {
+	await releaseProviderHolds(page);
+});
 
 test("composer drafts remain isolated while switching conversations", async ({ page }) => {
 	await ensureReadyForConversation(page);
@@ -63,7 +67,8 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	const longMessage = Array.from({ length: 28 }, (_, index) => `第 ${index + 1} 行`).join("\n");
-	await composer.fill(`${longMessage}\nSTREAM_HOLD_A`);
+	const streamHold = providerHold(page);
+	await composer.fill(`${longMessage}\nSTREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	const expandedComposer = await composer.evaluate((element) => ({
 		clientHeight: element.clientHeight,
 		scrollHeight: element.scrollHeight,
@@ -87,7 +92,11 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 	const activity = page.getByTestId("conversation-activity");
 	await expect(activity).toBeVisible();
 	await expect(page.getByTestId("streaming-assistant-message")).toContainText("HOLD_ONE");
-	await expect(user.getByText(`${longMessage}\nSTREAM_HOLD_A`, { exact: true })).toHaveCount(1);
+	await expect(
+		user.getByText(`${longMessage}\nSTREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`, {
+			exact: true,
+		}),
+	).toHaveCount(1);
 	await expect
 		.poll(() =>
 			page.evaluate(() => {
@@ -108,6 +117,7 @@ test("mobile composer, live activity, touch targets and detached scrolling stay 
 	});
 	const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
 	await expect(jumpToLatest).toBeVisible();
+	await streamHold.release();
 	await expect(assistant.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toHaveCount(1, {
 		timeout: 8_000,
 	});
@@ -209,7 +219,8 @@ test("reduced motion disables new-turn entrance animation", async ({ page }) => 
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await ensureReadyForConversation(page);
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	const streamingReply = page.getByTestId("streaming-assistant-message");
 	await expect(streamingReply).toBeVisible();
@@ -222,7 +233,8 @@ test("a streamed reply enters once and its settled handoff does not animate agai
 }) => {
 	await ensureReadyForConversation(page);
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	const streamingReply = page.getByTestId("streaming-assistant-message");
 	await expect(streamingReply).toContainText("HOLD_ONE");
@@ -233,6 +245,7 @@ test("a streamed reply enters once and its settled handoff does not animate agai
 		await streamingReply.evaluate((element) => getComputedStyle(element).animationDuration),
 	).toBe("0.12s");
 
+	await streamHold.release();
 	const settledReply = page
 		.getByTestId("timeline-entry-row")
 		.filter({ hasText: "HOLD_ONE HOLD_TWO" });
@@ -245,7 +258,8 @@ test("streaming preserves focus on an existing message action", async ({ page })
 	await ensureReadyForConversation(page);
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_FOCUS_HOLD");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_FOCUS_HOLD STREAM_BARRIER_${streamHold.id}`);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	await expect(thread.getByText("FOCUS_ONE", { exact: false })).toBeVisible({ timeout: 10_000 });
 	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeVisible();
@@ -255,7 +269,12 @@ test("streaming preserves focus on an existing message action", async ({ page })
 	const copyAction = userMessage.getByRole("button", { name: zhCN.messages.copy });
 	await copyAction.focus();
 	await expect(copyAction).toBeFocused();
-	await expect(thread.getByText("FOCUS_ONE FOCUS_TWO", { exact: true })).toBeVisible({
+	await streamHold.release();
+	await expect(
+		thread
+			.getByRole("article", { name: "极昼", exact: true })
+			.getByText("FOCUS_ONE FOCUS_TWO", { exact: true }),
+	).toBeVisible({
 		timeout: 20_000,
 	});
 	await expect(copyAction).toBeFocused();
@@ -333,7 +352,8 @@ test("zoom-equivalent reflow and blocked fonts keep the conversation usable", as
 test("conversation and presence motion obey the frozen timing budget", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	const streamingReply = page.getByTestId("streaming-assistant-message");
 	await expect(streamingReply).toBeVisible();

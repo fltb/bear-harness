@@ -5,7 +5,7 @@ import { activeConversationId, ensureReadyForConversation, getBootstrap } from "
 test("10,000 loaded authoritative entries keep a bounded virtual DOM and stable focus", async ({
 	page,
 }) => {
-	test.setTimeout(360_000);
+	test.setTimeout(60_000);
 	const startedAt = performance.now();
 	await ensureReadyForConversation(page);
 	const conversationId = await activeConversationId(page);
@@ -73,13 +73,15 @@ test("10,000 loaded authoritative entries keep a bounded virtual DOM and stable 
 		window.dispatchEvent(new WheelEvent("wheel"));
 	});
 	const loadOlder = page.getByRole("button", { name: zhCN.messages.native.loadOlder });
-	for (let expectedCount = 200; expectedCount <= 10_000; expectedCount += 100) {
-		await loadOlder.click();
-		await expect(timeline).toHaveAttribute("data-item-count", String(expectedCount));
-		if (expectedCount % 1_000 === 0)
-			console.log(
-				JSON.stringify({ loadedEntries: expectedCount, elapsedMs: performance.now() - startedAt }),
-			);
+	// Prepare capacity through the real pagination control without 99 remote
+	// actionability/stability waits. Native pagination has its own user journey.
+	for (let count = 200; count <= 10_000; count += 100) {
+		await expect(loadOlder).toBeEnabled();
+		await loadOlder.evaluate((button) => {
+			button.focus();
+			button.click();
+		});
+		await expect(timeline).toHaveAttribute("data-item-count", String(count));
 	}
 	await expect(loadOlder).toBeHidden();
 	const renderedItems = page.getByTestId("virtual-timeline-item");

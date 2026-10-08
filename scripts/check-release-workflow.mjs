@@ -248,6 +248,20 @@ if (!crashpadStep || crashpadStep.shell !== "bash") {
 const packageAttestationStep = jobs.package.steps.find(
 	(step) => step?.name === "Attest packaged target",
 );
+// Reusing shared outputs is valid only after building them in this same job.
+const sharedBuildIndex = jobs.package.steps.findIndex(
+	(step) => step.run === "npm run build:packages",
+);
+const desktopBuildIndex = jobs.package.steps.findIndex((step) => step.name === "Build application");
+if (
+	sharedBuildIndex < 0 ||
+	desktopBuildIndex <= sharedBuildIndex ||
+	!jobs.package.steps[desktopBuildIndex].run.includes(
+		"npm run build --workspace @bear-harness/desktop -- --shared-built",
+	)
+) {
+	throw new Error("Packaging must build shared packages before reusing them in the desktop build");
+}
 if (packageAttestationStep?.id !== "package_attestation") {
 	throw new Error("Package attestation must expose a step outcome for focused diagnostics");
 }
@@ -383,3 +397,31 @@ if (
 console.log(
 	"Publish workflow contract passed: green-run artifact reuse and stable/RC publication present",
 );
+
+// Build reuse is valid only after an explicit build from this job's checkout.
+for (const name of ["preflight", "quality", "recovery", "e2e", "web-e2e", "package"]) {
+	const job = jobs[name];
+	if (job.env?.BEAR_SHARED_BUILT !== "1") throw new Error(`${name} must reuse its shared build`);
+	const build = job.steps.findIndex((step) => step.run === "npm run build:packages");
+	const firstCheck = job.steps.findIndex((step) =>
+		/npm run (lint|typecheck|test:|build(?: |\n|$))/.test(step.run ?? ""),
+	);
+	if (build < 0 || (firstCheck >= 0 && build >= firstCheck))
+		throw new Error(`${name} must build shared packages before consuming them`);
+}
+for (const name of ["release-gate", "upstream-brand"]) {
+	const setup = jobs[name].steps.find((step) => step.uses?.startsWith("actions/setup-node@"));
+	if (setup?.with?.cache || setup?.with?.["package-manager-cache"] !== false)
+		throw new Error(`${name} does not install dependencies and must not restore npm cache`);
+	if (/npm (ci|install)/.test(commands(jobs[name])))
+		throw new Error(`${name} must remain dependency-free`);
+}
+if (jobs["web-e2e"].env.BEAR_E2E_SHARDS !== "2")
+	throw new Error("Web CI must run two isolated shards");
+if (!commands(jobs["web-e2e"]).includes("playwright install chromium --no-shell"))
+	throw new Error("Do not download unused headless shell");
+if (
+	!jobs.package.steps.some((step) => step.name === "Cache packaging downloads") ||
+	!jobs.package.steps.some((step) => step.name === "Cache verified embedding fixture")
+)
+	throw new Error("Package jobs must cache their verified upstream downloads");

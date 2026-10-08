@@ -462,6 +462,9 @@ createServer(async (request, response) => {
 		messages?: Array<{ role?: string; content?: unknown }>;
 	};
 	const result = reply(payload);
+	const streamHoldId = JSON.stringify(
+		payload.messages?.findLast((message) => message.role === "user")?.content ?? "",
+	).match(/STREAM_BARRIER_([a-f0-9-]+)/)?.[1];
 	if ("errorMessage" in result) {
 		response.writeHead(400, { "content-type": "application/json" }).end(
 			JSON.stringify({
@@ -602,10 +605,11 @@ createServer(async (request, response) => {
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_ONE " }, finish_reason: null }] })}\n\n`,
 			);
-			// Keep the first Session running long enough to create and activate a
-			// second real Session before this one settles, so the sidebar completion
-			// marker is exercised deterministically.
-			await new Promise((resolve) => setTimeout(resolve, 4_000));
+			// Required journeys release after observing the intermediate state.
+			// The endurance workload without a barrier intentionally simulates latency.
+			if (streamHoldId) await waitForHold(streamHoldId);
+			else await new Promise((resolve) => setTimeout(resolve, 4_000));
+			if (response.destroyed) return;
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "HOLD_TWO\n" }, finish_reason: null }] })}\n\n`,
 			);
@@ -619,7 +623,9 @@ createServer(async (request, response) => {
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "FOCUS_ONE " }, finish_reason: null }] })}\n\n`,
 			);
-			await new Promise((resolve) => setTimeout(resolve, 8_000));
+			if (streamHoldId) await waitForHold(streamHoldId);
+			else await new Promise((resolve) => setTimeout(resolve, 8_000));
+			if (response.destroyed) return;
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "FOCUS_TWO\n" }, finish_reason: null }] })}\n\n`,
 			);

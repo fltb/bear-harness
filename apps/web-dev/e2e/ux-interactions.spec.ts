@@ -1,6 +1,11 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Locator, test } from "playwright/test";
-import { ensureReadyForConversation, sendMessage } from "./helpers";
+import {
+	ensureReadyForConversation,
+	providerHold,
+	releaseProviderHolds,
+	sendMessage,
+} from "./helpers";
 
 const feedbackBudgetMs = 100;
 
@@ -39,11 +44,16 @@ async function clickToCondition(
 	}, condition);
 }
 
+test.afterEach(async ({ page }) => {
+	await releaseProviderHolds(page);
+});
+
 test("primary conversation actions acknowledge input within 100ms", async ({ context, page }) => {
 	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 	await ensureReadyForConversation(page);
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	const sendMs = await clickToCondition(
 		page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }),
 		"submission-visible",
@@ -151,7 +161,8 @@ test("stop, error, edit, correction, tool and choice feedback use the shared mot
 	await expectMotion(choices, "motion-feedback-enter");
 
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
-	await composer.fill("STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await composer.fill(`STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	await expect(page.getByTestId("streaming-assistant-message")).toContainText("HOLD_ONE");
 	await resetMotionEvents();

@@ -18,38 +18,39 @@ import { flattenMainEmit } from "./flatten-main.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..");
 const repoRoot = resolve(desktop, "..", "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+const npmCli = process.env.npm_execpath;
+// CI builds these packages in the same checkout before native dependency tests.
+const sharedBuilt =
+	process.argv.includes("--shared-built") || process.env.BEAR_SHARED_BUILT === "1";
 
 function run(cmd, args, cwd = desktop) {
+	const started = performance.now();
 	const result = spawnSync(cmd, args, {
 		cwd,
 		stdio: "inherit",
-		shell: process.platform === "win32",
 	});
 	if (result.error) throw result.error;
 	if (result.status !== 0) {
 		process.exit(result.status ?? 1);
 	}
+	process.stdout.write(
+		`build timing: ${args.join(" ")} ${((performance.now() - started) / 1000).toFixed(2)}s\n`,
+	);
 }
 
 rmSync(resolve(desktop, "dist"), { recursive: true, force: true });
 // Release staging starts with a validated, deterministic attribution file.
 // Every later build step preserves this resource for electron-builder.
-run("node", ["scripts/validate-product-config.mjs"]);
-run("node", ["scripts/stage-character-seeds.mjs"]);
-for (const workspace of [
-	"@bear-harness/i18n",
-	"@bear-harness/product-config",
-	"@bear-harness/protocol",
-	"@bear-harness/companion-client",
-	"@bear-harness/host-runtime",
-	"@bear-harness/companion-ui",
-]) {
-	run(npmCommand, ["run", "build", "--workspace", workspace], repoRoot);
-}
-run(npxCommand, ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
+run(process.execPath, ["scripts/validate-product-config.mjs"]);
+run(process.execPath, ["scripts/stage-character-seeds.mjs"]);
+if (!sharedBuilt) run(process.execPath, ["scripts/build-workspaces.mjs", "--force"], repoRoot);
+run(
+	process.execPath,
+	[npmCli, "run", "--ignore-scripts", "build", "--workspace", "@bear-harness/companion-ui"],
+	repoRoot,
+);
+run(process.execPath, [npmCli, "exec", "--no", "--", "tsc", "-p", "tsconfig.main.json"]);
 flattenMainEmit(desktop);
-run(npxCommand, ["--no-install", "tsc", "-p", "tsconfig.preload.json"]);
-run(npxCommand, ["--no-install", "rsbuild", "build"]);
+run(process.execPath, [npmCli, "exec", "--no", "--", "tsc", "-p", "tsconfig.preload.json"]);
+run(process.execPath, [npmCli, "exec", "--no", "--", "rsbuild", "build"]);
 process.stdout.write("build: ok\n");

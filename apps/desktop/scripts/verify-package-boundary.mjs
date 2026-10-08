@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+const phaseStarted = performance.now();
+process.on("exit", (code) =>
+	console.log(
+		`package verification: verify-package-boundary.mjs ${((performance.now() - phaseStarted) / 1000).toFixed(2)}s exit=${code}`,
+	),
+);
+
 /**
  * Verifies that a packaged app contains the runtime product rather than
  * disabled integrations, build metadata, or a second staged dependency tree.

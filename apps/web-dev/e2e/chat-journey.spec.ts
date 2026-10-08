@@ -7,6 +7,7 @@ import {
 	getBootstrap,
 	projectPiEntries,
 	providerHold,
+	releaseProviderHolds,
 	sendMessage,
 } from "./helpers";
 
@@ -20,6 +21,10 @@ async function nativeEntries(page: Page, conversationId: string) {
 	expect(envelope).toMatchObject({ ok: true });
 	return projectPiEntries(envelope.data.branch.entries);
 }
+
+test.afterEach(async ({ page }) => {
+	await releaseProviderHolds(page);
+});
 
 test("accepted send waits visibly before first text and survives authoritative refresh", async ({
 	page,
@@ -317,7 +322,8 @@ test("refreshing a running conversation restores its authoritative stream", asyn
 	await ensureReadyForConversation(page);
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 	const assistant = thread.getByRole("article", { name: "极昼", exact: true });
-	await sendMessage(page, "STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await sendMessage(page, `STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await expect(assistant.getByText("HOLD_ONE", { exact: false })).toBeVisible();
 
 	await page.reload();
@@ -325,6 +331,7 @@ test("refreshing a running conversation restores its authoritative stream", asyn
 	await expect(assistant.getByText("HOLD_ONE", { exact: false })).toBeVisible();
 	const activity = page.getByTestId("conversation-activity");
 	await expect(activity).toBeVisible();
+	await streamHold.release();
 	await expect(assistant.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeVisible({
 		timeout: 15_000,
 	});
@@ -339,7 +346,8 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	const assistant = thread.getByRole("article", { name: "极昼", exact: true });
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	const sessionAId = await activeConversationId(page);
-	await sendMessage(page, "STREAM_HOLD_A");
+	const streamHold = providerHold(page);
+	await sendMessage(page, `STREAM_HOLD_A STREAM_BARRIER_${streamHold.id}`);
 	await expect(
 		sidebar.locator(`[data-conversation-id="${sessionAId}"] .conversation-running`),
 	).toBeHidden();
@@ -361,6 +369,7 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	await expect(sessionA).toBeVisible();
 	await expect(assistant.getByText("E2E_OK", { exact: true })).toBeVisible();
 	await expect(assistant.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeHidden();
+	await streamHold.release();
 	await expect(sessionA.getByRole("status", { name: zhCN.sidebar.responseReady })).toBeVisible({
 		timeout: 15_000,
 	});
