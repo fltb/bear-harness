@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,23 @@ import type { AppSettingsStore } from "../src/storage/app-settings-store.js";
 
 const seed = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const hosts: Array<{ host: HostRuntime; root: string }> = [];
+const embeddingServers: Server[] = [];
+async function localEmbeddingEndpoint() {
+	const server = createServer(async (request, response) => {
+		let body = "";
+		for await (const chunk of request) body += chunk;
+		const { input } = JSON.parse(body) as { input: string[] };
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(
+			JSON.stringify({ data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })) }),
+		);
+	});
+	embeddingServers.push(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Missing embedding fixture port");
+	return `http://127.0.0.1:${address.port}/v1`;
+}
 function setup() {
 	const root = mkdtempSync(join(tmpdir(), "bear-explicit-scopes-"));
 	const host = createHostRuntime({
@@ -30,9 +48,16 @@ function setup() {
 	return { host, root };
 }
 afterEach(async () => {
-	for (const { host, root } of hosts.splice(0)) {
-		await host.close();
-		rmSync(root, { recursive: true, force: true });
+	try {
+		for (const { host, root } of hosts.splice(0)) {
+			await host.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	} finally {
+		for (const server of embeddingServers.splice(0)) {
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
 	}
 });
 
@@ -102,12 +127,13 @@ describe("explicit Host resource scopes", () => {
 
 	it("requires independent character consent and persists it without sharing it with another character", async () => {
 		const { host } = setup();
+		const baseUrl = await localEmbeddingEndpoint();
 		const settings = Reflect.get(host, "appSettings") as AppSettingsStore;
 		settings.save({
 			memoryVectorService: {
 				enabled: true,
 				provider: "remote",
-				baseUrl: "https://example.invalid",
+				baseUrl,
 				model: "embedding",
 				dimensions: 3,
 			},
