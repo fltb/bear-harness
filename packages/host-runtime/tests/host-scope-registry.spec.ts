@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	type CredentialStore,
+	REMOTE_EMBEDDING_CREDENTIAL_ID,
+} from "../src/providers/credential-store.js";
 import { createHostRuntime, type HostRuntime } from "../src/runtime.js";
 import type { AppSettingsStore } from "../src/storage/app-settings-store.js";
 
@@ -12,10 +16,12 @@ const seed = fileURLToPath(new URL("./fixtures/characters", import.meta.url));
 const hosts: Array<{ host: HostRuntime; root: string }> = [];
 const embeddingServers: Server[] = [];
 async function localEmbeddingEndpoint() {
+	let requests = 0;
 	const server = createServer(async (request, response) => {
 		let body = "";
 		for await (const chunk of request) body += chunk;
 		const { input } = JSON.parse(body) as { input: string[] };
+		requests++;
 		response.writeHead(200, { "content-type": "application/json" });
 		response.end(
 			JSON.stringify({ data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })) }),
@@ -25,7 +31,7 @@ async function localEmbeddingEndpoint() {
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("Missing embedding fixture port");
-	return `http://127.0.0.1:${address.port}/v1`;
+	return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests: () => requests };
 }
 function setup() {
 	const root = mkdtempSync(join(tmpdir(), "bear-explicit-scopes-"));
@@ -127,13 +133,16 @@ describe("explicit Host resource scopes", () => {
 
 	it("requires independent character consent and persists it without sharing it with another character", async () => {
 		const { host } = setup();
-		const baseUrl = await localEmbeddingEndpoint();
+		const endpoint = await localEmbeddingEndpoint();
+		const credentials = Reflect.get(host, "credentials") as CredentialStore;
+		// The remote adapter requires a key; an empty key selects local model warmup.
+		await credentials.set(REMOTE_EMBEDDING_CREDENTIAL_ID, { apiKey: "fixture-key" });
 		const settings = Reflect.get(host, "appSettings") as AppSettingsStore;
 		settings.save({
 			memoryVectorService: {
 				enabled: true,
 				provider: "remote",
-				baseUrl,
+				baseUrl: endpoint.baseUrl,
 				model: "embedding",
 				dimensions: 3,
 			},
@@ -151,6 +160,8 @@ describe("explicit Host resource scopes", () => {
 			ok: true,
 			data: { enabled: false },
 		});
+		await host.useCharacter("jizhou", (r) => r.canon.indexPending("jizhou"));
+		expect(endpoint.requests()).toBeGreaterThan(0);
 		settings.save({ memoryVectorService: { enabled: false, provider: "none" } });
 		expect(await host.useCharacter("jizhou", (r) => r.relationshipMemoryEnabled)).toBe(false);
 		expect(await host.dispatch("character.memoryGet", { characterId: "jizhou" })).toEqual({
