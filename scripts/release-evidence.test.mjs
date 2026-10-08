@@ -22,10 +22,25 @@ test.afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("npm SBOM uses the Windows command wrapper through a shell", () => {
-	assert.deepEqual(npmSbomInvocation("win32"), { command: "npm.cmd", shell: true });
-	assert.deepEqual(npmSbomInvocation("linux"), { command: "npm", shell: false });
-	assert.deepEqual(npmSbomInvocation("darwin"), { command: "npm", shell: false });
+test("npm SBOM uses a fixed Windows command and direct arguments elsewhere", () => {
+	const args = [
+		"sbom",
+		"--package-lock-only",
+		"--omit=dev",
+		"--sbom-format=cyclonedx",
+		"--sbom-type=application",
+	];
+	assert.deepEqual(npmSbomInvocation("win32"), {
+		command: "cmd.exe",
+		args: [
+			"/d",
+			"/s",
+			"/c",
+			"npm.cmd sbom --package-lock-only --omit=dev --sbom-format=cyclonedx --sbom-type=application",
+		],
+	});
+	for (const platform of ["linux", "darwin"])
+		assert.deepEqual(npmSbomInvocation(platform), { command: "npm", args });
 });
 
 test("release hash inputs use platform-independent LF checkouts", () => {

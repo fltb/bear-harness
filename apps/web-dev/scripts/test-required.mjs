@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
@@ -25,6 +25,7 @@ const results = await Promise.all(
 			new Promise((resolveResult) => {
 				const directory = resolve(output, `shard-${index + 1}`);
 				const report = resolve(output, `shard-${index + 1}.json`);
+				rmSync(report, { force: true });
 				const offset = index * 100;
 				const env = {
 					...process.env,

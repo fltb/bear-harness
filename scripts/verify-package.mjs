@@ -130,28 +130,27 @@ function templateVariable(name) {
 
 function generateNpmSbom(repoRoot) {
 	const invocation = npmSbomInvocation(process.platform);
-	return execFileSync(
-		invocation.command,
-		[
-			"sbom",
-			"--package-lock-only",
-			"--omit=dev",
-			"--sbom-format=cyclonedx",
-			"--sbom-type=application",
-		],
-		{
-			cwd: repoRoot,
-			encoding: "utf8",
-			maxBuffer: 64 * 1024 * 1024,
-			shell: invocation.shell,
-		},
-	);
+	return execFileSync(invocation.command, invocation.args, {
+		cwd: repoRoot,
+		encoding: "utf8",
+		maxBuffer: 64 * 1024 * 1024,
+		shell: false,
+	});
 }
 
 export function npmSbomInvocation(platform) {
+	const args = [
+		"sbom",
+		"--package-lock-only",
+		"--omit=dev",
+		"--sbom-format=cyclonedx",
+		"--sbom-type=application",
+	];
+	// cmd is required for npm.cmd; its command text is entirely constant.
+	// Do not combine shell:true with an argument array (Node DEP0190).
 	return platform === "win32"
-		? { command: "npm.cmd", shell: true }
-		: { command: "npm", shell: false };
+		? { command: "cmd.exe", args: ["/d", "/s", "/c", `npm.cmd ${args.join(" ")}`] }
+		: { command: "npm", args };
 }
 
 function portablePath(path) {
