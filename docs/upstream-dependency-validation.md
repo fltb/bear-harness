@@ -83,3 +83,9 @@ Scope: 9 workspace packages plus root dependency/CI infrastructure; 53 files. Ex
 Release decision: this change does not constitute a public release. Four-platform CI, fresh packages and clean-commit evidence must pass before release acceptance. Live-model character acceptance is a separate real-model gate and is not replaced by the local wire fixtures.
 
 Deployment prerequisite: the local GitHub browser session is signed out and the available GitHub connector does not expose repository Actions permission/secret administration. This task cannot verify or provision `UPSTREAM_WORKFLOW_TOKEN` or the repository's Actions PR-creation setting. Configure these in repository Settings; do not put credentials in the repository or chat. This limitation is separate from local test results.
+
+## Clean-checkout CI correction
+
+CI run `37727272013` stopped during lint: `check-canon-packages.mjs` imports the compiled Host CharacterLoader, but the quality job had not built workspace packages. Local build output masked this missing prerequisite. Root `prelint` now runs `build:packages`, so both local and CI lint build the exact current source before validating Canon; the check is not skipped or weakened.
+
+Verified in a separate fresh checkout at `c5614ee` with this fix applied: no Host `dist` or build cache existed before installation; a fresh `npm ci` followed by `npm run lint` passed, including all three Canon documents. The correction changes one script entry and this report; it does not change product/runtime ownership. Full remote CI remains the release authority.
