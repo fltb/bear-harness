@@ -43,7 +43,7 @@ async function main() {
 		new Promise((resolveResult, reject) => {
 			const child = spawn(
 				process.execPath,
-				[cli, "--config", "electron-builder.config.ts", "--mac", "dmg", "zip", `--${arch}`],
+				[cli, "--config", "electron-builder.config.ts", "--mac", "dmg", `--${arch}`],
 				{
 					cwd: desktop,
 					env: { ...process.env, BEAR_PACKAGE_ARCH: arch },

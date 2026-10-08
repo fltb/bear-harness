@@ -118,7 +118,7 @@ const requiredCommands = new Map([
 			"tee linux-confinement.log",
 			"::error title=Linux confinement setup failure::",
 			"npm ci",
-			"npm run build:packages",
+			"node scripts/shared-build.mjs restore",
 			"npm run test:unit:remaining",
 			"npm run test:upstream",
 			"npm run test:coverage --workspace @bear-harness/host-runtime",
@@ -128,17 +128,17 @@ const requiredCommands = new Map([
 			'lastIndexOf("Failed Tests")',
 			"npm run test:coverage --workspace @bear-harness/companion-ui",
 			"npm run test:coverage --workspace @bear-harness/desktop",
-			"npm run build",
+			"npm run build --workspace @bear-harness/web-dev",
 		],
 	],
 	["security", ["npm audit --audit-level=high", "npm audit signatures"]],
-	["recovery", ["npm run build:packages", "npm run test:release:recovery"]],
-	["e2e", ["npm run build:packages", "npm run test:e2e:electron:built"]],
+	["recovery", ["node scripts/shared-build.mjs restore", "npm run test:release:recovery"]],
+	["e2e", ["node scripts/shared-build.mjs restore", "npm run test:e2e:electron:built"]],
 	[
 		"web-e2e",
 		[
 			...linuxConfinementCommands,
-			"npm run build:packages",
+			"node scripts/shared-build.mjs restore",
 			"npx --no-install playwright install chromium",
 			"npm run test:e2e:web:required",
 			"tee web-e2e.log",
@@ -148,7 +148,7 @@ const requiredCommands = new Map([
 	[
 		"package",
 		[
-			"npm run build:packages",
+			"node scripts/shared-build.mjs restore",
 			"npm run test:upstream:native",
 			"sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update",
 			"sudo apt-get --option Acquire::Retries=3 install --yes",
@@ -248,20 +248,6 @@ if (!crashpadStep || crashpadStep.shell !== "bash") {
 const packageAttestationStep = jobs.package.steps.find(
 	(step) => step?.name === "Attest packaged target",
 );
-// Reusing shared outputs is valid only after building them in this same job.
-const sharedBuildIndex = jobs.package.steps.findIndex(
-	(step) => step.run === "npm run build:packages",
-);
-const desktopBuildIndex = jobs.package.steps.findIndex((step) => step.name === "Build application");
-if (
-	sharedBuildIndex < 0 ||
-	desktopBuildIndex <= sharedBuildIndex ||
-	!jobs.package.steps[desktopBuildIndex].run.includes(
-		"npm run build --workspace @bear-harness/desktop -- --shared-built",
-	)
-) {
-	throw new Error("Packaging must build shared packages before reusing them in the desktop build");
-}
 if (packageAttestationStep?.id !== "package_attestation") {
 	throw new Error("Package attestation must expose a step outcome for focused diagnostics");
 }
@@ -398,16 +384,47 @@ console.log(
 	"Publish workflow contract passed: green-run artifact reuse and stable/RC publication present",
 );
 
-// Build reuse is valid only after an explicit build from this job's checkout.
+// All consumers use the producer's exact same-run, same-commit output.
 for (const name of ["preflight", "quality", "recovery", "e2e", "web-e2e", "package"]) {
 	const job = jobs[name];
 	if (job.env?.BEAR_SHARED_BUILT !== "1") throw new Error(`${name} must reuse its shared build`);
-	const build = job.steps.findIndex((step) => step.run === "npm run build:packages");
+	const producer = name === "preflight";
+	const build = job.steps.findIndex(
+		(step) =>
+			step.run === (producer ? "npm run build:packages" : "node scripts/shared-build.mjs restore"),
+	);
 	const firstCheck = job.steps.findIndex((step) =>
 		/npm run (lint|typecheck|test:|build(?: |\n|$))/.test(step.run ?? ""),
 	);
 	if (build < 0 || (firstCheck >= 0 && build >= firstCheck))
-		throw new Error(`${name} must build shared packages before consuming them`);
+		throw new Error(`${name} must prepare shared outputs before consuming them`);
+	if (!producer) {
+		const download = job.steps.findIndex(
+			(step) =>
+				step.uses?.startsWith("actions/download-artifact@") &&
+				step.with?.name === "shared-build-${{ github.sha }}" &&
+				step.with?.path === ".cache/ci/shared-build",
+		);
+		if (download < 0 || download >= build)
+			throw new Error(`${name} must download this commit's build`);
+		if (
+			/npm run build:packages|npm run build --workspace @bear-harness\/desktop/.test(commands(job))
+		)
+			throw new Error(`${name} must not rebuild shared desktop outputs`);
+	}
+}
+const producerCommands = commands(jobs.preflight);
+if (
+	!producerCommands.includes("npm run build --workspace @bear-harness/desktop -- --shared-built") ||
+	!producerCommands.includes("node scripts/shared-build.mjs create") ||
+	!jobs.preflight.steps.some(
+		(step) =>
+			step.uses?.startsWith("actions/upload-artifact@") &&
+			step.with?.name === "shared-build-${{ github.sha }}" &&
+			step.with?.path === ".cache/ci/shared-build/",
+	)
+) {
+	throw new Error("preflight must build and export the common desktop payload");
 }
 for (const name of ["release-gate", "upstream-brand"]) {
 	const setup = jobs[name].steps.find((step) => step.uses?.startsWith("actions/setup-node@"));

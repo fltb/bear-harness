@@ -25,7 +25,7 @@
 		"test:e2e:built": "playwright test",
 		"package:mac:arm64:built": "node scripts/validate-product-config.mjs && node scripts/package-mac.mjs arm64 && node scripts/verify-package-boundary.mjs mac arm64 && node scripts/verify-native-bindings.mjs mac arm64",
 		"package:mac:x64:built": "node scripts/validate-product-config.mjs && node scripts/package-mac.mjs x64 && node scripts/verify-package-boundary.mjs mac x64 && node scripts/verify-native-bindings.mjs mac x64",
-		"package:win:built": "node scripts/validate-product-config.mjs && node scripts/stage-windows-runtime.mjs && electron-builder --config electron-builder.config.ts --win nsis zip --x64 && node scripts/verify-package-boundary.mjs win x64 && node scripts/verify-native-bindings.mjs win x64",
+		"package:win:built": "node scripts/validate-product-config.mjs && node scripts/stage-windows-runtime.mjs && electron-builder --config electron-builder.config.ts --win nsis --x64 && node scripts/verify-package-boundary.mjs win x64 && node scripts/verify-native-bindings.mjs win x64",
 		"package:linux:built": "node scripts/validate-product-config.mjs && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64 && node scripts/verify-package-boundary.mjs linux x64 && node scripts/verify-native-bindings.mjs linux x64"
 	},
 	"dependencies": {

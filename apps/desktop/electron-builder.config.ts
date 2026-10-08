@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import type { Configuration } from "electron-builder";
+import { prepareZip, writeZip } from "./scripts/package-zip.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
@@ -136,6 +137,8 @@ export function extraResourcesFor(platform: NodeJS.Platform = process.platform) 
 }
 
 const phaseStarts = new Map<string, number>();
+const appPaths = new Map<number, string>();
+const zipJobs: Promise<{ file?: string; error?: unknown }>[] = [];
 function phaseStart(name: string) {
 	phaseStarts.set(name, performance.now());
 	console.log(`package phase started: ${name}`);
@@ -160,15 +163,45 @@ const config: Configuration = {
 		phaseEnd("prepare Electron");
 		phaseStart("assemble application");
 	},
-	afterPack: async () => {
+	afterPack: async (context) => {
 		phaseEnd("assemble application");
+		appPaths.set(
+			context.arch,
+			context.electronPlatformName === "darwin"
+				? resolve(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
+				: context.appOutDir,
+		);
 	},
 	artifactBuildStarted: async (event) => {
 		phaseStart(event.file);
+		// This event follows application signing, including when signing is off.
+		// The ZIP runs alongside DMG/NSIS and never generates electron-updater data.
+		if (event.targetPresentableName !== "DMG" && event.targetPresentableName !== "nsis") return;
+		const appPath = event.arch === null ? undefined : appPaths.get(event.arch);
+		if (!appPath) throw new Error("Missing finalized application for ZIP");
+		const file = event.file.replace(/\.(dmg|exe)$/, ".zip");
+		const prepared = await prepareZip({ platform: process.platform, appPath, file });
+		// Attach rejection handling immediately; afterAllArtifactBuild propagates it.
+		zipJobs.push(
+			writeZip(prepared, file).then(
+				(file: string) => ({ file }),
+				(error: unknown) => ({ error }),
+			),
+		);
 	},
 	artifactBuildCompleted: async (event) => {
 		if (event.file) phaseEnd(event.file);
 	},
+	afterAllArtifactBuild: async () => {
+		const results = await Promise.all(zipJobs);
+		return results.map((result) => {
+			if ("error" in result) throw result.error;
+			if (!result.file) throw new Error("ZIP generation did not return an artifact");
+			return result.file;
+		});
+	},
+	dmg: { writeUpdateInfo: false },
+	nsis: { differentialPackage: false },
 	appId: productConfig.appId,
 	productName: productConfig.productName,
 	executableName: productConfig.executableName,

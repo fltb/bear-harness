@@ -111,7 +111,8 @@
 			"evidence": [
 				"apps/desktop/e2e/app.spec.ts",
 				"apps/desktop/e2e/packaged.spec.ts",
-				"apps/desktop/tests/electron-builder-config.spec.ts"
+				"apps/desktop/tests/electron-builder-config.spec.ts",
+				"apps/desktop/tests/config/package-zip.spec.ts"
 			]
 		},
 		{

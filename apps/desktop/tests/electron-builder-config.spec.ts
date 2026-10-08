@@ -22,6 +22,12 @@ function fileSha256(path: string): string {
 }
 
 describe("electron-builder product identity", () => {
+	it("keeps DMG compression unchanged and disables unused differential update metadata", () => {
+		expect(builderConfig.dmg?.writeUpdateInfo).toBe(false);
+		expect(builderConfig.nsis?.differentialPackage).toBe(false);
+		expect(builderConfig.compression).toBeUndefined();
+		expect(builderConfig.mac?.compression).toBeUndefined();
+	});
 	it("projects the exact Bear Harness identity into package metadata", () => {
 		expect(builderConfig).toMatchObject({
 			appId: "io.github.fltb.bear-harness",

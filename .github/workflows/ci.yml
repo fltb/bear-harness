@@ -29,6 +29,16 @@ jobs:
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
       - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm run build:packages
+      - run: npm run build --workspace @bear-harness/desktop -- --shared-built
+      - run: node scripts/shared-build.mjs create
+      - name: Upload shared build
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
       - run: npm run lint
       - run: npm run typecheck
       - run: node scripts/release-attestation.mjs preflight
@@ -77,7 +87,13 @@ jobs:
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
       - run: npm ci --no-audit --no-fund --prefer-offline
-      - run: npm run build:packages
+      - name: Download shared build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build
+      - name: Verify and restore shared build
+        run: node scripts/shared-build.mjs restore
       - run: npm run test:unit:remaining
       - run: npm run test:upstream
       - name: Host coverage
@@ -124,7 +140,7 @@ jobs:
           name: coverage
           path: coverage/
           if-no-files-found: error
-      - run: npm run build
+      - run: npm run build --workspace @bear-harness/web-dev
       - run: node scripts/release-attestation.mjs quality
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -170,7 +186,13 @@ jobs:
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
       - run: npm ci --no-audit --no-fund --prefer-offline
-      - run: npm run build:packages
+      - name: Download shared build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build
+      - name: Verify and restore shared build
+        run: node scripts/shared-build.mjs restore
       - run: npm run test:release:recovery
       - run: node scripts/release-attestation.mjs recovery
       - uses: actions/upload-artifact@v7.0.2
@@ -200,8 +222,13 @@ jobs:
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
       - run: npm ci --no-audit --no-fund --prefer-offline
-      - run: npm run build:packages
-      - run: npm run build --workspace @bear-harness/desktop -- --shared-built
+      - name: Download shared build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build
+      - name: Verify and restore shared build
+        run: node scripts/shared-build.mjs restore
       - name: Install Electron runtime libraries
         run: |
           sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update
@@ -265,7 +292,13 @@ jobs:
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
       - run: npm ci --no-audit --no-fund --prefer-offline
-      - run: npm run build:packages
+      - name: Download shared build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build
+      - name: Verify and restore shared build
+        run: node scripts/shared-build.mjs restore
       - name: Cache Chromium download
         uses: actions/cache@v6.1.0
         with:
@@ -377,28 +410,14 @@ jobs:
           path: .cache/upstream/
           key: native-fixture-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/upstream-native.test.mjs') }}
       - run: npm ci --no-audit --no-fund --prefer-offline
-      - run: npm run build:packages
+      - name: Download shared build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: shared-build-${{ github.sha }}
+          path: .cache/ci/shared-build
+      - name: Verify and restore shared build
+        run: node scripts/shared-build.mjs restore
       - run: npm run test:upstream:native
-      - name: Build application
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run build --workspace @bear-harness/desktop -- --shared-built 2>&1 | tee package-build.log
-      - name: Publish package build failure
-        if: failure()
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import { existsSync, readFileSync } from "node:fs";
-          if (existsSync("package-build.log")) {
-            const encoded = readFileSync("package-build.log", "utf8")
-              .slice(-5_000)
-              .replaceAll("%", "%25")
-              .replaceAll("\r", "%0D")
-              .replaceAll("\n", "%0A");
-            process.stdout.write(`::error title=Package build failure::${encoded}\n`);
-          }
-          NODE
       - name: Install Linux Electron runtime
         if: matrix.os-name == 'linux'
         run: |

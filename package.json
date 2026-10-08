@@ -48,7 +48,7 @@
 		"test:upstream:native": "node --test --test-concurrency=1 scripts/upstream-native.test.mjs",
 		"test:upstream": "node scripts/test-upstream.mjs",
 		"upstream:lock": "node scripts/upstream-lock.mjs",
-		"test:unit:remaining": "node --test scripts/migrate-character-package.test.mjs scripts/migrate-installation.test.mjs scripts/check-renderer-effects.test.mjs scripts/check-ui-design-language.test.mjs scripts/frontmatter.test.mjs scripts/release-evidence.test.mjs scripts/soak-evidence.test.mjs scripts/verify-release-download.test.mjs && npm run test:unit --workspace @bear-harness/i18n && npm run test:unit --workspace @bear-harness/protocol && npm run test:unit --workspace @bear-harness/tdai-core && npm run test:unit --workspace @bear-harness/web-dev",
+		"test:unit:remaining": "node --test scripts/shared-build.test.mjs scripts/migrate-character-package.test.mjs scripts/migrate-installation.test.mjs scripts/check-renderer-effects.test.mjs scripts/check-ui-design-language.test.mjs scripts/frontmatter.test.mjs scripts/release-evidence.test.mjs scripts/soak-evidence.test.mjs scripts/verify-release-download.test.mjs && npm run test:unit --workspace @bear-harness/i18n && npm run test:unit --workspace @bear-harness/protocol && npm run test:unit --workspace @bear-harness/tdai-core && npm run test:unit --workspace @bear-harness/web-dev",
 		"test:e2e:electron:built": "npm run test:e2e:built --workspace @bear-harness/desktop",
 		"package:mac:arm64:built": "npm run package:mac:arm64:built --workspace @bear-harness/desktop",
 		"package:mac:x64:built": "npm run package:mac:x64:built --workspace @bear-harness/desktop",
