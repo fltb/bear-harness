@@ -354,7 +354,11 @@ it("reviews actual schema fields, transfers large files, rewrites references, ex
 		}
 		const { unzipSync } = await import("fflate");
 		const exported = unzipSync(Buffer.concat(chunks));
-		expect(Buffer.from(exported["assets/large.bin"]!)).toEqual(bytes);
+		const exportedBytes = exported["assets/large.bin"];
+		assert(exportedBytes, "export must contain the uploaded binary asset");
+		expect(exportedBytes.byteLength).toBe(bytes.byteLength);
+		// Compare every byte natively instead of enumerating a million Buffer keys.
+		expect(bytes.equals(exportedBytes), "export must preserve every uploaded byte").toBe(true);
 		expect(exported).not.toHaveProperty("assets/avatar.png");
 		const pruned = await host.dispatch("character.draftManage", {
 			action: "prune",

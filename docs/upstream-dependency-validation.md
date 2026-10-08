@@ -139,3 +139,12 @@ Local validation: shared-build round-trip, stale-output replacement, commit/lock
 Ownership remains entirely build/release infrastructure; no Host, Pi, character or updater behavior changes. Native Windows/Linux and Intel Mac packaging still require the single post-push CI run. Release decision: no public release approval; existing live-model and release gates remain required.
 
 Engineering change count: 3 infrastructure areas (shared build transport, installer generation, CI contracts/evidence), 13 files, 534 added lines and 57 removed lines. Remaining unit suites passed 97 tests. No product runtime modules changed.
+
+
+## Host draft coverage timeout (2026-10-08)
+
+Run `37759281869` passed all four platform packages, Web/Electron E2E, recovery and security. Its quality job failed on one existing draft integration test's 5,000ms deadline; the three annotations describe that single failure, and the final gate correctly remained skipped.
+
+A local phase trace identified avoidable assertion work: comparing the 1,048,593-byte exported asset with generic `toEqual(Buffer)` took 679.33ms in a 1,406.84ms focused test. The assertion now checks asset presence and length, then compares every byte with native `Buffer.equals(Uint8Array)`. In the subsequent full Host coverage run, this assertion took 0.11ms and the complete scenario took 723.73ms. These are local observations under different run conditions, not an exact reconstruction of the hosted timeout. No deadline, fixture size, worker isolation, coverage threshold or product behavior changed. Temporary phase tracing was removed.
+
+Full local Host coverage passed 80 files: 709 tests passed and 2 existing platform/GC tests skipped; statements 79.94%, branches 70.08%. Scope: one test module and its engineering evidence document, 2 files, 14 added lines and 1 removed line. The hosted run must validate the correction; there is no public release approval.
