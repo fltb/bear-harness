@@ -22,6 +22,7 @@ function repositoryFixture(change = {}) {
 		before: JSON.stringify({ dependencies: { fixture: "1.0.0" } }),
 		after: JSON.stringify({ dependencies: { fixture: "2.0.0" } }),
 		jobs: [
+			"preflight",
 			"quality",
 			"upstream-brand",
 			"security",
@@ -29,10 +30,10 @@ function repositoryFixture(change = {}) {
 			"e2e",
 			"web-e2e",
 			"release-gate",
-			"package (mac arm64)",
-			"package (mac x64)",
-			"package (win x64)",
-			"package (linux x64)",
+			"package (mac-arm64)",
+			"package (mac-x64)",
+			"package (win-x64)",
+			"package (linux-x64)",
 		].map((name) => ({ name, conclusion: "success" })),
 		...change,
 	};
@@ -97,6 +98,21 @@ test("requires all four native package targets", async () => {
 	const f = repositoryFixture();
 	f.state.jobs.pop();
 	await assert.rejects(verifyAndMerge(f.api, run, "owner/repo"), /All four native/);
+	assert.equal(f.mutations.length, 0);
+});
+test("rejects a missing, skipped, cancelled or failed preflight before promotion", async () => {
+	for (const conclusion of [null, "skipped", "cancelled", "failure"]) {
+		const f = repositoryFixture();
+		if (conclusion === null) f.state.jobs = f.state.jobs.filter((job) => job.name !== "preflight");
+		else f.state.jobs.find((job) => job.name === "preflight").conclusion = conclusion;
+		await assert.rejects(verifyAndMerge(f.api, run, "owner/repo"), /Missing successful preflight/);
+		assert.equal(f.mutations.length, 0);
+	}
+});
+test("four green package jobs cannot substitute a duplicate target for a missing platform", async () => {
+	const f = repositoryFixture();
+	f.state.jobs.find((job) => job.name === "package (linux-x64)").name = "package (win-x64)";
+	await assert.rejects(verifyAndMerge(f.api, run, "owner/repo"), /All four native package targets/);
 	assert.equal(f.mutations.length, 0);
 });
 test("does not dispatch main validation after an atomic promotion conflict", async () => {

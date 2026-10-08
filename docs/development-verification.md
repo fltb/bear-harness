@@ -85,7 +85,7 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 
 ## Release gate
 
-`npm run release:gate` 只允许在受保护的 `CI=true` 矩阵运行。它覆盖 lint、typecheck、coverage、build、recovery、Web required E2E 和 Electron E2E；发布工作流还必须提供：
+CI 先运行 `preflight`（lint、typecheck），通过后并行执行 quality（单测、覆盖率、上游接口测试、build）、recovery、Web required E2E、Electron E2E 和四平台打包。`release-gate` 仅汇总同一提交的验证记录，不重跑测试。本地使用 `npm run test:ci -- --list` 查看对应检查，使用 `npm run test:ci` 执行本机支持的检查。检查与证据清单统一定义在 `scripts/ci-contract.mjs`。完整发布验收还必须提供：
 
 - `npm audit --audit-level=high` 与 `npm audit signatures`；
 - 真实 provider/model 的 live E2E；

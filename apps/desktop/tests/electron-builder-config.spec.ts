@@ -165,7 +165,9 @@ describe("electron-builder production boundary", () => {
 			["package:win", "win x64"],
 			["package:linux", "linux x64"],
 		] as const) {
-			const command = desktop.scripts?.[name];
+			expect(desktop.scripts?.[name]).toBe(`npm run build && npm run ${name}:built`);
+			const command = desktop.scripts?.[`${name}:built`];
+			expect(command).not.toContain("npm run build");
 			expect(command).toContain(`verify-package-boundary.mjs ${target}`);
 			expect(command).toContain(`verify-native-bindings.mjs ${target}`);
 			if (target.startsWith("mac ")) {

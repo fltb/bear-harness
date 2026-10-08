@@ -79,11 +79,9 @@ describe("validate-product-config", () => {
 			scripts: Record<string, string>;
 		};
 		for (const name of ["package:mac:arm64", "package:mac:x64", "package:win", "package:linux"]) {
-			const command = packageJson.scripts[name];
-			const validation = command.indexOf("node scripts/validate-product-config.mjs");
-			const build = command.indexOf("npm run build");
-			expect(validation, `${name} must validate product config`).toBeGreaterThanOrEqual(0);
-			expect(validation, `${name} must validate before build`).toBeLessThan(build);
+			const command = packageJson.scripts[`${name}:built`];
+			expect(command.startsWith("node scripts/validate-product-config.mjs && ")).toBe(true);
+			expect(packageJson.scripts[name]).toBe(`npm run build && npm run ${name}:built`);
 		}
 	});
 

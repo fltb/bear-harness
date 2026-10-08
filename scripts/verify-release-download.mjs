@@ -11,7 +11,10 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const TARGETS = ["mac-x64", "mac-arm64", "win-x64", "linux-x64"];
+import { REQUIRED_STAGE_ATTESTATIONS } from "./ci-contract.mjs";
+import { PACKAGE_TARGETS } from "./release-evidence.mjs";
+
+const TARGETS = Object.keys(PACKAGE_TARGETS);
 
 export function validateReleaseTag(tag, version) {
 	if (tag === `v${version}`) return 0;
@@ -42,11 +45,11 @@ export async function verifyReleaseDownload(options) {
 	if (!plainObject(final.inputs)) throw new Error("final attestation is missing inputs");
 
 	const stages = final.inputs.stages;
-	if (!Array.isArray(stages) || stages.length !== 4) {
-		throw new Error("final attestation must reference all four required validation stages");
+	if (!Array.isArray(stages) || stages.length !== REQUIRED_STAGE_ATTESTATIONS.length) {
+		throw new Error("final attestation must reference all required validation stages");
 	}
 	const actualStages = new Set(stages.map((record) => record.stage));
-	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e"]) {
+	for (const stage of REQUIRED_STAGE_ATTESTATIONS) {
 		if (!actualStages.has(stage)) throw new Error(`final attestation is missing ${stage}`);
 	}
 	for (const stage of stages) {

@@ -28,6 +28,7 @@ const graphical = (command) =>
 // Check commands mirror .github/workflows/ci.yml. Runner installation, artifact
 // upload/download, and clean-commit release attestations belong to GitHub Actions.
 const jobs = {
+	preflight: [run("lint"), run("typecheck")],
 	quality: [
 		...(process.platform === "linux"
 			? [
@@ -47,9 +48,8 @@ const jobs = {
 					},
 				]
 			: []),
-		run("lint"),
-		run("typecheck"),
-		run("test:unit"),
+		run("build:packages"),
+		run("test:unit:remaining"),
 		run("test:upstream"),
 		run("test:coverage", "--workspace", "@bear-harness/host-runtime"),
 		run("test:coverage", "--workspace", "@bear-harness/companion-ui"),
@@ -59,7 +59,7 @@ const jobs = {
 	"upstream-brand": [node("apps/desktop/scripts/check-upstream-brand.mjs")],
 	security: [npm("audit", "--audit-level=high"), npm("audit", "signatures")],
 	recovery: [run("build:packages"), run("test:release:recovery")],
-	e2e: [run("build:packages"), run("build"), graphical(run("test:e2e:electron"))],
+	e2e: [run("build:packages"), run("build"), graphical(run("test:e2e:electron:built"))],
 	"web-e2e": [
 		run("build:packages"),
 		npm("exec", "--no", "--", "playwright", "install", "chromium"),

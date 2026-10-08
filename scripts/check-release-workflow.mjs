@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
+import { CI_JOB_STAGES, REQUIRED_CI_JOBS } from "./ci-contract.mjs";
+import { PACKAGE_TARGETS } from "./release-evidence.mjs";
 
 const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
@@ -38,16 +40,7 @@ if (workflow?.concurrency?.group !== concurrencyGroup) {
 if (workflow?.concurrency?.["cancel-in-progress"] !== true) {
 	throw new Error("release workflow must cancel an older run for the same ref");
 }
-const requiredJobs = [
-	"quality",
-	"upstream-brand",
-	"security",
-	"recovery",
-	"e2e",
-	"web-e2e",
-	"package",
-	"release-gate",
-];
+const requiredJobs = REQUIRED_CI_JOBS;
 for (const name of requiredJobs) {
 	if (!jobs[name]) throw new Error(`release workflow is missing required job: ${name}`);
 }
@@ -66,15 +59,38 @@ for (const name of requiredJobs.filter((name) => name !== "release-gate")) {
 	if (!finalNeeds.has(name)) throw new Error(`release-gate must require successful ${name}`);
 }
 
+for (const name of ["quality", "recovery", "e2e", "web-e2e", "package"]) {
+	if (JSON.stringify(jobs[name].needs) !== JSON.stringify(["preflight"])) {
+		throw new Error(`${name} must start after preflight without waiting for other test jobs`);
+	}
+}
+for (const [name, stage] of Object.entries(CI_JOB_STAGES)) {
+	if (!stage) continue;
+	const steps = jobs[name].steps ?? [];
+	if (
+		!steps.some((step) => step.run === `node scripts/release-attestation.mjs ${stage}`) ||
+		!steps.some((step) => step.with?.name === `release-attestation-${stage}`)
+	) {
+		throw new Error(`${name} must produce and upload its ${stage} attestation`);
+	}
+}
+
 const matrix = jobs.package?.strategy?.matrix?.include;
 if (!Array.isArray(matrix)) throw new Error("package job must use an explicit release matrix");
 const actualTargets = new Set(matrix.map((entry) => `${entry["os-name"]}:${entry.arch}`));
-const requiredTargets = ["mac:x64", "mac:arm64", "win:x64", "linux:x64"];
+const requiredTargets = Object.keys(PACKAGE_TARGETS).map((target) =>
+	target.replace(/-([^-]+)$/, ":$1"),
+);
 for (const target of requiredTargets) {
 	if (!actualTargets.has(target)) throw new Error(`package matrix is missing ${target}`);
 }
 if (actualTargets.size !== requiredTargets.length) {
 	throw new Error(`package matrix contains unreviewed targets: ${[...actualTargets].join(", ")}`);
+}
+if (matrix.length !== requiredTargets.length)
+	throw new Error("package matrix must not duplicate targets");
+if (jobs.package.name !== "package (${{ matrix.os-name }}-${{ matrix.arch }})") {
+	throw new Error("package jobs must expose their exact platform target for automatic merging");
 }
 const macIntel = matrix.find((entry) => entry["os-name"] === "mac" && entry.arch === "x64");
 if (macIntel?.os !== "macos-15-intel") {
@@ -94,6 +110,7 @@ const linuxConfinementCommands = [
 	"bwrap --die-with-parent --new-session --unshare-all --share-net",
 ];
 const requiredCommands = new Map([
+	["preflight", ["npm ci", "npm run lint", "npm run typecheck"]],
 	[
 		"quality",
 		[
@@ -101,9 +118,8 @@ const requiredCommands = new Map([
 			"tee linux-confinement.log",
 			"::error title=Linux confinement setup failure::",
 			"npm ci",
-			"npm run lint",
-			"npm run typecheck",
-			"npm run test:unit",
+			"npm run build:packages",
+			"npm run test:unit:remaining",
 			"npm run test:upstream",
 			"npm run test:coverage --workspace @bear-harness/host-runtime",
 			"tee host-coverage.log",
@@ -117,7 +133,7 @@ const requiredCommands = new Map([
 	],
 	["security", ["npm audit --audit-level=high", "npm audit signatures"]],
 	["recovery", ["npm run build:packages", "npm run test:release:recovery"]],
-	["e2e", ["npm run build:packages", "npm run test:e2e:electron"]],
+	["e2e", ["npm run build:packages", "npm run test:e2e:electron:built"]],
 	[
 		"web-e2e",
 		[
@@ -319,6 +335,9 @@ for (const command of [
 	'conclusion == "success"',
 	'head_branch == "main"',
 	"gh run download",
+	...Object.values(CI_JOB_STAGES)
+		.filter(Boolean)
+		.map((stage) => `release-attestation-${stage}`),
 	"release-attestation-final",
 	"node scripts/verify-release-download.mjs",
 	"gh release create",

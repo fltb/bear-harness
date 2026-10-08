@@ -15,7 +15,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Select the declared npm version
+        run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: node scripts/release-attestation.mjs preflight
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-attestation-preflight
+          path: release-attestations/preflight.json
+          if-no-files-found: error
+
   quality:
+    needs: [preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -51,9 +72,8 @@ jobs:
       - name: Select the declared npm version
         run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:unit
+      - run: npm run build:packages
+      - run: npm run test:unit:remaining
       - run: npm run test:upstream
       - name: Host coverage
         id: host_coverage
@@ -135,7 +155,7 @@ jobs:
       - run: npm audit signatures
 
   recovery:
-    needs: [quality]
+    needs: [preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -156,7 +176,7 @@ jobs:
           if-no-files-found: error
 
   e2e:
-    needs: [quality]
+    needs: [preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -178,7 +198,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          xvfb-run -a npm run test:e2e:electron 2>&1 | tee electron-e2e.log
+          xvfb-run -a npm run test:e2e:electron:built 2>&1 | tee electron-e2e.log
       - name: Publish Electron E2E failure
         if: failure() && steps.electron_e2e.outcome == 'failure'
         shell: bash
@@ -209,7 +229,7 @@ jobs:
           if-no-files-found: error
 
   web-e2e:
-    needs: [quality]
+    needs: [preflight]
     runs-on: ubuntu-24.04
     env:
       BEAR_E2E_PROFILE: hosted
@@ -268,7 +288,8 @@ jobs:
           if-no-files-found: error
 
   package:
-    needs: [quality, web-e2e, e2e]
+    name: package (${{ matrix.os-name }}-${{ matrix.arch }})
+    needs: [preflight]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -277,7 +298,7 @@ jobs:
           - os: macos-15-intel
             os-name: mac
             arch: x64
-            package-cmd: package:mac:x64
+            package-cmd: package:mac:x64:built
             exts: dmg zip
             upload-glob: |
               apps/desktop/release/*.dmg
@@ -285,7 +306,7 @@ jobs:
           - os: macos-15
             os-name: mac
             arch: arm64
-            package-cmd: package:mac:arm64
+            package-cmd: package:mac:arm64:built
             exts: dmg zip
             upload-glob: |
               apps/desktop/release/*.dmg
@@ -293,7 +314,7 @@ jobs:
           - os: windows-2025
             os-name: win
             arch: x64
-            package-cmd: package:win
+            package-cmd: package:win:built
             exts: exe zip
             upload-glob: |
               apps/desktop/release/*.exe
@@ -301,7 +322,7 @@ jobs:
           - os: ubuntu-24.04
             os-name: linux
             arch: x64
-            package-cmd: package:linux
+            package-cmd: package:linux:built
             exts: AppImage deb
             upload-glob: |
               apps/desktop/release/*.AppImage
@@ -514,7 +535,7 @@ jobs:
           if-no-files-found: error
 
   release-gate:
-    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, package]
+    needs: [preflight, quality, upstream-brand, security, recovery, e2e, web-e2e, package]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

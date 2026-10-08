@@ -15,13 +15,18 @@
 		"test:unit": "node scripts/validate-product-config.mjs && vitest run",
 		"test:coverage": "node scripts/validate-product-config.mjs && vitest run --coverage",
 		"test:release:recovery": "vitest run tests/recovery-controller.spec.ts tests/recovery-state.spec.ts",
-		"test:e2e": "npm run build && playwright test",
+		"test:e2e": "npm run build && npm run test:e2e:built",
 		"test:e2e:packaged": "node scripts/resolve-packaged-binary.mjs",
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",
-		"package:mac:arm64": "node scripts/validate-product-config.mjs && npm run build && node scripts/package-mac.mjs arm64 && node scripts/verify-package-boundary.mjs mac arm64 && node scripts/verify-native-bindings.mjs mac arm64",
-		"package:mac:x64": "node scripts/validate-product-config.mjs && npm run build && node scripts/package-mac.mjs x64 && node scripts/verify-package-boundary.mjs mac x64 && node scripts/verify-native-bindings.mjs mac x64",
-		"package:win": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-windows-runtime.mjs && electron-builder --config electron-builder.config.ts --win nsis zip --x64 && node scripts/verify-package-boundary.mjs win x64 && node scripts/verify-native-bindings.mjs win x64",
-		"package:linux": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64 && node scripts/verify-package-boundary.mjs linux x64 && node scripts/verify-native-bindings.mjs linux x64"
+		"package:mac:arm64": "npm run build && npm run package:mac:arm64:built",
+		"package:mac:x64": "npm run build && npm run package:mac:x64:built",
+		"package:win": "npm run build && npm run package:win:built",
+		"package:linux": "npm run build && npm run package:linux:built",
+		"test:e2e:built": "playwright test",
+		"package:mac:arm64:built": "node scripts/validate-product-config.mjs && node scripts/package-mac.mjs arm64 && node scripts/verify-package-boundary.mjs mac arm64 && node scripts/verify-native-bindings.mjs mac arm64",
+		"package:mac:x64:built": "node scripts/validate-product-config.mjs && node scripts/package-mac.mjs x64 && node scripts/verify-package-boundary.mjs mac x64 && node scripts/verify-native-bindings.mjs mac x64",
+		"package:win:built": "node scripts/validate-product-config.mjs && node scripts/stage-windows-runtime.mjs && electron-builder --config electron-builder.config.ts --win nsis zip --x64 && node scripts/verify-package-boundary.mjs win x64 && node scripts/verify-native-bindings.mjs win x64",
+		"package:linux:built": "node scripts/validate-product-config.mjs && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64 && node scripts/verify-package-boundary.mjs linux x64 && node scripts/verify-native-bindings.mjs linux x64"
 	},
 	"dependencies": {
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",

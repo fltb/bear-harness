@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { REQUIRED_CI_JOBS } from "./ci-contract.mjs";
+import { PACKAGE_TARGETS } from "./release-evidence.mjs";
 
 const branchPattern =
 	/^codex\/upstream-(pi|acp|memory|storage|network|formats|files|render|ui|i18n|desktop|toolchain|infrastructure)$/;
@@ -148,15 +150,7 @@ export async function verifyAndMerge(api, run, repository) {
 	assert.equal(pr.head.repo.full_name, repository);
 	const comparison = await api(`compare/main...${run.head_sha}`);
 	assert.equal(comparison.behind_by, 0, "Base changed; update and retest before merging");
-	const required = new Set([
-		"quality",
-		"upstream-brand",
-		"security",
-		"recovery",
-		"e2e",
-		"web-e2e",
-		"release-gate",
-	]);
+	const required = REQUIRED_CI_JOBS.filter((name) => name !== "package");
 	const jobs = [];
 	for (let page = 1; ; page++) {
 		const result = await api(`actions/runs/${run.id}/jobs?per_page=100&page=${page}`);
@@ -168,9 +162,15 @@ export async function verifyAndMerge(api, run, repository) {
 			jobs.some((job) => job.name === name && job.conclusion === "success"),
 			`Missing successful ${name}`,
 		);
-	assert(
-		jobs.filter((job) => job.name.startsWith("package (")).length === 4,
-		"All four native package targets must run",
+	assert.deepEqual(
+		jobs
+			.filter((job) => job.name.startsWith("package ("))
+			.map((job) => job.name)
+			.sort(),
+		Object.keys(PACKAGE_TARGETS)
+			.map((target) => `package (${target})`)
+			.sort(),
+		"All four native package targets must run exactly once",
 	);
 	assert(
 		jobs.every((job) => job.conclusion === "success"),

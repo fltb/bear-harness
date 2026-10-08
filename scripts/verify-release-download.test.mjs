@@ -8,7 +8,8 @@ import { validateReleaseTag, verifyReleaseDownload } from "./verify-release-down
 
 const COMMIT = "a".repeat(40);
 const TARGETS = ["mac-x64", "mac-arm64", "win-x64", "linux-x64"];
-const STAGES = ["quality", "recovery", "electron-e2e", "web-e2e"];
+
+import { REQUIRED_STAGE_ATTESTATIONS as STAGES } from "./ci-contract.mjs";
 
 test("release tags must match the stable version or a canonical RC number", () => {
 	assert.equal(validateReleaseTag("v1.0.0", "1.0.0"), 0);
@@ -70,7 +71,7 @@ test("download verification rejects a package whose bytes differ from CI evidenc
 });
 
 test("download verification rejects an incomplete final validation set", async () => {
-	const fixture = createFixture({ omittedStage: "web-e2e" });
+	const fixture = createFixture({ omittedStage: "preflight" });
 	await assertRejectsMessage(
 		() =>
 			verifyReleaseDownload({
@@ -79,7 +80,7 @@ test("download verification rejects an incomplete final validation set", async (
 				tag: "v1.0.0-rc.29",
 				commit: COMMIT,
 			}),
-		"all four required validation stages",
+		"all required validation stages",
 	);
 });
 

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { REQUIRED_STAGE_ATTESTATIONS } from "./ci-contract.mjs";
 import { createReleaseAttestation } from "./release-attestation.mjs";
 import { PACKAGE_TARGETS, sha256Text, validateCycloneDx } from "./release-evidence.mjs";
 import { npmSbomInvocation, verifyPackage } from "./verify-package.mjs";
@@ -125,7 +126,7 @@ test("final attestation validates and binds every stage and platform evidence fi
 		});
 		await createReleaseAttestation({ repoRoot: root, stage: "package", target });
 	}
-	for (const stage of ["quality", "recovery", "electron-e2e", "web-e2e"]) {
+	for (const stage of REQUIRED_STAGE_ATTESTATIONS) {
 		await createReleaseAttestation({ repoRoot: root, stage, target: "test-x64" });
 	}
 
@@ -134,7 +135,7 @@ test("final attestation validates and binds every stage and platform evidence fi
 		stage: "final",
 		target: "test-x64",
 	});
-	assert.equal(final.record.inputs.stages.length, 4);
+	assert.equal(final.record.inputs.stages.length, REQUIRED_STAGE_ATTESTATIONS.length);
 	assert.equal(final.record.inputs.packages.length, 4);
 	assert.deepEqual(
 		new Set(final.record.inputs.packages.map(({ target }) => target)),
@@ -145,6 +146,20 @@ test("final attestation validates and binds every stage and platform evidence fi
 			artifacts.every(({ sha256 }) => /^[0-9a-f]{64}$/.test(sha256)),
 		),
 	);
+
+	const preflightPath = join(root, "release-attestations/preflight.json");
+	const preflight = readFileSync(preflightPath, "utf8");
+	rmSync(preflightPath);
+	await assert.rejects(createReleaseAttestation({ repoRoot: root, stage: "final" }), /ENOENT/);
+	writeFileSync(
+		preflightPath,
+		JSON.stringify({ ...JSON.parse(preflight), commit: "other-commit" }),
+	);
+	await assert.rejects(
+		createReleaseAttestation({ repoRoot: root, stage: "final" }),
+		/invalid preflight/,
+	);
+	writeFileSync(preflightPath, preflight);
 
 	const evidencePath = join(root, "release-attestations/package-evidence-mac-x64.json");
 	writeFileSync(evidencePath, `${readFileSync(evidencePath, "utf8")} `);

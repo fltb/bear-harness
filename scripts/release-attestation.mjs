@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { REQUIRED_STAGE_ATTESTATIONS } from "./ci-contract.mjs";
 import {
 	assertContainedFile,
 	PACKAGE_TARGETS,
@@ -16,16 +17,12 @@ import {
 import { validateSoakReport } from "./soak-evidence.mjs";
 
 const ALLOWED_STAGES = new Set([
-	"quality",
-	"recovery",
-	"electron-e2e",
-	"web-e2e",
+	...REQUIRED_STAGE_ATTESTATIONS,
 	"live-model",
 	"soak",
 	"package",
 	"final",
 ]);
-const REQUIRED_STAGE_ATTESTATIONS = ["quality", "recovery", "electron-e2e", "web-e2e"];
 
 export async function createReleaseAttestation(options = {}) {
 	const stage = options.stage ?? process.argv[2];

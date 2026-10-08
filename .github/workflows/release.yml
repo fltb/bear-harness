@@ -54,6 +54,7 @@ jobs:
             bear-harness-mac-arm64 \
             bear-harness-win-x64 \
             bear-harness-linux-x64 \
+            release-attestation-preflight \
             release-attestation-quality \
             release-attestation-recovery \
             release-attestation-electron-e2e \
