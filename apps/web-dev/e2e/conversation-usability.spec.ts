@@ -213,9 +213,7 @@ test("reduced motion disables new-turn entrance animation", async ({ page }) => 
 	await page.getByRole("button", { name: zhCN.composer.sendLabel, exact: true }).click();
 	const streamingReply = page.getByTestId("streaming-assistant-message");
 	await expect(streamingReply).toBeVisible();
-	expect(await streamingReply.evaluate((element) => getComputedStyle(element).animationName)).toBe(
-		"none",
-	);
+	await expect(streamingReply).toHaveCSS("animation-name", "none");
 	await page.getByRole("button", { name: zhCN.composer.stopLabel }).click();
 });
 

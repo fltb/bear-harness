@@ -8,6 +8,7 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
 	renameSync,
 	rmSync,
@@ -20,9 +21,12 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
-const RELEASE_TAG = "v2.55.0.windows.5";
-const ASSET = "PortableGit-2.55.0.5-64-bit.7z.exe";
-const ARCHIVE_SHA256 = "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290";
+const upstream = JSON.parse(
+	readFileSync(new URL("../../../config/upstream-binaries.json", import.meta.url), "utf8"),
+);
+const RELEASE_TAG = upstream.portableGit.tag;
+const ASSET = upstream.portableGit.asset;
+const ARCHIVE_SHA256 = upstream.portableGit.sha256;
 const RELEASE_URL = `https://github.com/git-for-windows/git/releases/download/${RELEASE_TAG}/${ASSET}`;
 const RELEASE_PAGE = `https://github.com/git-for-windows/git/releases/tag/${RELEASE_TAG}`;
 const SOURCE_URLS = [
@@ -80,7 +84,7 @@ if (componentNotices.length === 0)
 	throw new Error("PortableGit extraction contains no component notices");
 const gplSource = [
 	"usr/share/licenses/git/COPYING",
-	"mingw64/share/licenses/git/COPYING",
+	"ucrt64/share/licenses/git/COPYING",
 	"COPYING",
 	"LICENSE.txt",
 ].find((candidate) => runtimeFiles.some((file) => file.path === candidate));
@@ -164,7 +168,7 @@ function inventory(root) {
 
 function isComponentNotice(path) {
 	const lower = path.toLowerCase();
-	if (lower.startsWith("usr/share/licenses/") || lower.startsWith("mingw64/share/licenses/"))
+	if (lower.startsWith("usr/share/licenses/") || lower.startsWith("ucrt64/share/licenses/"))
 		return true;
 	if (lower === "releasenotes.html" || lower === "copying" || lower === "license.txt") return true;
 	return /(^|\/)(copying|copyright|license|notice)(\.[^/]*)?$/.test(lower);

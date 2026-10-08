@@ -151,7 +151,10 @@ for (const file of files) {
 		if (pattern.test(source))
 			failures.push(`${file}: remove forbidden ${description}; use native Zod`);
 	}
-	const ast = parse(source, { sourceType: "module", plugins: ["typescript", "jsx"] });
+	const ast = parse(source, {
+		sourceType: "module",
+		plugins: file.endsWith(".tsx") ? ["typescript", "jsx"] : ["typescript"],
+	});
 	if (file === "packages/protocol/src/schema.ts" || file === "packages/protocol/src/index.ts")
 		collectProtocolContract(ast, file, source);
 	visit(ast, file);

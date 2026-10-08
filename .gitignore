@@ -142,3 +142,6 @@ coverage/
 # Local UI/UX audits and screenshots are workstation evidence, not release assets.
 /artifacts/
 /.tmp/
+
+# Downloaded integrity-checked native contract fixture
+.cache/upstream/

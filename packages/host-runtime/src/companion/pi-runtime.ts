@@ -869,6 +869,7 @@ export class PiRuntime {
 			agentDir: this.cwd,
 			settingsManager: settings,
 			noExtensions: true,
+			disabledBuiltinExtensions: ["mcp"],
 			noSkills: true,
 			noPromptTemplates: true,
 			noThemes: true,
@@ -876,6 +877,9 @@ export class PiRuntime {
 			systemPrompt: baseSystemPrompt,
 			extensionFactories: [
 				(pi) => {
+					// Pi 1.x persists before_agent_start systemPrompt overrides. Prepare
+					// transient recall there, but inject it only into the provider context.
+					let turnContext = "";
 					pi.on("model_select", (event) => {
 						if (!session) return; // Initial creation already filters tools below.
 						const names = session.getActiveToolNames().filter((name) => name !== "web_search");
@@ -904,6 +908,7 @@ export class PiRuntime {
 						}
 					});
 					pi.on("before_agent_start", async (event) => {
+						turnContext = "";
 						const recall: RecallResult = this.options.memory.enabled(companionId)
 							? await this.runActivity(session, "memory_recall", () =>
 									this.options.memory.recall(companionId, sessionId, event.prompt),
@@ -917,17 +922,24 @@ export class PiRuntime {
 						const additions = [context, recall.appendSystemContext, recall.prependContext].filter(
 							(value): value is string => Boolean(value?.trim()),
 						);
-						if (!additions.length) return;
-						return {
-							systemPrompt: `${event.systemPrompt}\n\n${additions.join("\n\n")}`,
-						};
+						turnContext = additions.join("\n\n");
 					});
 					pi.on("before_agent_start", (event) => {
 						const guidance = this.consumeResponseGuidance(sessionId, event.prompt);
 						if (!guidance) return;
-						return { systemPrompt: `${event.systemPrompt}\n\n${guidance}` };
+						turnContext = [turnContext, guidance].filter(Boolean).join("\n\n");
+					});
+					pi.on("context_with_system", (event) => {
+						if (!turnContext) return;
+						return {
+							messages: [
+								...event.messages,
+								{ role: "system" as const, content: turnContext, timestamp: 0 },
+							],
+						};
 					});
 					pi.on("agent_settled", async () => {
+						turnContext = "";
 						if (!this.options.memory.enabled(companionId)) return;
 						// Report failure through the stage event, but let Pi deliver agent_settled.
 						await this.runActivity(session, "memory_capture", () =>
@@ -1017,6 +1029,7 @@ export class PiRuntime {
 			resourceLoader: loader,
 			customTools: allTools,
 			tools: allTools.map((tool) => tool.name),
+			excludeTools: ["mcp__*", "codemode"],
 		});
 		session = created.session;
 		// SDK `tools` is a registry allowlist. Retain the definition so a later

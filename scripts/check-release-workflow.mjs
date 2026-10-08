@@ -5,12 +5,9 @@ const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
 const jobs = workflow?.jobs ?? {};
 const triggers = workflow?.on ?? {};
-const approvedActionRefs = new Map([
-	["actions/checkout", "v7.0.1"],
-	["actions/setup-node", "v7.0.0"],
-	["actions/upload-artifact", "v7.0.1"],
-	["actions/download-artifact", "v7.0.0"],
-]);
+const approvedActionRefs = new Map(
+	Object.entries(JSON.parse(readFileSync("config/upstream-binaries.json", "utf8")).actions),
+);
 for (const job of Object.values(jobs)) {
 	for (const step of job?.steps ?? []) {
 		if (typeof step?.uses !== "string") continue;
@@ -23,6 +20,7 @@ for (const job of Object.values(jobs)) {
 		}
 	}
 }
+if (!Object.hasOwn(triggers, "pull_request")) throw new Error("CI must validate pull requests");
 if (!Object.hasOwn(triggers, "workflow_dispatch")) {
 	throw new Error("release workflow must remain manually dispatchable");
 }
@@ -105,6 +103,8 @@ const requiredCommands = new Map([
 			"npm ci",
 			"npm run lint",
 			"npm run typecheck",
+			"npm run test:unit",
+			"npm run test:upstream",
 			"npm run test:coverage --workspace @bear-harness/host-runtime",
 			"tee host-coverage.log",
 			"tail -n 200 host-coverage.log",
@@ -133,6 +133,7 @@ const requiredCommands = new Map([
 		"package",
 		[
 			"npm run build:packages",
+			"npm run test:upstream:native",
 			"sudo apt-get --option Acquire::Retries=3 --option Dir::Etc::sourcelist=sources.list.d/ubuntu.sources --option Dir::Etc::sourceparts=- update",
 			"sudo apt-get --option Acquire::Retries=3 install --yes",
 			"xvfb",
@@ -353,7 +354,10 @@ for (const forbidden of [
 const publishUses = (publishJob.steps ?? [])
 	.map((step) => (typeof step?.uses === "string" ? step.uses : ""))
 	.filter(Boolean);
-if (publishUses.length !== 1 || publishUses[0] !== "actions/checkout@v7.0.1") {
+if (
+	publishUses.length !== 1 ||
+	publishUses[0] !== `actions/checkout@${approvedActionRefs.get("actions/checkout")}`
+) {
 	throw new Error("publish workflow may only use the pinned checkout action");
 }
 

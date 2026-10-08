@@ -1,0 +1,29 @@
+name: bear-harness-upstream-merge
+on:
+  workflow_run:
+    workflows: [bear-harness-ci]
+    types: [completed]
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: upstream-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+jobs:
+  merge:
+    if: github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'codex/upstream-') && github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      # Execute only the trusted default-branch verifier, never candidate code or artifacts.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Verify tested commit, update-only diff and required checks before merging
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_WORKFLOW_TOKEN || github.token }}
+        run: node scripts/upstream-merge.mjs

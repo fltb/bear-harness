@@ -354,7 +354,7 @@ function bundledGitRuntime(): { shellPath: string; pathEntries: string[] } | und
 	const shellPath = join(gitRoot, "usr", "bin", "bash.exe");
 	const pathEntries = [
 		join(gitRoot, "cmd"),
-		join(gitRoot, "mingw64", "bin"),
+		join(gitRoot, "ucrt64", "bin"),
 		join(gitRoot, "usr", "bin"),
 	];
 	return existsSync(shellPath) && pathEntries.every(existsSync)

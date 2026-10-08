@@ -634,7 +634,13 @@ export class OpenAIEmbeddingService implements EmbeddingService {
 
 					// Sort by index to ensure correct order, then sanitize+normalize for consistency with local provider
 					const sorted = [...json.data].sort((a, b) => a.index - b.index);
-					return sorted.map((d) => sanitizeAndNormalize(d.embedding));
+					if (sorted.length !== texts.length) throw new Error("Embedding response count does not match input");
+					return sorted.map((d, index) => {
+						if (d.index !== index || !Array.isArray(d.embedding) || d.embedding.length !== this.dims || !d.embedding.every(Number.isFinite)) {
+							throw new Error(`Embedding response has invalid index or dimensions (expected ${this.dims})`);
+						}
+						return sanitizeAndNormalize(d.embedding);
+					});
 				} finally {
 					clearTimeout(timeoutId);
 				}

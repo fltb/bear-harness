@@ -239,6 +239,7 @@ class PiAcpAgent {
 			{ projectTrusted: true },
 		);
 		const resources = new DefaultResourceLoader({
+			disabledBuiltinExtensions: ["mcp"],
 			cwd,
 			agentDir: runDir,
 			settingsManager: settings,

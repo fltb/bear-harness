@@ -1,0 +1,83 @@
+name: bear-harness-upstream-update
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: upstream-scan
+  cancel-in-progress: false
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        group: [pi, acp, memory, storage, network, formats, files, render, ui, i18n, desktop, toolchain, infrastructure]
+    concurrency:
+      group: upstream-codex/upstream-${{ matrix.group }}
+      cancel-in-progress: false
+    env:
+      UPDATE_BRANCH: codex/upstream-${{ matrix.group }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_WORKFLOW_TOKEN || github.token }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Resolve stable upstream versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run upstream:update -- ${{ matrix.group }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Select the declared npm version
+        run: npm install --global "npm@$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.npm')"
+      - name: Check candidate changes
+        id: changes
+        shell: bash
+        run: |
+          if ! git diff --quiet || [ "${{ matrix.group }}" = infrastructure ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Resolve the new dependency graph without running install scripts
+        if: steps.changes.outputs.changed == 'true'
+        id: resolve
+        continue-on-error: true
+        run: npm run upstream:lock
+      - name: Propose update and dispatch validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$UPDATE_BRANCH"
+          git add package.json package-lock.json apps/*/package.json packages/*/package.json .nvmrc biome.json config/upstream-binaries.json .github/workflows
+          git commit -m 'Update upstream dependencies'
+          git push --force-with-lease origin "$UPDATE_BRANCH"
+          number=$(gh pr list --head "$UPDATE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            cat > "$RUNNER_TEMP/upstream-pr.md" <<'BODY'
+          Update upstream packages, runtime tools, Actions and PortableGit to stable releases. If dependency resolution succeeds, the lockfile records the exact candidate graph. An incompatible peer dependency leaves this PR failing installation until the upstream releases become compatible.
+
+          Automatically merge only after the same commit passes dependency contracts, the complete regression suite, security checks and all four native package targets. Incompatible releases remain unmerged; tests and application code are never rewritten by this updater.
+          BODY
+            gh pr create --base main --head "$UPDATE_BRANCH" --title "Update upstream dependencies: ${{ matrix.group }}" --body-file "$RUNNER_TEMP/upstream-pr.md"
+          fi
+          # Explicit dispatch avoids depending on recursively triggered bot PR events.
+          gh workflow run ci.yml --ref "$UPDATE_BRANCH"
+      - name: Report dependency resolution failure
+        if: steps.resolve.outcome == 'failure'
+        run: exit 1

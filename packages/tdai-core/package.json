@@ -25,17 +25,17 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@ai-sdk/openai": "3.0.110",
-		"@node-rs/jieba": "2.0.1",
-		"ai": "6.0.278",
-		"node-llama-cpp": "3.16.2",
-		"sqlite-vec": "0.1.7-alpha.2",
-		"undici": "^8.10.0"
+		"@ai-sdk/openai": "4.0.89",
+		"@node-rs/jieba": "2.0.4",
+		"ai": "7.0.133",
+		"node-llama-cpp": "3.22.1",
+		"sqlite-vec": "0.1.9",
+		"undici": "8.11.2"
 	},
 	"devDependencies": {
 		"@tencentdb-agent-memory/tcvdb-text": "0.1.1",
-		"@types/node": "24.13.3",
+		"@types/node": "26.6.4",
 		"typescript": "7.0.2",
-		"vitest": "4.1.11"
+		"vitest": "5.0.3"
 	}
 }

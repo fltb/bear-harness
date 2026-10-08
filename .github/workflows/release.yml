@@ -37,7 +37,7 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "latest=false" >> "$GITHUB_OUTPUT"
           fi
-          run_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source_sha}&event=push&status=completed&per_page=100" --jq '[.workflow_runs[] | select(.conclusion == "success" and .head_branch == "main")][0].id // empty')
+          run_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source_sha}&status=completed&per_page=100" --jq '[.workflow_runs[] | select(.conclusion == "success" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch"))][0].id // empty')
           if [ -z "$run_id" ]; then
             echo "No successful main CI run exists for $source_sha" >&2
             exit 1

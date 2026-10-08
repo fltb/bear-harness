@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"main": "dist/main/index.js",
-	"description": "Bear Harness desktop app \u2014 SolidJS renderer on an Electron shell.",
+	"description": "Bear Harness desktop app — SolidJS renderer on an Electron shell.",
 	"homepage": "https://github.com/fltb/bear-harness",
 	"author": "fltb",
 	"scripts": {
@@ -27,26 +27,26 @@
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol",
-		"node-llama-cpp": "3.16.2"
+		"node-llama-cpp": "3.22.1"
 	},
 	"devDependencies": {
 		"@bear-harness/companion-client": "file:../../packages/companion-client",
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/i18n": "file:../../packages/i18n",
-		"@electron/asar": "3.4.1",
-		"@rsbuild/core": "2.1.11",
-		"@rsbuild/plugin-babel": "2.0.1",
+		"@electron/asar": "4.3.1",
+		"@rsbuild/core": "2.2.12",
+		"@rsbuild/plugin-babel": "2.1.0",
 		"@rsbuild/plugin-solid": "1.2.2",
 		"@rsbuild/plugin-tailwindcss": "2.0.3",
-		"@types/node": "24.13.3",
-		"@vitest/coverage-v8": "4.1.11",
-		"electron": "43.7.7",
+		"@types/node": "26.6.4",
+		"@vitest/coverage-v8": "5.0.3",
+		"electron": "44.7.0",
 		"electron-builder": "26.15.3",
 		"esbuild": "0.28.2",
-		"playwright": "1.62.1",
-		"solid-js": "1.9.14",
+		"playwright": "1.64.0",
+		"solid-js": "1.9.17",
 		"typescript": "7.0.2",
-		"vite": "8.2.1",
-		"vitest": "4.1.11"
+		"vite": "8.3.3",
+		"vitest": "5.0.3"
 	}
 }

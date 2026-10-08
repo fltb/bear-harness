@@ -154,6 +154,24 @@ function createStoreWithCleanup(client: CompanionClient) {
 }
 
 describe("Window-local conversation projection", () => {
+	it("preserves native system entries without displaying model context in the timeline", async () => {
+		const { client } = createTestClient();
+		const system = {
+			...userEntry("system", ""),
+			message: { role: "system", content: "Stable character context", timestamp: 1 },
+		} satisfies PiSessionEntry;
+		const user = userEntry("user", "Hello");
+		mockConversations(client, detail("a", [system, user]));
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activePiEntries).toHaveLength(2));
+			expect(store.activePiEntries).toContainEqual(system);
+			expect(store.activeTimeline).toEqual([{ kind: "entry", id: user.id, entry: user }]);
+		} finally {
+			dispose();
+		}
+	});
+
 	it("keeps the catalog empty until the user explicitly creates a conversation", async () => {
 		const { client } = createTestClient();
 		const select = mockConversations(client, null);

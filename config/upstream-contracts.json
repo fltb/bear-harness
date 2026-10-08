@@ -1,0 +1,150 @@
+{
+	"groups": [
+		{
+			"id": "pi",
+			"dependencies": [
+				"@earendil-works/pi-ai",
+				"@earendil-works/pi-agent-core",
+				"@earendil-works/pi-coding-agent"
+			],
+			"evidence": [
+				"packages/host-runtime/tests/pi-runtime.spec.ts",
+				"packages/host-runtime/tests/pi-resource-loader.spec.ts",
+				"packages/host-runtime/tests/upstream-pi-wire.spec.ts"
+			]
+		},
+		{
+			"id": "acp",
+			"dependencies": ["@agentclientprotocol/sdk", "@agentclientprotocol/codex-acp"],
+			"evidence": [
+				"packages/host-runtime/tests/acp-executor.spec.ts",
+				"packages/host-runtime/tests/custom-acp.spec.ts",
+				"packages/host-runtime/tests/acp-dialect.spec.ts",
+				"packages/host-runtime/tests/upstream-codex.spec.ts"
+			]
+		},
+		{
+			"id": "memory",
+			"dependencies": [
+				"node-llama-cpp",
+				"sqlite-vec",
+				"@node-rs/jieba",
+				"@tencentdb-agent-memory/tcvdb-text",
+				"ai",
+				"@ai-sdk/openai"
+			],
+			"evidence": [
+				"scripts/upstream-native.test.mjs",
+				"packages/tdai-core/tests/upstream-provider.spec.ts",
+				"packages/host-runtime/tests/shared-embedding-runtime.spec.ts"
+			]
+		},
+		{
+			"id": "storage",
+			"dependencies": ["drizzle-orm", "drizzle-kit", "p-queue", "proper-lockfile"],
+			"evidence": [
+				"packages/host-runtime/tests/database-contract.spec.ts",
+				"packages/host-runtime/tests/upstream-data.spec.ts"
+			]
+		},
+		{
+			"id": "network",
+			"dependencies": ["undici"],
+			"evidence": ["packages/host-runtime/tests/upstream-network.spec.ts"]
+		},
+		{
+			"id": "formats",
+			"dependencies": ["yaml", "ajv", "zod", "fast-json-patch", "@jsonforms/core"],
+			"evidence": [
+				"packages/host-runtime/tests/upstream-data.spec.ts",
+				"packages/protocol/tests/schema.spec.ts",
+				"packages/companion-ui/tests/studio-fields.spec.tsx"
+			]
+		},
+		{
+			"id": "files",
+			"dependencies": ["yauzl", "fflate", "officeparser", "image-dimensions"],
+			"evidence": [
+				"packages/host-runtime/tests/upstream-data.spec.ts",
+				"packages/host-runtime/tests/character-archive-import.spec.ts",
+				"packages/companion-ui/tests/studio-assets.spec.tsx"
+			]
+		},
+		{
+			"id": "render",
+			"dependencies": [
+				"marked",
+				"marked-highlight",
+				"marked-katex-extension",
+				"katex",
+				"highlight.js",
+				"dompurify"
+			],
+			"evidence": ["packages/companion-ui/tests/message-content.spec.tsx"]
+		},
+		{
+			"id": "ui",
+			"dependencies": [
+				"solid-js",
+				"@tanstack/solid-query",
+				"@tanstack/solid-virtual",
+				"@kobalte/core",
+				"@fortawesome/free-solid-svg-icons"
+			],
+			"evidence": [
+				"packages/companion-ui/tests/upstream-ui.spec.tsx",
+				"packages/companion-ui/tests/conversation-local-active.spec.ts",
+				"apps/web-dev/e2e/conversation-usability.spec.ts"
+			]
+		},
+		{
+			"id": "i18n",
+			"dependencies": ["i18next", "solid-i18next", "opencc-js"],
+			"evidence": [
+				"packages/i18n/tests/locale-runtime.spec.ts",
+				"packages/companion-ui/tests/locale-switch-preserves-store.spec.tsx"
+			]
+		},
+		{
+			"id": "desktop",
+			"dependencies": ["electron", "@electron/asar", "electron-builder"],
+			"evidence": [
+				"apps/desktop/e2e/app.spec.ts",
+				"apps/desktop/e2e/packaged.spec.ts",
+				"apps/desktop/tests/electron-builder-config.spec.ts"
+			]
+		},
+		{
+			"id": "toolchain",
+			"dependencies": [
+				"@axe-core/playwright",
+				"@babel/parser",
+				"@biomejs/biome",
+				"@rsbuild/core",
+				"@rsbuild/plugin-babel",
+				"@rsbuild/plugin-solid",
+				"@rsbuild/plugin-tailwindcss",
+				"@solidjs/testing-library",
+				"@tailwindcss/vite",
+				"@testing-library/dom",
+				"@testing-library/jest-dom",
+				"@testing-library/user-event",
+				"@types/node",
+				"@types/proper-lockfile",
+				"@types/yauzl",
+				"@vitest/coverage-v8",
+				"esbuild",
+				"jsdom",
+				"knip",
+				"playwright",
+				"postcss",
+				"tailwindcss",
+				"typescript",
+				"vite",
+				"vite-plugin-solid",
+				"vitest"
+			],
+			"evidence": ["scripts/check-upstream-contracts.mjs", ".github/workflows/ci.yml"]
+		}
+	]
+}

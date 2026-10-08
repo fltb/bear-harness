@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import type { LivePush, PiProjectionVersion } from "@bear-harness/protocol";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
@@ -730,6 +731,10 @@ describe("PiRuntime session registry", () => {
 				built.delete(id);
 				buildSession.mockClear();
 			}
+			// Vitest retains called mock contexts until cleared; measure Pi handles,
+			// then release that test-only history and let WeakRefs leave this job.
+			vi.clearAllMocks();
+			await setImmediate();
 			forceGc();
 			const baseline = process.memoryUsage().heapUsed;
 			let buildCount = 0;
@@ -745,6 +750,10 @@ describe("PiRuntime session registry", () => {
 				built.delete(id);
 				buildSession.mockClear();
 			}
+			// Vitest retains called mock contexts until cleared; measure Pi handles,
+			// then release that test-only history and let WeakRefs leave this job.
+			vi.clearAllMocks();
+			await setImmediate();
 			forceGc();
 			const growth = Math.max(0, process.memoryUsage().heapUsed - baseline);
 			expect(buildCount).toBe(100);
@@ -1268,7 +1277,7 @@ describe("PiRuntime session registry", () => {
 });
 
 describe("PiRuntime native stage lifecycle", () => {
-	it("keeps the first native transcript when abort during close materializes it", async () => {
+	it("keeps the first native user transcript when aborting during close", async () => {
 		const discarded = vi.fn();
 		const { runtime, session, stream } = await nativeSetup({
 			memory: { enabled: () => false },
@@ -1297,13 +1306,13 @@ describe("PiRuntime native stage lifecycle", () => {
 		await runtime.send(session.sessionId, "first question");
 		await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce());
 		const file = session.sessionManager.getSessionFile()!;
-		expect(existsSync(file)).toBe(false);
+		expect(existsSync(file)).toBe(true);
 		await runtime.close(session.sessionId);
 		expect(discarded).not.toHaveBeenCalled();
 		expect(existsSync(file)).toBe(true);
 		expect((await runtime.list()).map(({ id }) => id)).toContain(session.sessionId);
 		const reopened = await runtime.open(session.sessionId);
-		expect(reopened.messages.map(({ role }) => role)).toEqual(["user", "assistant"]);
+		expect(reopened.messages.map(({ role }) => role)).toEqual(["system", "user", "assistant"]);
 		await runtime.closeAll();
 	});
 
@@ -1610,13 +1619,21 @@ describe("PiRuntime native stage lifecycle", () => {
 		await runtime.correct(session.sessionId, answer.id, "Use a different explanation");
 		await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
 		expect(session.isStreaming).toBe(true);
-		expect(stream.mock.calls[1]?.[1].systemPrompt).toContain("Use a different explanation");
+		expect(
+			JSON.stringify(
+				stream.mock.calls[1]?.[1].messages.filter((message) => message.role === "system"),
+			),
+		).toContain("Use a different explanation");
 		await runtime.abort(session.sessionId);
 		expect(providerAborted).toBe(true);
 		expect(session.isStreaming).toBe(false);
 		await runtime.send(session.sessionId, "next question");
 		await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(3));
-		expect(stream.mock.calls[2]?.[1].systemPrompt).not.toContain("Use a different explanation");
+		expect(
+			JSON.stringify(
+				stream.mock.calls[2]?.[1].messages.filter((message) => message.role === "system"),
+			),
+		).not.toContain("Use a different explanation");
 		await runtime.closeAll();
 	});
 
@@ -1694,8 +1711,16 @@ describe("PiRuntime native stage lifecycle", () => {
 			["context", "completed"],
 			["memory_capture", "started"],
 		]);
-		expect(stream.mock.calls[0]?.[1].systemPrompt).toContain("a real recalled fact");
-		expect(stream.mock.calls[0]?.[1].systemPrompt).toContain("turn context");
+		expect(
+			JSON.stringify(
+				stream.mock.calls[0]?.[1].messages.filter((message) => message.role === "system"),
+			),
+		).toContain("a real recalled fact");
+		expect(
+			JSON.stringify(
+				stream.mock.calls[0]?.[1].messages.filter((message) => message.role === "system"),
+			),
+		).toContain("turn context");
 		expect(session.isStreaming).toBe(false);
 		expect(activities.at(-1)?.live.isStreaming).toBe(false);
 		expect(
@@ -1703,7 +1728,11 @@ describe("PiRuntime native stage lifecycle", () => {
 				.getBranch()
 				.filter((entry) => entry.type === "message")
 				.map((entry) => entry.message.role),
-		).toEqual(["user", "assistant"]);
+		).toEqual(["system", "user", "assistant"]);
+		expect(JSON.stringify(session.sessionManager.getEntries())).not.toContain(
+			"a real recalled fact",
+		);
+		expect(JSON.stringify(session.sessionManager.getEntries())).not.toContain("turn context");
 		expect(nativeEvents.some(({ event }) => event.type === "entry_appended")).toBe(false);
 		expect(nativeEvents.some(({ event }) => event.type === "agent_settled")).toBe(false);
 		failCapture(new Error("capture storage unavailable"));

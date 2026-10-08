@@ -44,11 +44,13 @@ Task selection spans the current character's conversations; Artifact selection b
 
 ## Run from source
 
-Install [fnm](https://github.com/Schniz/fnm), then use the repository-pinned **Node.js `24.19.0`** and **npm `11.17.0`**. From the repository root:
+Install [fnm](https://github.com/Schniz/fnm), then use the repository-pinned **Node.js** (`.nvmrc`) and **npm** (`package.json` → `engines.npm`). From the repository root:
 
 ```sh
 fnm install
-fnm exec --using=.nvmrc npm install
+bear_npm_version=$(fnm exec --using=.nvmrc node -p 'require("./package.json").engines.npm')
+fnm exec --using=.nvmrc npm install --global "npm@$bear_npm_version"
+fnm exec --using=.nvmrc npm ci
 fnm exec --using=.nvmrc npm run dev:web
 ```
 

@@ -44,7 +44,7 @@ if (!data.on || typeof data.on !== "object") {
 	process.exit(1);
 }
 const triggers = Object.keys(data.on);
-const expectedTriggers = ["push", "workflow_dispatch"];
+const expectedTriggers = ["push", "pull_request", "workflow_dispatch"];
 if (
 	triggers.length !== expectedTriggers.length ||
 	expectedTriggers.some((trigger) => !triggers.includes(trigger))

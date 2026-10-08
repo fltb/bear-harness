@@ -1143,8 +1143,9 @@ function PiTimelineRenderer(props: {
 		},
 		overscan: 8,
 		gap: 8,
-		anchorTo: "end",
-		followOnAppend: false,
+		// Bear's follow controller and loadOlder preserve the reading anchor.
+		// Native end anchoring would also move the window during those updates.
+		anchorTo: "start",
 		useAnimationFrameWithResizeObserver: true,
 	});
 	const virtualItems = createMemo(() => virtualizer.getVirtualItems());

@@ -17,13 +17,13 @@
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol",
-		"solid-js": "1.9.14"
+		"solid-js": "1.9.17"
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "4.3.3",
-		"playwright": "1.62.1",
+		"playwright": "1.64.0",
 		"typescript": "7.0.2",
-		"vite": "8.2.1",
+		"vite": "8.3.3",
 		"vite-plugin-solid": "2.11.14"
 	}
 }

@@ -20,19 +20,19 @@
 		"@bear-harness/i18n": "file:../../packages/i18n",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol",
-		"@kobalte/core": "0.13.13",
-		"@tanstack/solid-query": "5.101.4"
+		"@kobalte/core": "0.13.14",
+		"@tanstack/solid-query": "5.104.1"
 	},
 	"devDependencies": {
 		"@axe-core/playwright": "4.13.0",
-		"@rsbuild/core": "2.1.11",
-		"@rsbuild/plugin-babel": "2.0.1",
+		"@rsbuild/core": "2.2.12",
+		"@rsbuild/plugin-babel": "2.1.0",
 		"@rsbuild/plugin-solid": "1.2.2",
 		"@rsbuild/plugin-tailwindcss": "2.0.3",
-		"@types/node": "24.13.3",
-		"fflate": "^0.8.3",
-		"playwright": "1.62.1",
-		"solid-js": "1.9.14",
+		"@types/node": "26.6.4",
+		"fflate": "0.8.3",
+		"playwright": "1.64.0",
+		"solid-js": "1.9.17",
 		"typescript": "7.0.2"
 	}
 }

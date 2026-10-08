@@ -18,12 +18,9 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const EXPECTED = {
-	tag: "v2.55.0.windows.5",
-	asset: "PortableGit-2.55.0.5-64-bit.7z.exe",
-	url: "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/PortableGit-2.55.0.5-64-bit.7z.exe",
-	sha256: "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290",
-};
+const EXPECTED = JSON.parse(
+	readFileSync(new URL("../../../config/upstream-binaries.json", import.meta.url), "utf8"),
+).portableGit;
 const resourcesArgument = process.argv[2];
 if (!resourcesArgument) throw new Error("usage: verify-windows-runtime.mjs <resources-dir>");
 const resources = resolve(resourcesArgument);
@@ -85,7 +82,7 @@ const bashVersion = run({ binary: bash, args: ["--version"] }, "GNU bash version
 if (!/^GNU bash, version /m.test(bashVersion))
 	throw new Error(`unexpected bash version output: ${bashVersion.trim()}`);
 const gitVersion = run({ binary: git, args: ["--version"] }, "Git version check");
-if (!/^git version 2\.55\.0\.windows\.5\s*$/m.test(gitVersion)) {
+if (gitVersion.trim() !== `git version ${EXPECTED.tag.slice(1)}`) {
 	throw new Error(`unexpected Git version output: ${gitVersion.trim()}`);
 }
 
@@ -139,7 +136,7 @@ function runPackagedPiBashSmoke({ resources, bash, gitRoot }) {
 	).href;
 	const expectedPathEntries = [
 		join(gitRoot, "cmd"),
-		join(gitRoot, "mingw64/bin"),
+		join(gitRoot, "ucrt64/bin"),
 		join(gitRoot, "usr/bin"),
 	];
 	const helperSource = `
@@ -155,7 +152,7 @@ const tool = createBashTool(${JSON.stringify(workspace)}, { shellPath: process.e
 const result = await tool.execute(${JSON.stringify(randomUUID())}, { command: "printf 'packaged-pi-bash\\n' > pi-bash-smoke.txt && git --version", timeout: 30 });
 if (readFileSync(${JSON.stringify(join(workspace, "pi-bash-smoke.txt"))}, "utf8") !== "packaged-pi-bash\\n") throw new Error("Pi bash did not execute in the temp workspace");
 const output = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\\n");
-if (!output.includes("git version 2.55.0.windows.5")) throw new Error("Pi bash did not resolve bundled Git");
+if (!output.includes(${JSON.stringify(`git version ${EXPECTED.tag.slice(1)}`)})) throw new Error("Pi bash did not resolve bundled Git");
 `;
 	try {
 		mkdirSync(workspace, { recursive: true });

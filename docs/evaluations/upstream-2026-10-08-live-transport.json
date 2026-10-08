@@ -1,0 +1,279 @@
+{
+	"date": "2026-10-08",
+	"baselineCommit": "7feab742ed3c9353c6799c1a48a4e61b4a646bd2",
+	"provider": "openai (configured Pi endpoint)",
+	"model": "gpt-5.6-sol",
+	"purpose": "Dependency upgrade live identity/memory boundary smoke",
+	"verdict": "blocked_transport_http_503",
+	"capture": "Original native user and assistant messages; stable system context omitted. Run interrupted after repeated provider failures. No accepted character-quality conversation.",
+	"entries": [
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:11.929Z",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "我今天穿蓝色外套，只是随口说，不需要记住。请自然回应。 "
+					}
+				],
+				"timestamp": 1791433211926
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:12.480Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433211975,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 504,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:14.728Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433214491,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 236,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:18.998Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433218735,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 262,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:27.284Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433227004,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 280,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:27.892Z",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "请明确记住：我长期希望你称呼我为北辰。记住后简短确认。"
+					}
+				],
+				"timestamp": 1791433227891
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:28.101Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433227893,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 208,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:30.319Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433230105,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 214,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:34.640Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433234324,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 316,
+				"thinkingLevel": "medium"
+			}
+		},
+		{
+			"sessionFile": "2026-10-08T04-20-11-880Z_01a119bd-7fe7-7528-ad0a-bd2357d2a608.jsonl",
+			"timestamp": "2026-10-08T04:20:42.896Z",
+			"message": {
+				"role": "assistant",
+				"content": [],
+				"api": "openai-responses",
+				"provider": "e2e-live-openai",
+				"model": "gpt-5.6-sol",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "error",
+				"timestamp": 1791433242644,
+				"errorMessage": "e2e-live-openai API error (503): {\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}",
+				"durationMs": 252,
+				"thinkingLevel": "medium"
+			}
+		}
+	]
+}

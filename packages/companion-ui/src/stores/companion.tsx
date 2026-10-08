@@ -2115,6 +2115,9 @@ function createStoreForClient(
 				}
 			};
 			for (const entry of detail.branch.entries) {
+				// Pi persists stable system context natively. Keep it in the snapshot,
+				// but it is model input, not a visible conversation message.
+				if (entry.type === "message" && entry.message.role === "system") continue;
 				result.push({
 					kind: "entry",
 					id:
