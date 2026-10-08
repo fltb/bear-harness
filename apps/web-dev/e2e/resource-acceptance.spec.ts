@@ -104,13 +104,22 @@ test("10,000 loaded authoritative entries keep a bounded virtual DOM and stable 
 	});
 	await expect
 		.poll(async () => {
-			const indexes = await renderedItems.evaluateAll((items) =>
+			// Measured rows and estimated offscreen rows have different heights.
+			// Half the pixel height need not land near item 5,000. Check the visible
+			// interior, excluding the offscreen first row retained for keyboard focus.
+			const visibleIndexes = await renderedItems.evaluateAll((items) =>
 				items.flatMap((item) => {
+					const bounds = item.getBoundingClientRect();
+					if (bounds.bottom <= 0 || bounds.top >= window.innerHeight) return [];
 					const value = Number(item.getAttribute("data-index"));
 					return Number.isFinite(value) ? [value] : [];
 				}),
 			);
-			return indexes.some((index) => index > 4_000 && index < 6_000);
+			return (
+				visibleIndexes.some((index) => index > 0 && index < 9_999) &&
+				!visibleIndexes.includes(0) &&
+				!visibleIndexes.includes(9_999)
+			);
 		})
 		.toBe(true);
 	await expect(firstCopy).toBeFocused();
