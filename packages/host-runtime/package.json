@@ -20,7 +20,7 @@
 		"test:coverage": "node ../../scripts/build-workspaces.mjs tdai-core protocol && vitest run --coverage"
 	},
 	"dependencies": {
-		"@agentclientprotocol/sdk": "1.7.0",
+		"@agentclientprotocol/sdk": "1.8.0",
 		"@bear-harness/protocol": "file:../protocol",
 		"@bear-harness/schema": "file:../schema",
 		"@bear-harness/tdai-core": "file:../tdai-core",
@@ -37,7 +37,7 @@
 		"undici": "8.11.2",
 		"yaml": "2.9.1",
 		"yauzl": "3.4.0",
-		"@agentclientprotocol/codex-acp": "2.1.1",
+		"@agentclientprotocol/codex-acp": "2.2.2",
 		"fflate": "0.8.3"
 	},
 	"devDependencies": {
