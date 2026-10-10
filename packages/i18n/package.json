@@ -20,7 +20,7 @@
 		"test:unit": "vitest run"
 	},
 	"dependencies": {
-		"i18next": "26.4.2",
+		"i18next": "26.4.3",
 		"solid-i18next": "0.0.5",
 		"solid-js": "1.9.17"
 	},
