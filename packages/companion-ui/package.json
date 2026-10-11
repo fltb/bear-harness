@@ -34,7 +34,7 @@
 		"@jsonforms/core": "3.8.0",
 		"@kobalte/core": "0.13.14",
 		"@tanstack/solid-query": "5.104.1",
-		"@tanstack/solid-virtual": "3.13.40",
+		"@tanstack/solid-virtual": "3.13.41",
 		"dompurify": "3.4.16",
 		"highlight.js": "11.12.0",
 		"i18next": "26.4.2",
