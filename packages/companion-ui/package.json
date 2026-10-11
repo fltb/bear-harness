@@ -37,7 +37,7 @@
 		"@tanstack/solid-virtual": "3.13.40",
 		"dompurify": "3.4.16",
 		"highlight.js": "11.12.0",
-		"i18next": "26.4.2",
+		"i18next": "26.4.3",
 		"katex": "0.18.5",
 		"marked": "18.1.0",
 		"marked-highlight": "2.2.4",
