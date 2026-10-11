@@ -25,9 +25,9 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@ai-sdk/openai": "4.0.89",
+		"@ai-sdk/openai": "4.0.91",
 		"@node-rs/jieba": "2.0.4",
-		"ai": "7.0.133",
+		"ai": "7.0.137",
 		"node-llama-cpp": "3.22.1",
 		"sqlite-vec": "0.1.9",
 		"undici": "8.11.2"
