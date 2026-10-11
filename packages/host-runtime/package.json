@@ -31,7 +31,7 @@
 		"drizzle-orm": "^1.0.0-rc.4",
 		"fast-json-patch": "3.1.1",
 		"officeparser": "8.1.1",
-		"p-queue": "9.3.3",
+		"p-queue": "9.3.4",
 		"proper-lockfile": "4.1.2",
 		"sqlite-vec": "0.1.9",
 		"undici": "8.11.2",
