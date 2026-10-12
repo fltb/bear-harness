@@ -27,7 +27,7 @@ function run(args) {
 	if (result.status !== 0) process.exit(result.status ?? 1);
 }
 run(["scripts/check-upstream-contracts.mjs"]);
-run(["--test", "scripts/upstream-versions.test.mjs", "scripts/upstream-merge.test.mjs"]);
+run(["--test", "scripts/upstream-versions.test.mjs"]);
 const reports = mkdtempSync(join(tmpdir(), "bear-contract-reports-"));
 try {
 	for (const [workspace, files] of groups) {

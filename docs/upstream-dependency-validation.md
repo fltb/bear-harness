@@ -1,6 +1,6 @@
 # Upstream dependency validation
 
-Bear tests the upstream interfaces it actually calls and updates dependency groups independently. A green version proposal means the candidate commit passed the complete CI matrix; installation or compilation alone is insufficient.
+Bear tests the upstream interfaces it actually calls. Dependency updates are initiated manually and must pass the complete CI matrix; installation or compilation alone is insufficient.
 
 ## Coverage and ownership
 
@@ -20,7 +20,7 @@ Bear tests the upstream interfaces it actually calls and updates dependency grou
 | Desktop | Electron build/IPC/E2E, ASAR, native bindings, four platform packages and packaged smoke |
 | Toolchain | Actual lint/parser, typecheck, tests, coverage, web/desktop builds and browser execution |
 
-The dedicated suite adds 77 tests, including 27 updater/merge tests and 5 native tests. It reuses existing regressions rather than cloning them. The earlier estimate of 144 scenarios was a planning estimate, not an implemented-test count. `test:upstream` currently runs 261 test cases, with zero pending/skipped tests; the 5 native cases run separately on each native CI target.
+The dedicated suite reuses existing regressions rather than cloning them. `test:upstream` runs the dependency registration check, manual version-tool tests, and registered interface contracts with no pending/skipped tests allowed. The 5 native cases run separately on each native CI target. Automatic merge tests were removed with that automation on 2026-10-12; earlier test counts below describe historical validation.
 
 The local HTTP fixtures replace remote servers, not Pi, the AI SDK, undici or ACP. These contracts verify wire behavior without spending model tokens or requiring CI credentials. They do not establish live-model character quality.
 
@@ -35,19 +35,15 @@ The local HTTP fixtures replace remote servers, not Pi, the AI SDK, undici or AC
 - Node/npm versions are declared once in the root manifest and `.nvmrc`; every CI installation selects the declared npm version.
 - PortableGit version, URL and SHA-256 are centralized. Git for Windows 2.56 uses `ucrt64`; staging, notice collection, startup PATH and packaged verification use that layout.
 
-KaTeX remains at 0.18.5 because marked-katex-extension 5.1.13 declares a peer range excluding 0.19.0. Its next candidate remains an independent failing rendering PR until compatible. The existing Drizzle 1.0 RC constraint is not downgraded to the older stable release. No forced peer resolution is used.
+KaTeX remains at 0.18.5 because marked-katex-extension 5.1.13 declares a peer range excluding 0.19.0. Do not upgrade it until the rendering dependencies are compatible. The existing Drizzle 1.0 RC constraint is not downgraded to the older stable release. No forced peer resolution is used.
 
-## Automatic updates
+## Manual updates
 
-`.github/workflows/upstream-update.yml` runs daily at 03:23 UTC and supports manual dispatch. It proposes 12 dependency groups plus infrastructure separately, including stable major releases. Infrastructure includes Node, npm, Actions, PortableGit and explicit transitive overrides. No external bot installation is needed. Updating GitHub workflow files requires a repository-scoped `UPSTREAM_WORKFLOW_TOKEN` secret with Contents and Workflows write permissions (and Actions write for dispatch). GitHub does not grant workflow-file editing to its default `GITHUB_TOKEN`. PR creation and candidate dispatch still use the default bot identity. Ordinary npm and binary updates use the default token when the optional secret is absent; an Action upgrade fails visibly until that permission is configured.
+Automatic dependency updates were cancelled on 2026-10-12. The scheduled/manual-dispatch proposal workflow and its automatic merge workflow have been removed, together with the merge-only verifier and tests. Bear no longer schedules dependency proposals, creates their PRs, dispatches candidate CI, or automatically promotes their commits. Historical workflow runs and existing candidate branches remain available for inspection.
 
-Each group starts from current main, updates every workspace using its dependencies and creates a fresh lockfile in an isolated directory without lifecycle scripts. Resolution failures still leave a PR, with failing installation, for inspection. Unchanged groups do not create duplicate PRs; infrastructure also refreshes transitives. Branches are `codex/upstream-<group>`.
+The local `upstream:update` and `upstream:lock` commands remain available for deliberate dependency updates. They resolve stable candidates by group and generate the lockfile without lifecycle scripts; incompatible candidates must be resolved before submission. They do not create PRs or merge code.
 
-The updater explicitly dispatches candidate CI because bot-created pushes must not be assumed to recursively trigger validation. CI checks lint, types, every unit suite, interface contracts without skips, coverage thresholds, security audit and signatures, recovery, required Web E2E, Electron E2E, builds and all four native package/smoke targets.
-
-The merge workflow executes its verifier from main, without installing candidate dependencies. It requires a successful bot-dispatched run for the same repository and exact PR head, every required job and all four package jobs. Only version changes are accepted: no source/test edits, workflow logic changes, added dependencies or new lifecycle-script permissions. A non-forced Git ref update promotes exactly the tested commit, atomically rejecting a main branch that acquired untested commits. It then dispatches CI on main. The next daily proposal rebases any other group that became stale; it never merges the stale result.
-
-Repository rules remain effective. Actions must be enabled and permitted to create PRs and write contents. A permission failure is a failed automation, never a reason to bypass repository settings. CI must have access to npm, GitHub, Chromium/Electron downloads and the pinned embedding fixture. Missing binaries, failed downloads or unsupported native bindings fail the candidate.
+Normal CI and release workflows remain in place, including dependency interface contracts, native tests, security checks, regression suites and platform packages. No Actions PR-creation permission or `UPSTREAM_WORKFLOW_TOKEN` is required for the removed automation.
 
 ## Local verification
 
@@ -81,8 +77,6 @@ Scope: 9 workspace packages plus root dependency/CI infrastructure; 53 files. Ex
 - Live identity/memory validation: blocked by repeated upstream HTTP 503 responses from the configured `gpt-5.6-sol` route. The run was stopped after preserving original native user/error messages in `docs/evaluations/upstream-2026-10-08-live-transport.json`; no character-quality pass is claimed and Studio live validation remains unverified.
 
 Release decision: this change does not constitute a public release. Four-platform CI, fresh packages and clean-commit evidence must pass before release acceptance. Live-model character acceptance is a separate real-model gate and is not replaced by the local wire fixtures.
-
-Deployment prerequisite: the local GitHub browser session is signed out and the available GitHub connector does not expose repository Actions permission/secret administration. This task cannot verify or provision `UPSTREAM_WORKFLOW_TOKEN` or the repository's Actions PR-creation setting. Configure these in repository Settings; do not put credentials in the repository or chat. This limitation is separate from local test results.
 
 ## Clean-checkout CI correction
 
@@ -148,3 +142,7 @@ Run `37759281869` passed all four platform packages, Web/Electron E2E, recovery 
 A local phase trace identified avoidable assertion work: comparing the 1,048,593-byte exported asset with generic `toEqual(Buffer)` took 679.33ms in a 1,406.84ms focused test. The assertion now checks asset presence and length, then compares every byte with native `Buffer.equals(Uint8Array)`. In the subsequent full Host coverage run, this assertion took 0.11ms and the complete scenario took 723.73ms. These are local observations under different run conditions, not an exact reconstruction of the hosted timeout. No deadline, fixture size, worker isolation, coverage threshold or product behavior changed. Temporary phase tracing was removed.
 
 Full local Host coverage passed 80 files: 709 tests passed and 2 existing platform/GC tests skipped; statements 79.94%, branches 70.08%. Scope: one test module and its engineering evidence document, 2 files, 14 added lines and 1 removed line. The hosted run must validate the correction; there is no public release approval.
+
+## Automatic update removal validation (2026-10-12)
+
+Scope: dependency automation only; 7 files, 12 lines added and 549 removed. Removed both automation workflows and their merge-only implementation/tests; retained manual version tools and all product dependency contracts. Product code, dependency versions, normal CI and release gates are unchanged. Local lint and all 245 remaining upstream tests passed with zero skips. Historical failed runs and candidate branches remain; incompatible upstream versions still require a deliberate compatible upgrade. This configuration change is not a product release or a claim of full release acceptance.
